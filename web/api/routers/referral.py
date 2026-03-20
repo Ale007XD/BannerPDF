@@ -21,8 +21,8 @@ import re
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from ..services.referral_store import create_referrer, get_stats
 from ..routers.admin import require_admin
+from ..services.referral_store import create_referrer, get_stats
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
