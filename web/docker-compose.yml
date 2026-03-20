@@ -1,0 +1,61 @@
+# ============================================================
+# BannerPrint — docker-compose.yml
+# Сервисы: api (FastAPI) + nginx_web (реверс-прокси + статика)
+# ============================================================
+
+version: "3.9"
+
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bannerprint_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Данные БД — вне контейнера (переживает пересборку)
+      - bannerprint_data:/app/data
+      # Шрифты монтируются из хоста
+      - /home/deploy/banner_web/fonts:/app/fonts:ro
+    expose:
+      - "8000"
+    networks:
+      - bannerprint_net
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  nginx_web:
+    image: nginx:1.25-alpine
+    container_name: bannerprint_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # Статика фронтенда
+      - ./frontend:/app/frontend:ro
+      # SSL-сертификаты (Let's Encrypt через certbot на хосте)
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/log/nginx:/var/log/nginx
+    networks:
+      - bannerprint_net
+    depends_on:
+      - api
+
+volumes:
+  bannerprint_data:
+    name: bannerprint_data
+
+networks:
+  bannerprint_net:
+    name: bannerprint_net
