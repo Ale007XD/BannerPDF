@@ -18,10 +18,11 @@ services:
     volumes:
       # Данные БД — вне контейнера (переживает пересборку)
       - bannerprint_data:/app/data
-      # Шрифты монтируются из хоста
-      - /home/bannerpdf/banner_web/fonts:/app/fonts:ro
-      # ICC-профили печати монтируются из хоста
-      - /home/bannerpdf/banner_web/profiles:/profiles:ro
+      # Шрифты и профили — из репо, монтируем относительно
+      - ./fonts:/app/fonts:ro
+      - ./profiles:/profiles:ro
+      # templates.json — из репо
+      - ./templates.json:/app/templates.json:ro
     expose:
       - "8000"
     networks:
@@ -44,9 +45,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-      # Статика фронтенда
       - ./frontend:/app/frontend:ro
-      # SSL-сертификаты (Let's Encrypt через certbot на хосте)
       - /etc/letsencrypt:/etc/letsencrypt:ro
       - /var/log/nginx:/var/log/nginx
     networks:
