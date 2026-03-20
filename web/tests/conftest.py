@@ -6,12 +6,11 @@ conftest.py
 Ключевые решения:
   - БД во временном файле (tmp_path per-test, WEB_DB_PATH перекрывается monkeypatch)
   - ProcessPoolExecutor мокается — GS не нужен
-  - create_payment мокается — Tona API не дёргается
+  - create_payment мокается — selfwork signature считается локально, внешних запросов нет
   - AsyncClient из httpx для тестирования FastAPI
 """
 
 import hashlib
-import hmac
 import sqlite3
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -39,9 +38,8 @@ def set_env(tmp_db_path, monkeypatch):
     monkeypatch.setenv("WEB_DB_PATH", tmp_db_path)
     monkeypatch.setenv("SITE_PDF_PRICE", "299")
     monkeypatch.setenv("SITE_BASE_URL", "https://bannerprintbot.ru")
-    monkeypatch.setenv("TONA_WEBHOOK_SECRET", "test_secret_key")
-    monkeypatch.setenv("TONA_API_KEY", "test_tona_key")
-    monkeypatch.setenv("TONA_SHOP_ID", "test_shop")
+    monkeypatch.setenv("SELFWORK_API_KEY", "test_secret_key")
+    monkeypatch.setenv("SELFWORK_SHOP_ID", "test_shop")
     monkeypatch.setenv("ADMIN_TOKEN", "test_admin_token_32bytes_padding_x")
     monkeypatch.setenv("BOT_INTERNAL_SECRET", "test_bot_secret")
     monkeypatch.setenv("ALLOWED_ORIGINS", "http://testserver")
@@ -56,8 +54,6 @@ def init_test_db(tmp_db_path):
     Возвращает путь к файлу БД.
     """
     # conftest.py лежит в web/tests/, schema.sql — в web/api/db/
-    # Path(__file__).parent = web/tests/
-    # Path(__file__).parent.parent = web/
     schema_path = Path(__file__).parent.parent / "api" / "db" / "schema.sql"
     sql = schema_path.read_text(encoding="utf-8")
 
@@ -73,13 +69,17 @@ def init_test_db(tmp_db_path):
 async def client(set_env, init_test_db):
     """
     HTTPX AsyncClient с замоканными внешними зависимостями:
-      - create_payment  → возвращает фиктивный pay_url
+      - create_payment  → возвращает тестовые данные для виджета (без HTTP к selfwork)
       - render_preview_base64 → возвращает строку-заглушку
       - ProcessPoolExecutor  → не запускается
     """
+    # Тестовая подпись — selfwork signature для фиктивного заказа
+    # create_payment не делает HTTP, но мокаем для детерминизма (фиксированный order_id недоступен)
     mock_payment = AsyncMock(return_value={
-        "pay_url": "https://pay.tona.ru/test123",
-        "payment_id": "tona_test_id",
+        "amount_kopecks": 29900,
+        "signature":      "test_selfwork_signature_hex",
+        "item_name":      "Печатный баннер (PDF)",
+        "quantity":       1,
     })
 
     # Заглушка превью — base64 однопиксельного JPEG
@@ -114,13 +114,16 @@ async def client(set_env, init_test_db):
 # Вспомогательные функции для тестов webhook
 # ---------------------------------------------------------------------------
 
-def make_tona_signature(body: bytes, secret: str = "test_secret_key") -> str:
-    """Генерирует корректную HMAC-SHA256 подпись для тестового webhook."""
-    return hmac.new(
-        secret.encode("utf-8"),
-        body,
-        hashlib.sha256,
-    ).hexdigest()
+def make_selfwork_signature(order_id: str, amount_kopecks: int,
+                             secret: str = "test_secret_key") -> str:
+    """
+    Генерирует корректную SHA256 подпись для тестового callback selfwork.
+
+    Алгоритм: SHA256(order_id + amount_kopecks + api_key)
+    Соответствует verify_selfwork_callback() в services/payment.py.
+    """
+    raw = str(order_id) + str(amount_kopecks) + secret
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -128,17 +131,17 @@ def make_tona_signature(body: bytes, secret: str = "test_secret_key") -> str:
 # ---------------------------------------------------------------------------
 
 VALID_CONFIG = {
-    "size_key": "1x0.5",
-    "bg_color": "Белый",
+    "size_key":   "1x0.5",
+    "bg_color":   "Белый",
     "text_color": "Черный",
-    "font": "Golos Text",
+    "font":       "Golos Text",
     "text_lines": [{"text": "Тест баннер", "scale": 1.0}],
 }
 
 VALID_ORDER_PAYLOAD = {
-    "size_key": "1x0.5",
-    "bg_color": "Белый",
+    "size_key":   "1x0.5",
+    "bg_color":   "Белый",
     "text_color": "Черный",
-    "font": "Golos Text",
+    "font":       "Golos Text",
     "text_lines": [{"text": "Тест баннер", "scale": 1.0}],
 }
