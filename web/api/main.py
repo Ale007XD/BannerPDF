@@ -23,10 +23,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .db import init_db
-from .routers import order, payment, preview, download, admin, referral, corp_api, batch
-from .services import renderer, batch_worker
-from .services.token_store import cleanup_expired as cleanup_tokens
+from .routers import admin, batch, corp_api, download, order, payment, preview, referral
+from .services import batch_worker, renderer
 from .services.order_store import cleanup_expired as cleanup_orders
+from .services.token_store import cleanup_expired as cleanup_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +123,5 @@ async def health():
     return {"status": "ok", "service": "bannerprint"}
 
 # Статика фронтенда
-import os as _os
-if _os.path.isdir(FRONTEND_DIR):
+if os.path.isdir(FRONTEND_DIR):
     app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
