@@ -31,21 +31,22 @@ jobs:
           cache: pip
           cache-dependency-path: |
             web/requirements.txt
-            web/requirements-test.txt
+            requirements-test.txt
 
       - name: Установка зависимостей
         run: |
           pip install --upgrade pip
           pip install -r web/requirements.txt
-          pip install -r web/requirements-test.txt
+          pip install -r requirements-test.txt
 
       # ------------------------------------------------------------------
       # Линтер: ruff (быстрый, покрывает pyflakes + pycodestyle)
+      # ruff.toml в корне репо задаёт select, ignore и known-first-party
       # ------------------------------------------------------------------
       - name: Ruff — проверка стиля и импортов
         run: |
           pip install ruff==0.4.4
-          ruff check web/api/ web/tests/ --select E,F,I --ignore E501
+          ruff check web/api/ web/tests/
 
       # ------------------------------------------------------------------
       # Pytest: юнит + API тесты (без GS, без реального Pillow-рендера)
