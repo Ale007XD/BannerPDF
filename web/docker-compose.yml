@@ -19,9 +19,9 @@ services:
       # Данные БД — вне контейнера (переживает пересборку)
       - bannerprint_data:/app/data
       # Шрифты монтируются из хоста
-      - /home/deploy/banner_web/fonts:/app/fonts:ro
-      # ICC-профили печати монтируются из хоста (отдельно — можно добавлять новые)
-      - /home/deploy/banner_web/profiles:/profiles:ro
+      - /home/bannerpdf/banner_web/fonts:/app/fonts:ro
+      # ICC-профили печати монтируются из хоста
+      - /home/bannerpdf/banner_web/profiles:/profiles:ro
     expose:
       - "8000"
     networks:
