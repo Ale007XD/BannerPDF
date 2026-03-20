@@ -4,7 +4,7 @@ conftest.py
 Общие фикстуры для тестов BannerPrint.
 
 Ключевые решения:
-  - БД в :memory: (переменная WEB_DB_PATH=:memory: через monkeypatch/env)
+  - БД во временном файле (tmp_path per-test, WEB_DB_PATH перекрывается monkeypatch)
   - ProcessPoolExecutor мокается — GS не нужен
   - create_payment мокается — Tona API не дёргается
   - AsyncClient из httpx для тестирования FastAPI
@@ -95,8 +95,9 @@ async def client(set_env, init_test_db):
     mock_preview = MagicMock(return_value=tiny_jpeg_b64)
 
     with (
-        patch("web.api.services.payment.create_payment", mock_payment),
-        patch("web.api.services.renderer.render_preview_base64", mock_preview),
+        # Патчим в модулях-потребителях (from ... import создаёт локальную ссылку)
+        patch("web.api.routers.order.create_payment", mock_payment),
+        patch("web.api.routers.preview.render_preview_base64", mock_preview),
         patch("web.api.services.renderer.ProcessPoolExecutor"),
     ):
         # Импортируем app после выставления env и патчей
