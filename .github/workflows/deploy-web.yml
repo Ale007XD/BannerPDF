@@ -27,7 +27,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key:      ${{ secrets.VPS_SSH_KEY }}
           source:   "web/"
-          target:   "/home/deploy/banner_web"
+          target:   "banner_web"
           strip_components: 1   # убираем префикс web/
 
       - name: Перезапуск контейнеров
