@@ -54,7 +54,7 @@ jobs:
       - name: Pytest
         env:
           # Тестовые значения — не секреты, только для CI
-          WEB_DB_PATH: ":memory:"          # переопределяется в conftest через tmp_path
+          # WEB_DB_PATH намеренно не задан — conftest выставляет tmp_path per-test
           SITE_PDF_PRICE: "299"
           SITE_BASE_URL: "https://bannerprintbot.ru"
           TONA_WEBHOOK_SECRET: "ci_test_secret"
