@@ -1,20 +1,30 @@
 """
 payment.py (router)
 ~~~~~~~~~~~~~~~~~~~
-Webhook от Tona: POST /api/payment/callback
+Webhook от Сам.Эквайринг: POST /api/payment/callback
 
 КРИТИЧЕСКИ ВАЖНО:
-  verify_tona_signature() вызывается ПЕРВЫМ, до любой бизнес-логики.
+  verify_selfwork_callback() вызывается ПЕРВЫМ, до любой бизнес-логики.
   Пропуск верификации — P0 уязвимость (подделка webhook = бесплатные PDF).
+
+Формат тела webhook от selfwork (application/json):
+  {
+    "event":     "payment.succeeded",
+    "order_id":  "<uuid>",
+    "amount":    <копейки>,
+    "signature": "<sha256hex>"
+  }
+
+Подпись: SHA256(order_id + amount + SELFWORK_API_KEY)
 """
 
 import logging
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from ..db import get_db
 from ..routers.order import OrderStatus, transition
-from ..services.payment import verify_tona_signature
+from ..services.payment import verify_selfwork_callback
 from ..services.referral_store import accrue_commission
 from ..services.token_store import create_token
 
@@ -23,50 +33,53 @@ router = APIRouter()
 
 
 @router.post("/payment/callback")
-async def payment_callback(
-    request: Request,
-    x_tona_signature: str = Header(..., alias="X-Tona-Signature"),
-):
+async def payment_callback(request: Request):
     """
-    Webhook от Tona при успешной оплате.
+    Webhook от selfwork при успешной оплате.
 
     Порядок обработки (менять нельзя):
-      1. HMAC-SHA256 верификация подписи (P0)
-      2. Парсинг тела
-      3. FSM transition: pending → paid
-      4. Создание download-токена
-      5. FSM transition: paid → token_issued
-      6. Начисление реферальной комиссии (если есть ref_code)
+      1. Парсинг тела (нужен для верификации)
+      2. SHA256 верификация подписи из поля signature (P0)
+      3. Фильтрация: обрабатываем только event='payment.succeeded'
+      4. FSM transition: pending → paid
+      5. Создание download-токена
+      6. FSM transition: paid → token_issued
+      7. Начисление реферальной комиссии (если есть ref_code)
     """
-    # --- ШАГ 1: верификация подписи (ПЕРВЫМ, до чего угодно) ---
-    raw_body = await request.body()
-    if not verify_tona_signature(raw_body, x_tona_signature):
-        logger.warning(
-            "Webhook: неверная подпись X-Tona-Signature. IP=%s",
-            request.client.host if request.client else "unknown",
-        )
-        raise HTTPException(status_code=403, detail="Неверная подпись webhook")
-
-    # --- ШАГ 2: парсинг тела ---
+    # --- ШАГ 1: парсинг тела ---
     try:
         payload = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Невалидный JSON")
 
-    order_id = payload.get("order_id")
-    status   = payload.get("status")
+    order_id  = payload.get("order_id")
+    amount    = payload.get("amount")      # копейки
+    event     = payload.get("event")
+    signature = payload.get("signature", "")
 
     if not order_id:
         raise HTTPException(status_code=400, detail="Отсутствует order_id")
 
-    logger.info("Webhook Tona: order_id=%s status=%s", order_id, status)
+    if amount is None:
+        raise HTTPException(status_code=400, detail="Отсутствует amount")
 
-    # Обрабатываем только успешную оплату
-    if status != "paid":
-        logger.info("Webhook: статус %s для %s — игнорируем", status, order_id)
+    # --- ШАГ 2: верификация подписи (ПЕРВЫМ после парсинга, до любой логики) ---
+    if not verify_selfwork_callback(order_id, int(amount), signature):
+        logger.warning(
+            "Webhook: неверная подпись. order_id=%s, IP=%s",
+            order_id,
+            request.client.host if request.client else "unknown",
+        )
+        raise HTTPException(status_code=403, detail="Неверная подпись webhook")
+
+    logger.info("Webhook selfwork: order_id=%s event=%s", order_id, event)
+
+    # --- ШАГ 3: обрабатываем только успешную оплату ---
+    if event != "payment.succeeded":
+        logger.info("Webhook: событие %r для %s — игнорируем", event, order_id)
         return {"ok": True}
 
-    # --- ШАГ 3: FSM pending → paid ---
+    # --- ШАГ 4: FSM pending → paid ---
     try:
         transition(order_id, "webhook_paid")
     except ValueError as e:
@@ -78,10 +91,10 @@ async def payment_callback(
             return {"ok": True}
         raise HTTPException(status_code=422, detail=str(e))
 
-    # --- ШАГ 4: создание download-токена ---
+    # --- ШАГ 5: создание download-токена ---
     create_token(order_id)
 
-    # --- ШАГ 5: FSM paid → token_issued ---
+    # --- ШАГ 6: FSM paid → token_issued ---
     try:
         transition(order_id, "issue_token")
     except ValueError as e:
@@ -89,7 +102,7 @@ async def payment_callback(
         # Не откатываем — токен создан, пользователь получит PDF через поллинг
         raise HTTPException(status_code=500, detail="Ошибка обновления статуса")
 
-    # --- ШАГ 6: реферальная комиссия ---
+    # --- ШАГ 7: реферальная комиссия ---
     with get_db() as conn:
         row = conn.execute(
             "SELECT ref_code, amount_rub FROM web_orders WHERE id = ?",

@@ -6,11 +6,20 @@ order.py
 Содержит:
   - FSM OrderStatus(str, Enum)
   - transition(order_id, event) — единственная точка изменения статуса
-  - POST /api/order — создание заказа + платёж Tona
+  - POST /api/order — создание заказа + подготовка данных для виджета selfwork
   - GET  /api/payment/status/{order_id} — статус для поллинга с фронтенда
   - GET  /api/templates — список доступных параметров
 
 ВАЖНО: прямой UPDATE status в обход transition() запрещён.
+
+Ответ POST /api/order:
+  {
+    "order_id":      "<uuid>",
+    "amount_kopecks": <int>,   -- сумма в копейках для формы виджета
+    "signature":     "<hex>",  -- SHA256 для selfwork init
+    "item_name":     "<str>",  -- название товара в чеке
+    "quantity":      1
+  }
 """
 
 import json
@@ -113,17 +122,17 @@ def transition(order_id: str, event: str) -> OrderStatus:
 # Pydantic-модели
 # ---------------------------------------------------------------------------
 class TextLine(BaseModel):
-    text:  str  = Field(..., max_length=120)
+    text:  str   = Field(..., max_length=120)
     scale: float = Field(default=1.0, ge=0.3, le=1.5)
 
 
 class OrderRequest(BaseModel):
-    size_key:   str       = Field(...)
-    bg_color:   str       = Field(...)
-    text_color: str       = Field(...)
-    font:       str       = Field(...)
+    size_key:   str            = Field(...)
+    bg_color:   str            = Field(...)
+    text_color: str            = Field(...)
+    font:       str            = Field(...)
     text_lines: list[TextLine] = Field(..., min_length=1, max_length=6)
-    ref_code:   str | None = Field(default=None, min_length=8, max_length=8)
+    ref_code:   str | None     = Field(default=None, min_length=8, max_length=8)
 
     @field_validator("ref_code")
     @classmethod
@@ -169,13 +178,13 @@ async def get_templates():
 @router.post("/order")
 async def create_order(req: OrderRequest):
     """
-    Создаёт заказ и возвращает ссылку на оплату Tona.
+    Создаёт заказ и возвращает данные для инициализации виджета selfwork.
 
     1. Валидирует конфиг баннера
     2. Сохраняет заказ в web_orders (status=pending)
     3. Сохраняет config_json в pending_orders (TTL 30 мин)
-    4. Создаёт платёж Tona
-    5. Возвращает {order_id, pay_url}
+    4. Вычисляет подпись selfwork
+    5. Возвращает {order_id, amount_kopecks, signature, item_name, quantity}
     """
     import uuid
 
@@ -219,7 +228,7 @@ async def create_order(req: OrderRequest):
     # Сохраняем в pending_orders (TTL-буфер для webhook)
     save_pending(order_id, config)
 
-    # Создаём платёж Tona
+    # Подготавливаем данные для виджета (без HTTP-запроса к selfwork)
     try:
         payment = await create_payment(
             order_id=order_id,
@@ -227,11 +236,17 @@ async def create_order(req: OrderRequest):
             description=f"Баннер {req.size_key} — BannerPrint",
         )
     except Exception as e:
-        logger.error("Ошибка создания платежа для заказа %s: %s", order_id, e)
-        raise HTTPException(status_code=502, detail="Ошибка платёжного сервиса. Попробуйте позже.")
+        logger.error("Ошибка подготовки платежа для заказа %s: %s", order_id, e)
+        raise HTTPException(status_code=500, detail="Ошибка подготовки платежа. Попробуйте позже.")
 
     logger.info("Создан заказ %s, размер=%s, сумма=%d руб", order_id, req.size_key, amount_rub)
-    return {"order_id": order_id, "pay_url": payment["pay_url"]}
+    return {
+        "order_id":       order_id,
+        "amount_kopecks": payment["amount_kopecks"],
+        "signature":      payment["signature"],
+        "item_name":      payment["item_name"],
+        "quantity":       payment["quantity"],
+    }
 
 
 # ---------------------------------------------------------------------------
