@@ -14,8 +14,8 @@ import logging
 from concurrent.futures import ProcessPoolExecutor
 
 from .banner_generator import create_final_pdf, create_preview_jpeg
-from .sanitizer import sanitize_text_lines, validate_banner_config
 from .config import BANNER_SIZES
+from .sanitizer import sanitize_text_lines, validate_banner_config
 
 logger = logging.getLogger(__name__)
 

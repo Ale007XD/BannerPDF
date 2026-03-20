@@ -8,7 +8,6 @@ api_key_store.py
 
 import hashlib
 import logging
-import os
 import secrets
 from base64 import urlsafe_b64encode
 from datetime import datetime, timezone
