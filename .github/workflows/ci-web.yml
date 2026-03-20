@@ -1,0 +1,80 @@
+name: CI — BannerPrint Web
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "web/**"
+      - ".github/workflows/ci-web.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/**"
+
+jobs:
+  test:
+    name: Линтер + тесты
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: .   # pytest.ini лежит в корне репо
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            web/requirements.txt
+            requirements-test.txt
+
+      - name: Установка зависимостей
+        run: |
+          pip install --upgrade pip
+          pip install -r web/requirements.txt
+          pip install -r requirements-test.txt
+
+      # ------------------------------------------------------------------
+      # Линтер: ruff (быстрый, покрывает pyflakes + pycodestyle)
+      # ------------------------------------------------------------------
+      - name: Ruff — проверка стиля и импортов
+        run: |
+          pip install ruff==0.4.4
+          ruff check web/api/ web/tests/ --select E,F,I --ignore E501
+
+      # ------------------------------------------------------------------
+      # Pytest: юнит + API тесты (без GS, без реального Pillow-рендера)
+      # ------------------------------------------------------------------
+      - name: Pytest
+        env:
+          # Тестовые значения — не секреты, только для CI
+          WEB_DB_PATH: ":memory:"          # переопределяется в conftest через tmp_path
+          SITE_PDF_PRICE: "299"
+          SITE_BASE_URL: "https://bannerprintbot.ru"
+          TONA_WEBHOOK_SECRET: "ci_test_secret"
+          TONA_API_KEY: "ci_test_key"
+          TONA_SHOP_ID: "ci_test_shop"
+          ADMIN_TOKEN: "ci_admin_token_padded_to_32bytes__"
+          BOT_INTERNAL_SECRET: "ci_bot_secret"
+          ALLOWED_ORIGINS: "http://testserver"
+        run: |
+          # PYTHONPATH так, чтобы `from web.api...` работало
+          PYTHONPATH=$PYTHONPATH:$(pwd) pytest web/tests/ -v --tb=short
+
+      # ------------------------------------------------------------------
+      # Отчёт о покрытии (опционально, не блокирует CI)
+      # ------------------------------------------------------------------
+      - name: Coverage (информационный)
+        continue-on-error: true
+        run: |
+          pip install pytest-cov
+          PYTHONPATH=$PYTHONPATH:$(pwd) pytest web/tests/ \
+            --cov=web/api \
+            --cov-report=term-missing \
+            --cov-fail-under=0 \
+            -q
