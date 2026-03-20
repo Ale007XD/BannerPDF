@@ -55,7 +55,10 @@ def init_test_db(tmp_db_path):
     Инициализирует схему в тестовой БД.
     Возвращает путь к файлу БД.
     """
-    schema_path = Path(__file__).parent.parent / "web" / "api" / "db" / "schema.sql"
+    # conftest.py лежит в web/tests/, schema.sql — в web/api/db/
+    # Path(__file__).parent = web/tests/
+    # Path(__file__).parent.parent = web/
+    schema_path = Path(__file__).parent.parent / "api" / "db" / "schema.sql"
     sql = schema_path.read_text(encoding="utf-8")
 
     conn = sqlite3.connect(tmp_db_path)

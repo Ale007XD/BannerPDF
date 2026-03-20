@@ -44,12 +44,13 @@ class TestSanitizeLine:
         assert len(result) == MAX_LINE_LENGTH
 
     def test_normalizes_unicode_nfc(self):
-        """Unicode нормализуется в NFC."""
-        # NFD: е + combining acute (два кодпоинта)
-        nfd = "е\u0301"  # е + combining acute
+        """Unicode нормализуется в NFC — NFD-строка схлопывается в NFC."""
+        # "café" в NFD: e + combining acute (два кодпоинта для é)
+        nfd = "cafe\u0301"   # 5 кодпоинтов (NFD)
         result = sanitize_line(nfd)
-        # NFC: ё или é — один кодпоинт
-        assert len(result) == 1
+        # NFC: é — один кодпоинт, итого 4 символа
+        assert result == "café"
+        assert len(result) == 4
 
     def test_empty_string_returns_empty(self):
         """Пустая строка → пустая строка."""
