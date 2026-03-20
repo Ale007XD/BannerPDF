@@ -31,13 +31,13 @@ jobs:
           cache: pip
           cache-dependency-path: |
             web/requirements.txt
-            requirements-test.txt
+            web/requirements-test.txt
 
       - name: Установка зависимостей
         run: |
           pip install --upgrade pip
           pip install -r web/requirements.txt
-          pip install -r requirements-test.txt
+          pip install -r web/requirements-test.txt
 
       # ------------------------------------------------------------------
       # Линтер: ruff (быстрый, покрывает pyflakes + pycodestyle)
