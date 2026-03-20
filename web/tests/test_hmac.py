@@ -14,6 +14,9 @@ test_hmac.py
 
 import hashlib
 import hmac
+import importlib
+
+import web.api.services.payment as pay_module_ref
 
 
 def _sign(body: bytes, secret: str) -> str:
@@ -53,10 +56,8 @@ class TestVerifyTonaSignature:
         """Не задан TONA_WEBHOOK_SECRET → False (нельзя верифицировать)."""
         monkeypatch.setenv("TONA_WEBHOOK_SECRET", "")
         # Перезагружаем модуль, чтобы подхватить пустой env
-        import importlib
-        import web.api.services.payment as pay_module
-        importlib.reload(pay_module)
-        assert pay_module.verify_tona_signature(b"body", "anysig") is False
+        importlib.reload(pay_module_ref)
+        assert pay_module_ref.verify_tona_signature(b"body", "anysig") is False
 
     def test_uppercase_signature_accepted(self, set_env):
         """Подпись в верхнем регистре — должна приниматься (lower() применяется)."""
