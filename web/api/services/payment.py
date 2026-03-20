@@ -35,12 +35,14 @@ def verify_tona_signature(raw_body: bytes, signature_header: str) -> bool:
     Возвращает True если подпись верна, иначе False.
     ВЫЗЫВАТЬ ПЕРВЫМ перед любой обработкой тела запроса.
     """
-    if not TONA_SECRET:
+    # Читаем секрет в момент вызова — позволяет менять через os.environ в тестах
+    secret = os.getenv("TONA_WEBHOOK_SECRET", "")
+    if not secret:
         logger.error("TONA_WEBHOOK_SECRET не задан — верификация невозможна")
         return False
 
     expected = hmac.new(
-        TONA_SECRET.encode("utf-8"),
+        secret.encode("utf-8"),
         raw_body,
         hashlib.sha256,
     ).hexdigest()
