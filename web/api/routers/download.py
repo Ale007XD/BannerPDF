@@ -15,9 +15,9 @@ import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
-from ..services.token_store import consume_token
-from ..services.renderer import render_pdf_sync, get_executor
 from ..db import get_db
+from ..services.renderer import get_executor, render_pdf_sync
+from ..services.token_store import consume_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

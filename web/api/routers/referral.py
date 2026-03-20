@@ -19,7 +19,6 @@ import os
 import re
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from ..services.referral_store import create_referrer, get_stats

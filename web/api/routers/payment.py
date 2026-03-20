@@ -12,11 +12,11 @@ import logging
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
-from ..routers.order import transition, OrderStatus
-from ..services.payment import verify_tona_signature
-from ..services.token_store import create_token
-from ..services.referral_store import accrue_commission
 from ..db import get_db
+from ..routers.order import OrderStatus, transition
+from ..services.payment import verify_tona_signature
+from ..services.referral_store import accrue_commission
+from ..services.token_store import create_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -79,7 +79,7 @@ async def payment_callback(
         raise HTTPException(status_code=422, detail=str(e))
 
     # --- ШАГ 4: создание download-токена ---
-    token = create_token(order_id)
+    create_token(order_id)
 
     # --- ШАГ 5: FSM paid → token_issued ---
     try:

@@ -19,14 +19,14 @@ import os
 from datetime import datetime, timezone
 from enum import Enum
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from ..db import get_db
+from ..services.config import BANNER_SIZES
 from ..services.order_store import save_pending
 from ..services.payment import create_payment
-from ..services.sanitizer import validate_banner_config, sanitize_text_lines
-from ..services.config import BANNER_SIZES
+from ..services.sanitizer import sanitize_text_lines, validate_banner_config
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -184,7 +184,7 @@ async def create_order(req: OrderRequest):
         "bg_color":   req.bg_color,
         "text_color": req.text_color,
         "font":       req.font,
-        "text_lines": [{"text": l.text, "scale": l.scale} for l in req.text_lines],
+        "text_lines": [{"text": line.text, "scale": line.scale} for line in req.text_lines],
     }
 
     errors = validate_banner_config(config)

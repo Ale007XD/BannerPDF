@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..services.renderer import render_preview_base64
-from ..services.sanitizer import validate_banner_config, sanitize_text_lines
+from ..services.sanitizer import sanitize_text_lines, validate_banner_config
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -45,7 +45,7 @@ async def generate_preview(req: PreviewRequest):
         "bg_color":   req.bg_color,
         "text_color": req.text_color,
         "font":       req.font,
-        "text_lines": [{"text": l.text, "scale": l.scale} for l in req.text_lines],
+        "text_lines": [{"text": item.text, "scale": item.scale} for item in req.text_lines],
     }
 
     errors = validate_banner_config(config)
