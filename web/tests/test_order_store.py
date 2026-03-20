@@ -15,10 +15,7 @@ test_order_store.py
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from web.api.services.order_store import (
-    PENDING_TTL_SECONDS,
     cleanup_expired,
     delete_pending,
     get_pending,

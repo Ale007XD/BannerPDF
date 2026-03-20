@@ -14,9 +14,6 @@ test_hmac.py
 
 import hashlib
 import hmac
-import os
-
-import pytest
 
 
 def _sign(body: bytes, secret: str) -> str:

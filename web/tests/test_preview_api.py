@@ -16,7 +16,6 @@ render_preview_base64 замокан в conftest — реальный Pillow н�
 """
 
 import pytest
-from conftest import VALID_ORDER_PAYLOAD
 
 
 VALID_PREVIEW = {

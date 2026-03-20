@@ -12,13 +12,10 @@ HTTP-тесты webhook /api/payment/callback.
   - Валидный webhook на существующий заказ → 200, FSM → token_issued
 """
 
-import hashlib
-import hmac
 import json
 import sqlite3
 
 import pytest
-import pytest_asyncio
 from conftest import VALID_ORDER_PAYLOAD, make_tona_signature
 
 

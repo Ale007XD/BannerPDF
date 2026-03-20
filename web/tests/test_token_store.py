@@ -13,13 +13,9 @@ test_token_store.py
 """
 
 import sqlite3
-import time
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from web.api.services.token_store import (
-    TOKEN_TTL_SECONDS,
     cleanup_expired,
     consume_token,
     create_token,

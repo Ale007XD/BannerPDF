@@ -12,10 +12,7 @@ conftest.py
 
 import hashlib
 import hmac
-import json
-import os
 import sqlite3
-import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -83,7 +80,6 @@ async def client(set_env, init_test_db):
     })
 
     # Заглушка превью — base64 однопиксельного JPEG
-    import base64
     tiny_jpeg_b64 = (
         "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U"
         "HRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgN"

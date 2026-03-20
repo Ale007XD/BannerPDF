@@ -18,7 +18,6 @@ import pytest
 
 from web.api.services.renderer import build_render_data, get_executor, set_executor
 
-
 VALID_CONFIG = {
     "size_key": "1x0.5",
     "bg_color": "Белый",

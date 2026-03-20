@@ -10,8 +10,6 @@ test_sanitizer.py
   - validate_banner_config: неверные поля → соответствующие сообщения
 """
 
-import pytest
-
 from web.api.services.sanitizer import (
     MAX_LINE_LENGTH,
     MAX_LINES,

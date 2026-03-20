@@ -15,7 +15,6 @@ HTTP-тесты роутера заказов.
 """
 
 import pytest
-import pytest_asyncio
 from conftest import VALID_ORDER_PAYLOAD
 
 
