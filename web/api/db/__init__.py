@@ -15,12 +15,11 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-DB_PATH = os.getenv("WEB_DB_PATH", "/app/data/banner_web.db")
-
 
 def _get_connection() -> sqlite3.Connection:
-    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    db_path = os.getenv("WEB_DB_PATH", "/app/data/banner_web.db")
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
