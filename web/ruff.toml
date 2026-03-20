@@ -1,0 +1,7 @@
+# ruff.toml — конфигурация линтера для BannerPrint
+[lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[lint.isort]
+known-first-party = ["web"]
