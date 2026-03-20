@@ -1,0 +1,49 @@
+# ============================================================
+# deploy-web.yml
+# Деплой BannerPrint сайта на VPS при push в main
+# ============================================================
+
+name: Deploy BannerPrint Web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/deploy-web.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Копирование файлов на VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          source:   "web/"
+          target:   "/home/deploy/banner_web"
+          strip_components: 1   # убираем префикс web/
+
+      - name: Перезапуск контейнеров
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd /home/deploy/banner_web
+            docker compose pull --quiet || true
+            docker compose build --no-cache api
+            docker compose up -d --remove-orphans
+            # Ждём healthcheck
+            sleep 10
+            docker compose ps
+            curl -sf http://localhost:8000/api/health || (echo "Health check failed" && exit 1)
+            echo "Деплой успешен"
