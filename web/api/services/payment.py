@@ -1,92 +1,126 @@
 """
 payment.py
 ~~~~~~~~~~
-Верификация подписи Tona webhook и вызов API оплаты.
+Интеграция с платёжным провайдером Сам.Эквайринг (selfwork.ru).
 
-КРИТИЧЕСКИ ВАЖНО: verify_tona_signature() вызывается ПЕРВЫМ
+Схема работы (виджет):
+  1. POST /api/order — бэкенд считает signature, возвращает {order_id, signature, amount}
+  2. Фронтенд формирует <form> с этими данными и вызывает виджет smzPaymentWidget —
+     браузер сам отправляет запрос к selfwork /init, пользователь оплачивает во всплывающем окне
+  3. Selfwork присылает POST /api/payment/callback с JSON-телом (без заголовка подписи)
+  4. Бэкенд верифицирует: SHA256(order_id + amount + SELFWORK_API_KEY) == payload.signature
+
+КРИТИЧЕСКИ ВАЖНО: verify_selfwork_callback() вызывается ПЕРВЫМ
 в /api/payment/callback, до любой бизнес-логики.
-Пропуск верификации — P0 уязвимость (подделка webhook).
+Пропуск верификации — P0 уязвимость (подделка webhook = бесплатные PDF).
+
+Переменные окружения:
+  SELFWORK_SHOP_ID  — ID магазина (для формы виджета, используется фронтендом)
+  SELFWORK_API_KEY  — секретный ключ для подписи
+  SITE_PDF_PRICE    — цена в рублях (конвертируется в копейки для selfwork)
+  SITE_BASE_URL     — базовый URL сайта
 """
 
 import hashlib
-import hmac
+import hmac as _hmac
 import logging
 import os
 
-import httpx
-
 logger = logging.getLogger(__name__)
 
-TONA_API_BASE  = "https://api.tona.ru/v1"
-TONA_API_KEY   = os.getenv("TONA_API_KEY", "")
-TONA_SHOP_ID   = os.getenv("TONA_SHOP_ID", "")
-TONA_SECRET    = os.getenv("TONA_WEBHOOK_SECRET", "")
-SITE_PDF_PRICE = int(os.getenv("SITE_PDF_PRICE", "299"))
-SITE_BASE_URL  = os.getenv("SITE_BASE_URL", "https://bannerprintbot.ru")
+SELFWORK_SHOP_ID = os.getenv("SELFWORK_SHOP_ID", "")
+SITE_PDF_PRICE   = int(os.getenv("SITE_PDF_PRICE", "299"))
+SITE_BASE_URL    = os.getenv("SITE_BASE_URL", "https://bannerprintbot.ru")
+
+# Название товара в чеке — одна позиция
+ITEM_NAME = "Печатный баннер (PDF)"
 
 
-def verify_tona_signature(raw_body: bytes, signature_header: str) -> bool:
+def _get_api_key() -> str:
+    """Читает SELFWORK_API_KEY в момент вызова — позволяет менять через os.environ в тестах."""
+    return os.getenv("SELFWORK_API_KEY", "")
+
+
+def compute_init_signature(order_id: str, amount_kopecks: int, item_name: str,
+                            quantity: int, item_amount: int) -> str:
     """
-    Проверяет HMAC-SHA256 подпись Tona webhook.
+    Вычисляет подпись для инициализации виджета selfwork.
 
-    Алгоритм: HMAC-SHA256(raw_body, TONA_WEBHOOK_SECRET)
-    Ожидается в заголовке X-Tona-Signature как hex-строка.
+    Алгоритм: SHA256(order_id + amount + item_name + quantity + item_amount + api_key)
+    Все значения конкатенируются как строки без разделителей.
+
+    amount       — полная сумма заказа в копейках (строка)
+    item_amount  — сумма за единицу позиции в копейках (строка)
+    quantity     — количество (строка)
+
+    Возвращает hex-строку нижнего регистра.
+    """
+    api_key = _get_api_key()
+    raw = (
+        str(order_id)
+        + str(amount_kopecks)
+        + str(item_name)
+        + str(quantity)
+        + str(item_amount)
+        + api_key
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def verify_selfwork_callback(order_id: str, amount_kopecks: int, signature: str) -> bool:
+    """
+    Верифицирует подпись входящего webhook от selfwork.
+
+    Алгоритм: SHA256(order_id + amount + api_key)
+    Подпись передаётся в поле signature JSON-тела (не в заголовке).
 
     Возвращает True если подпись верна, иначе False.
     ВЫЗЫВАТЬ ПЕРВЫМ перед любой обработкой тела запроса.
     """
-    # Читаем секрет в момент вызова — позволяет менять через os.environ в тестах
-    secret = os.getenv("TONA_WEBHOOK_SECRET", "")
-    if not secret:
-        logger.error("TONA_WEBHOOK_SECRET не задан — верификация невозможна")
+    api_key = _get_api_key()
+    if not api_key:
+        logger.error("SELFWORK_API_KEY не задан — верификация невозможна")
         return False
 
-    expected = hmac.new(
-        secret.encode("utf-8"),
-        raw_body,
-        hashlib.sha256,
-    ).hexdigest()
+    raw = str(order_id) + str(amount_kopecks) + api_key
+    expected = hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     # Константное время сравнения — защита от timing attack
-    return hmac.compare_digest(expected, signature_header.lower())
+    return _hmac.compare_digest(expected, signature.lower())
 
 
 async def create_payment(order_id: str, amount_rub: int, description: str) -> dict:
     """
-    Создаёт платёж в Tona.
-    Возвращает dict с полями: pay_url, payment_id.
+    Подготавливает данные для инициализации виджета selfwork.
 
-    Вызывается из POST /api/order.
+    НЕ делает HTTP-запрос к selfwork — запрос выполняет браузер через виджет.
+    Бэкенд только вычисляет подпись и возвращает параметры для <form>.
+
+    Возвращает dict:
+      amount_kopecks — сумма в копейках
+      signature      — SHA256 для формы виджета
+      item_name      — название товара в чеке
+      quantity       — количество (всегда 1)
     """
-    payload = {
-        "shop_id":     TONA_SHOP_ID,
-        "order_id":    order_id,
-        "amount":      amount_rub * 100,   # Tona принимает копейки
-        "currency":    "RUB",
-        "description": description,
-        "success_url": f"{SITE_BASE_URL}/?order={order_id}",
-        "fail_url":    f"{SITE_BASE_URL}/",
-        "webhook_url": f"{SITE_BASE_URL}/api/payment/callback",
-    }
+    amount_kopecks = amount_rub * 100
+    quantity       = 1
+    item_amount    = amount_kopecks  # одна позиция = вся сумма
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(
-            f"{TONA_API_BASE}/payments",
-            json=payload,
-            headers={"Authorization": f"Bearer {TONA_API_KEY}"},
-        )
+    signature = compute_init_signature(
+        order_id=order_id,
+        amount_kopecks=amount_kopecks,
+        item_name=ITEM_NAME,
+        quantity=quantity,
+        item_amount=item_amount,
+    )
 
-    if resp.status_code not in (200, 201):
-        logger.error(
-            "Tona API ошибка %d: %s", resp.status_code, resp.text[:500]
-        )
-        raise RuntimeError(
-            f"Tona API вернул {resp.status_code}: {resp.text[:200]}"
-        )
-
-    data = resp.json()
-    logger.info("Создан платёж Tona: order_id=%s, payment_id=%s", order_id, data.get("id"))
+    logger.info(
+        "Подготовлен платёж selfwork: order_id=%s, amount=%d коп.",
+        order_id, amount_kopecks,
+    )
     return {
-        "pay_url":    data["pay_url"],
-        "payment_id": data.get("id"),
+        "amount_kopecks": amount_kopecks,
+        "signature":      signature,
+        "item_name":      ITEM_NAME,
+        "quantity":       quantity,
     }
