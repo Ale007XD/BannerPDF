@@ -721,10 +721,21 @@ el.buyBtn.addEventListener("click", async () => {
 el.payBtn.addEventListener("click", () => {
   hideModal(el.modalPayment);
 
-  // Формируем сообщение с order_id для идентификации заказа
-  const shortId = state.orderId ? state.orderId.slice(0, 8) : "???";
-  const tgText  = encodeURIComponent(
-    `Хочу баннер, заказ #${shortId}\nОплачу по СБП`
+  // Размер: типовой "3x2 м" или кастомный "1200×800 мм"
+  const sizeLabel = state.sizeKey === "custom"
+    ? `${state.customW}\u00d7${state.customH}\u00a0мм`
+    : `${state.sizeKey}\u00a0м`;
+
+  // Дата и время на клиенте — позволяет определить заказ без БД
+  const now     = new Date();
+  const pad     = (n) => String(n).padStart(2, "0");
+  const dateStr = `${pad(now.getDate())}.${pad(now.getMonth() + 1)} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+  // 6 символов UUID в верхнем регистре — достаточно для идентификации
+  const shortId = state.orderId ? state.orderId.slice(0, 6).toUpperCase() : "??????";
+
+  const tgText = encodeURIComponent(
+    `Баннер ${sizeLabel}, 299 ₽\nЗаказ #${shortId} от ${dateStr}\nОплачу по СБП`
   );
   const tgUrl = `https://t.me/${CONTACT_TG}?text=${tgText}`;
 
