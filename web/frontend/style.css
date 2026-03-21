@@ -19,6 +19,7 @@
   --radius-sm:8px;
   --shadow:   0 2px 12px rgba(0,0,0,0.07);
   --shadow-lg:0 8px 32px rgba(0,0,0,0.12);
+  --header-h: 52px;
 }
 
 /* ---- Сброс ---- */
@@ -56,7 +57,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 14px 20px;
-  max-width: 480px;
+  max-width: 960px;
   margin: 0 auto;
 }
 
@@ -83,7 +84,7 @@ body {
   letter-spacing: 0.02em;
 }
 
-/* ---- Основной контент ---- */
+/* ---- Основной контент (мобиль — одна колонка) ---- */
 .main-content {
   max-width: 480px;
   margin: 0 auto;
@@ -91,6 +92,12 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* preview-col и settings-col на мобиле — просто блоки в потоке */
+.preview-col,
+.settings-col {
+  display: contents;
 }
 
 /* ---- Карточка ---- */
@@ -669,7 +676,7 @@ body {
 /* ---- Утилиты ---- */
 .hidden { display: none !important; }
 
-/* ---- Desktop-адаптация ---- */
+/* ---- Desktop: 520–819px — широкий одноколоночный ---- */
 @media (min-width: 520px) {
   .main-content {
     padding: 20px 0 40px;
@@ -684,5 +691,45 @@ body {
 
   .modal-overlay {
     align-items: center;
+  }
+}
+
+/* ---- Desktop: 820px+ — двухколоночный sticky-лейаут ---- */
+@media (min-width: 820px) {
+  .main-content {
+    max-width: 960px;
+    padding: 24px 24px 48px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto;
+    align-items: start;
+    gap: 20px;
+  }
+
+  /* Сбрасываем display:contents — теперь реальные колонки */
+  .preview-col {
+    display: block;
+    grid-column: 1;
+    grid-row: 1;
+    position: sticky;
+    top: calc(var(--header-h) + 16px);
+  }
+
+  .settings-col {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  /* Превью занимает всю ширину левой колонки */
+  .preview-card {
+    width: 100%;
+  }
+
+  /* Мин-высота wrap чуть выше на десктопе */
+  .preview-wrap {
+    min-height: 200px;
   }
 }
