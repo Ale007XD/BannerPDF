@@ -41,6 +41,9 @@ const state = {
   // Оплата
   orderId:   null,
   payUrl:    null,
+
+  // Список имён цветов из шаблона (для защиты от совпадения)
+  colorNames: [],
 };
 
 /* =====================================================================
@@ -104,8 +107,8 @@ async function loadTemplates() {
 
     // Привязываем события после рендера
     bindSizes();
-    bindSwatches(el.bgSwatches,  "bgColor");
-    bindSwatches(el.txtSwatches, "textColor");
+    bindSwatches(el.bgSwatches,  "bgColor",   "textColor");
+    bindSwatches(el.txtSwatches, "textColor", "bgColor");
     bindFonts();
 
   } catch (e) {
@@ -134,6 +137,9 @@ function renderSizes(sizes) {
 
 /** Рендерит свотчи цветов в оба контейнера. */
 function renderColors(colors) {
+  // Сохраняем список имён для защиты от совпадения
+  state.colorNames = colors.map((c) => c.name);
+
   [el.bgSwatches, el.txtSwatches].forEach((container, ci) => {
     container.innerHTML = "";
     colors.forEach((c, i) => {
@@ -183,6 +189,54 @@ function formatDimensions(w, h) {
 }
 
 /* =====================================================================
+   ЗАЩИТА ОТ СОВПАДЕНИЯ ЦВЕТОВ
+   ===================================================================== */
+
+/**
+ * Возвращает контейнер свотчей по имени поля состояния.
+ */
+function swatchContainerFor(field) {
+  return field === "bgColor" ? el.bgSwatches : el.txtSwatches;
+}
+
+/**
+ * Принудительно активирует свотч с указанным именем цвета в контейнере.
+ * Возвращает true если свотч найден и переключён.
+ */
+function activateSwatch(container, colorName) {
+  const swatches = container.querySelectorAll(".swatch");
+  for (const sw of swatches) {
+    if (sw.dataset.color === colorName) {
+      swatches.forEach((s) => s.classList.remove("active"));
+      sw.classList.add("active");
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Проверяет совпадение bgColor и textColor.
+ * Если совпадают — переключает oppositeField на первый доступный
+ * отличный от выбранного цвет и обновляет UI.
+ *
+ * @param {string} chosenField   — поле, которое только что изменили ("bgColor" | "textColor")
+ * @param {string} oppositeField — противоположное поле
+ */
+function resolveColorConflict(chosenField, oppositeField) {
+  if (state.bgColor !== state.textColor) return; // конфликта нет
+
+  // Ищем первый цвет, отличный от только что выбранного
+  const chosen = state[chosenField];
+  const fallback = state.colorNames.find((name) => name !== chosen);
+
+  if (!fallback) return; // только один цвет в системе — защита невозможна
+
+  state[oppositeField] = fallback;
+  activateSwatch(swatchContainerFor(oppositeField), fallback);
+}
+
+/* =====================================================================
    ПРИВЯЗКА СОБЫТИЙ — РАЗМЕР
    ===================================================================== */
 function bindSizes() {
@@ -199,13 +253,23 @@ function bindSizes() {
 /* =====================================================================
    ПРИВЯЗКА СОБЫТИЙ — ЦВЕТА
    ===================================================================== */
-function bindSwatches(container, field) {
+
+/**
+ * @param {HTMLElement} container    — контейнер свотчей
+ * @param {string}      field        — поле state ("bgColor" | "textColor")
+ * @param {string}      oppositeField — противоположное поле для проверки конфликта
+ */
+function bindSwatches(container, field, oppositeField) {
   container.addEventListener("click", (e) => {
     const sw = e.target.closest(".swatch");
     if (!sw) return;
     container.querySelectorAll(".swatch").forEach((s) => s.classList.remove("active"));
     sw.classList.add("active");
     state[field] = sw.dataset.color;
+
+    // Защита: если выбранный цвет совпал с противоположным — переключаем противоположный
+    resolveColorConflict(field, oppositeField);
+
     schedulePreview();
   });
 }
@@ -313,6 +377,7 @@ function buildConfig() {
    ===================================================================== */
 function renderTextLines() {
   el.textLines.innerHTML = "";
+
   state.lines.forEach((text, i) => {
     const row = document.createElement("div");
     row.className = "text-line-row";
