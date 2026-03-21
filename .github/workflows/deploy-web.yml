@@ -30,7 +30,7 @@ jobs:
           target:   "/home/bannerpdf/banner_web"
           strip_components: 1   # убираем префикс web/
 
-      - name: Перезапуск контейнеров
+      - name: Пересборка и перезапуск контейнеров
         uses: appleboy/ssh-action@v1.0.3
         with:
           host:     ${{ secrets.VPS_HOST }}
@@ -39,9 +39,18 @@ jobs:
           script: |
             set -e
             cd /home/bannerpdf/banner_web
+
+            echo "=== Пересборка образов без кэша ==="
             docker compose build --no-cache api
-            docker compose up -d --remove-orphans
-            sleep 10
+
+            echo "=== Перезапуск контейнеров ==="
+            docker compose up -d --force-recreate --remove-orphans
+
+            echo "=== Удаление висячих образов ==="
+            docker image prune -f
+
+            echo "=== Health check ==="
+            sleep 15
             docker compose ps
             curl -sf http://localhost:8000/api/health || (echo "Health check failed" && exit 1)
             echo "Деплой успешен"
