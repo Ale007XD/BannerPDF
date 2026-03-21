@@ -44,19 +44,21 @@ def build_render_data(config: dict) -> dict:
     Преобразует конфиг из API в формат для banner_generator.
     Валидирует и санитайзит входные данные.
 
-    config: {
-        "size_key": str,
-        "bg_color": str,
-        "text_color": str,
-        "text_lines": [{"text": str, "scale": float}, ...],
-        "font": str,
-    }
+    Поддерживает два режима задания размера:
+    - Типовой:   {"size_key": "3x2", ...}
+    - Кастомный: {"width_mm": 1200, "height_mm": 800, ...}
     """
     errors = validate_banner_config(config)
     if errors:
         raise ValueError("Ошибки валидации конфига: " + "; ".join(errors))
 
-    width_mm, height_mm = BANNER_SIZES[config["size_key"]]
+    # Резолвим размер: size_key имеет приоритет над width_mm/height_mm
+    if "size_key" in config and config["size_key"] is not None:
+        width_mm, height_mm = BANNER_SIZES[config["size_key"]]
+    else:
+        width_mm  = int(config["width_mm"])
+        height_mm = int(config["height_mm"])
+
     clean_lines = sanitize_text_lines(config["text_lines"])
 
     if not clean_lines:

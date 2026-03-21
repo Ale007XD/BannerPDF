@@ -63,13 +63,31 @@ def sanitize_text_lines(lines: list[dict]) -> list[dict]:
 def validate_banner_config(data: dict) -> list[str]:
     """
     Проверяет конфиг баннера. Возвращает список ошибок (пустой = OK).
+
+    Поддерживает два режима задания размера:
+    - Типовой:   {"size_key": "3x2", ...}
+    - Кастомный: {"width_mm": 1200, "height_mm": 800, ...}
     """
-    from .config import BANNER_SIZES, COLORS, FONTS
+    from .config import BANNER_SIZES, COLORS, FONTS, MIN_DIMENSION, MAX_DIMENSION
 
     errors: list[str] = []
 
-    if data.get("size_key") not in BANNER_SIZES:
-        errors.append(f"Неизвестный размер: {data.get('size_key')!r}")
+    # Валидация размера: size_key ИЛИ width_mm + height_mm
+    has_size_key   = "size_key" in data and data["size_key"] is not None
+    has_custom_dim = "width_mm" in data and "height_mm" in data
+
+    if has_size_key:
+        if data["size_key"] not in BANNER_SIZES:
+            errors.append(f"Неизвестный размер: {data['size_key']!r}")
+    elif has_custom_dim:
+        for field in ("width_mm", "height_mm"):
+            val = data[field]
+            if not isinstance(val, int) or not (MIN_DIMENSION <= val <= MAX_DIMENSION):
+                errors.append(
+                    f"{field} должен быть целым числом от {MIN_DIMENSION} до {MAX_DIMENSION} мм"
+                )
+    else:
+        errors.append("Необходимо указать size_key или width_mm + height_mm")
 
     if data.get("bg_color") not in COLORS:
         errors.append(f"Неизвестный цвет фона: {data.get('bg_color')!r}")
