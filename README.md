@@ -2,7 +2,7 @@
 
 Веб-сервис для самостоятельного создания и заказа печатных баннеров.
 Работает в связке с Telegram-ботом [@BannerPrintBot](https://t.me/BannerPrintBot).
-Сайт: [bannerprintbot.ru](https://bannerprintbot.ru)
+Сайт: [bannerbot.ru:8444](https://bannerbot.ru:8444)
 
 ---
 
@@ -31,9 +31,10 @@
 
 | | |
 |---|---|
-| Готовность | **85%** — код написан и проверен, готов к деплою |
-| Что готово | Весь бэкенд (P0 закрыты), фронтенд, схема БД, Nginx, Dockerfile, docker-compose, GitHub Actions |
-| Что осталось | Деплой на VPS · загрузка шрифтов и ICC-профиля · smoke-тест · реферальные команды бота |
+| Готовность | **92%** — сайт запущен, CI зелёный |
+| URL | `https://bannerbot.ru:8444` |
+| Что готово | Весь бэкенд (P0 закрыты), фронтенд (динамический рендер из шаблонов), схема БД, Nginx, Dockerfile, docker-compose, GitHub Actions, автодеплой, SSL |
+| Что осталось | Регистрация магазина в Сам.Эквайринг · E2E тест оплаты · реферальные команды бота |
 
 ---
 
@@ -45,10 +46,11 @@
 | Рендер превью | Pillow 10 (JPEG, синхронно через ThreadPoolExecutor) |
 | Рендер PDF | ReportLab → Ghostscript 10 (PDF/X-1a, CMYK, ICC) |
 | Executor | `ProcessPoolExecutor(max_workers=2)` — только для GS |
-| Frontend | Vanilla HTML/CSS/JS, без фреймворков и сборки |
+| Frontend | Vanilla HTML/CSS/JS, без фреймворков и сборки. Размеры/шрифты/цвета — динамически из `GET /api/templates` |
 | База данных | SQLite WAL — `banner_web.db` (отдельная от `banner_bot.db`) |
-| Прокси | Nginx 1.25 в Docker — реверс-прокси + статика + rate limits |
+| Прокси | Nginx 1.25 в Docker — реверс-прокси + статика + rate limits, порт 8444 |
 | Деплой | GitHub Actions → SCP → Docker Compose |
+| Платёжный провайдер | Сам.Эквайринг (selfwork.ru) — для самозанятых, автовыдача чека ФНС |
 | Бот | python-telegram-bot 21 (async), Python 3.11+ |
 
 ---
@@ -57,10 +59,11 @@
 
 ```
                         ┌──────────────────────────────────┐
-  Браузер (мобайл)      │  Nginx (Docker, порты 80/443)    │
+  Браузер               │  Nginx (Docker, порты 8444/80)   │
   ──────────────────►   │  • Статика /app/frontend          │
                         │  • Rate limits (preview/order/dl) │
-                        │  • TLS (Let's Encrypt)            │
+                        │  • TLS (Let's Encrypt, :8444)     │
+                        │  • Редирект 80 → https://$host:8444│
                         └──────────────┬───────────────────┘
                                        │ proxy_pass :8000
                         ┌──────────────▼───────────────────┐
@@ -69,7 +72,7 @@
                         │  Роутеры:                         │
                         │  • /api/preview    (Pillow)       │
                         │  • /api/order      (FSM)          │
-                        │  • /api/payment/*  (Tona)         │
+                        │  • /api/payment/*  (Selfwork)     │
                         │  • /api/download/* (GS)           │
                         │  • /api/admin/*                   │
                         │  • /api/referral/*                │
@@ -83,11 +86,11 @@
                         │  (volume: bannerprint_data)        │
                         └──────────────────────────────────┘
 
-  Tona Webhook ──────────► POST /api/payment/callback
-                            └─ HMAC-SHA256 ПЕРВЫМ
+  Selfwork Webhook ───► POST /api/payment/callback
+                            └─ SHA256(order_id+amount+api_key) ПЕРВЫМ
                             └─ FSM: pending→paid→token_issued
 
-  @BannerPrintBot ────────► POST /api/referral/internal/create
+  @BannerPrintBot ────► POST /api/referral/internal/create
                             (X-Bot-Secret)
 ```
 
@@ -99,14 +102,16 @@ Ghostscript CPU-bound. Вызов из asyncio event loop заблокирова
 
 `token_store` и `order_store` перенесены из in-memory в SQLite — переживают рестарты и корректно работают при единственном воркере.
 
-Рендерер — локальная копия `banner_generator.py`, не зависит от бота. `BOT_SRC_PATH` не используется. Web-контейнер полностью автономен.
+Рендерер — локальная копия `banner_generator.py`, не зависит от бота. Web-контейнер полностью автономен.
+
+Порт 443 занят amnezia-xray (VLESS+Reality, VPN для клиентов). Сайт работает на порту 8444. Перенос на стандартный 443 — при переезде на чистый сервер.
 
 ---
 
 ## Структура репозитория
 
 ```
-Banner_Bot/
+BannerPDF/
 ├── .github/
 │   └── workflows/
 │       ├── deploy-web.yml        # Деплой сайта при push в main
@@ -116,7 +121,7 @@ Banner_Bot/
 │   ├── Dockerfile
 │   ├── docker-compose.yml
 │   ├── requirements.txt
-│   ├── templates.json            # Размеры, шрифты, цвета для GET /api/templates
+│   ├── templates.json            # Размеры, шрифты, цвета — источник для GET /api/templates
 │   │
 │   ├── api/
 │   │   ├── main.py               # FastAPI app + lifespan
@@ -126,7 +131,7 @@ Banner_Bot/
 │   │   ├── routers/
 │   │   │   ├── preview.py        # POST /api/preview
 │   │   │   ├── order.py          # FSM + POST /api/order + GET /api/payment/status
-│   │   │   ├── payment.py        # POST /api/payment/callback (HMAC первым)
+│   │   │   ├── payment.py        # POST /api/payment/callback (SHA256 первым)
 │   │   │   ├── download.py       # GET /api/download/{token}
 │   │   │   ├── admin.py          # GET /api/admin/stats|orders|funnel
 │   │   │   ├── referral.py       # Реферальная программа
@@ -136,8 +141,8 @@ Banner_Bot/
 │   │       ├── banner_generator.py  # create_preview_jpeg(), create_final_pdf()
 │   │       ├── renderer.py          # Адаптер: build_render_data(), set/get_executor()
 │   │       ├── sanitizer.py         # sanitize_text_lines(), validate_banner_config()
-│   │       ├── config.py            # FONTS, COLORS, BANNER_SIZES, SAFE_ZONE_MM
-│   │       ├── payment.py           # verify_tona_signature(), create_payment()
+│   │       ├── config.py            # FONTS, COLORS, BANNER_SIZES — синхронизировать с templates.json
+│   │       ├── payment.py           # verify_selfwork_callback(), create_payment()
 │   │       ├── token_store.py       # create_token(), consume_token() — SQLite
 │   │       ├── order_store.py       # save_pending(), get_pending() — SQLite
 │   │       ├── referral_store.py    # accrue_commission() 15%
@@ -145,13 +150,13 @@ Banner_Bot/
 │   │       └── batch_worker.py      # asyncio.Queue + ProcessPoolExecutor
 │   │
 │   ├── frontend/
-│   │   ├── index.html            # Конструктор баннера + модалки оплаты
-│   │   ├── style.css             # Mobile-first, CSS vars, Unbounded + Onest
-│   │   └── app.js                # Дебаунс превью 500мс, FSM оплаты, поллинг 2.5с
+│   │   ├── index.html            # Конструктор баннера + модалки оплаты (контейнеры без захардкоженных кнопок)
+│   │   ├── style.css             # Mobile-first + desktop двухколонка (≥820px), Unbounded + Onest
+│   │   └── app.js                # loadTemplates() при старте, дебаунс превью 500мс, поллинг 2.5с
 │   │
 │   └── nginx/
 │       ├── nginx.conf            # Rate limit зоны (http-блок)
-│       └── default.conf          # Server блоки, proxy_pass, TLS
+│       └── default.conf          # Server блоки, proxy_pass, TLS (порт 8444)
 │
 ├── web/tests/                    # Тесты (pytest)
 │   ├── conftest.py
@@ -180,27 +185,27 @@ Banner_Bot/
 ### Требования
 
 - Docker + Docker Compose
-- Шрифты TTF (GolosText, TenorSans, FiraSans, IgraSans)
+- Шрифты TTF: `GolosText-Regular.ttf`, `TenorSans-Regular.ttf`, `FiraSansCondensed-ExtraBold.ttf`, `PTSansNarrow-Bold.ttf`
 - ICC-профиль `ISOcoated_v2_300_eci.icc`
 
 ### 1. Клонирование
 
 ```bash
-git clone https://github.com/Ale007XD/Banner_Bot.git
-cd Banner_Bot/web
+git clone https://github.com/Ale007XD/BannerPDF.git
+cd BannerPDF/web
 ```
 
 ### 2. Переменные окружения
 
 ```bash
 cp .env.example .env
-# Заполнить: TONA_API_KEY, TONA_SHOP_ID, TONA_WEBHOOK_SECRET, ADMIN_TOKEN, BOT_INTERNAL_SECRET
+# Заполнить: SELFWORK_SHOP_ID, SELFWORK_API_KEY, ADMIN_TOKEN, BOT_INTERNAL_SECRET
 ```
 
 ### 3. Подготовка шрифтов и профиля
 
 ```bash
-mkdir -p /home/deploy/banner_web/fonts /home/deploy/banner_web/profiles
+mkdir -p fonts profiles
 
 # Скопировать TTF-шрифты в fonts/
 # Скопировать ISOcoated_v2_300_eci.icc в profiles/
@@ -221,80 +226,91 @@ curl http://localhost:8000/api/health
 curl http://localhost:8000/api/templates
 ```
 
-Сайт доступен на `http://localhost` (Nginx проксирует с 80 на FastAPI :8000).
+Сайт доступен на `http://localhost:8444`.
 
 ---
 
 ## Деплой на VPS
 
-**VPS:** Hetzner CX41, `deploy@r1018353` (4 vCPU, 16 GB RAM)
+**VPS:** Hetzner CX41, `bannerpdf@r1018353` (4 vCPU, 16 GB RAM, Ubuntu)
+**Путь на сервере:** `/home/bannerpdf/banner_web/`
+**URL:** `https://bannerbot.ru:8444`
+
+### Занятые порты
+
+| Порт | Сервис |
+|---|---|
+| 443 | amnezia-xray (VLESS+Reality — не трогать) |
+| 8443 | telemt |
+| **8444** | **bannerprint_nginx (наш сайт)** |
+| 80 | bannerprint_nginx (редирект → 8444) |
 
 ### Автоматический деплой (GitHub Actions)
 
 При `push` в `main` с изменениями в `web/**` автоматически запускается `.github/workflows/deploy-web.yml`:
 
-1. Копирует файлы на VPS через SCP (`web/` → `/home/deploy/banner_web/`)
-2. Пересобирает контейнер `api`
-3. Поднимает `docker compose up -d`
-4. Проверяет `GET /api/health`
+1. Копирует файлы на VPS через SCP (`web/` → `/home/bannerpdf/banner_web/`)
+2. Пересобирает контейнер `api` без кэша
+3. Поднимает `docker compose up -d --force-recreate --remove-orphans`
+4. Чистит висячие образы `docker image prune -f`
+5. Проверяет `GET /api/health`
 
 **Необходимые секреты в GitHub:**
 
 ```
-VPS_HOST      — IP или hostname VPS
-VPS_USER      — deploy
+VPS_HOST      — 103.115.18.224
+VPS_USER      — bannerpdf
 VPS_SSH_KEY   — приватный SSH-ключ
 ```
 
-### Первый ручной деплой
+### Файлы вне репо (не деплоятся, монтируются как volume)
 
 ```bash
-# На VPS
-mkdir -p /home/deploy/banner_web/fonts
-mkdir -p /home/deploy/banner_web/profiles
+# Шрифты и профиль — разместить вручную при первом деплое
+/home/bannerpdf/banner_web/fonts/
+  GolosText-Regular.ttf
+  TenorSans-Regular.ttf
+  FiraSansCondensed-ExtraBold.ttf
+  PTSansNarrow-Bold.ttf
 
-# Загрузить шрифты и ICC-профиль
-scp fonts/*.ttf deploy@r1018353:/home/deploy/banner_web/fonts/
-scp ISOcoated_v2_300_eci.icc deploy@r1018353:/home/deploy/banner_web/profiles/
+/home/bannerpdf/banner_web/profiles/
+  ISOcoated_v2_300_eci.icc
 
-# Создать .env
-nano /home/deploy/banner_web/.env
-
-# Запустить
-cd /home/deploy/banner_web
-docker compose up -d --build
+/home/bannerpdf/banner_web/.env   # секреты
 ```
 
 ### SSL-сертификат
 
-Certbot устанавливается на хосте (не в контейнере). Сертификаты монтируются в Nginx через volume `/etc/letsencrypt`.
-
-```bash
-apt install certbot
-certbot certonly --standalone -d bannerprintbot.ru -d www.bannerprintbot.ru
 ```
+Домен:    bannerbot.ru
+Cert:     /etc/letsencrypt/live/bannerbot.ru/fullchain.pem
+Key:      /etc/letsencrypt/live/bannerbot.ru/privkey.pem
+Истекает: 2026-06-19
+```
+
+Certbot установлен на хосте. Сертификаты монтируются в Nginx через volume `/etc/letsencrypt`.
 
 ---
 
 ## Переменные окружения
 
-| Переменная | Описание | Пример |
+| Переменная | Описание | Значение на проде |
 |---|---|---|
-| `TONA_API_KEY` | API-ключ платёжного сервиса Tona | — |
-| `TONA_SHOP_ID` | ID магазина в Tona | — |
-| `TONA_WEBHOOK_SECRET` | Секрет для HMAC-SHA256 верификации webhook | — |
-| `SITE_BASE_URL` | Базовый URL сайта | `https://bannerprintbot.ru` |
+| `SELFWORK_SHOP_ID` | ID магазина в Сам.Эквайринг | `PLACEHOLDER_SHOP_ID` → заменить |
+| `SELFWORK_API_KEY` | API-ключ Сам.Эквайринг | `PLACEHOLDER_API_KEY` → заменить |
+| `SITE_BASE_URL` | Базовый URL сайта | `https://bannerbot.ru` |
 | `SITE_PDF_PRICE` | Цена PDF в рублях (не хардкодить!) | `299` |
-| `ADMIN_TOKEN` | Bearer-токен для `/api/admin/*` (32 байта) | — |
-| `BOT_INTERNAL_SECRET` | Секрет для внутреннего API бота | — |
-| `ALLOWED_ORIGINS` | CORS origins через запятую | `https://bannerprintbot.ru` |
+| `ADMIN_TOKEN` | Bearer-токен для `/api/admin/*` (32 байта) | задан |
+| `BOT_INTERNAL_SECRET` | Секрет для внутреннего API бота | задан |
+| `ALLOWED_ORIGINS` | CORS origins | `https://bannerbot.ru` |
 | `WEB_DB_PATH` | Путь к SQLite БД | `/app/data/banner_web.db` |
 | `FONTS_DIR` | Директория с TTF-шрифтами | `/app/fonts` |
-| `ICC_PROFILE_PATH` | Путь к ICC-профилю для печати | `/profiles/ISOcoated_v2_300_eci.icc` |
+| `ICC_PROFILE_PATH` | Путь к ICC-профилю | `/profiles/ISOcoated_v2_300_eci.icc` |
+| `TEMPLATES_PATH` | Путь к templates.json | `/app/templates.json` |
 | `BATCH_DIR` | Временная директория для batch ZIP | `/tmp/bannerprint_batches` |
 | `UVICORN_WORKERS` | Количество воркеров (строго 1) | `1` |
 
-Секреты (`TONA_*`, `ADMIN_TOKEN`, `BOT_INTERNAL_SECRET`) передаются только через `.env` файл, никогда не хардкодятся в коде или Dockerfile.
+Секреты передаются только через `.env` на сервере, никогда не хардкодятся и не коммитятся.
 
 ---
 
@@ -304,11 +320,11 @@ certbot certonly --standalone -d bannerprintbot.ru -d www.bannerprintbot.ru
 
 ```
 GET  /api/health                   — Healthcheck
-GET  /api/templates                — Список размеров, шрифтов, цветов
+GET  /api/templates                — Список размеров, шрифтов, цветов (из templates.json)
 POST /api/preview                  — JPEG-превью баннера (rate limit: 30 RPM/IP)
 POST /api/order                    — Создание заказа + ссылка на оплату (5 RPM/IP)
 GET  /api/payment/status/{id}      — Статус заказа (поллинг с фронтенда)
-POST /api/payment/callback         — Webhook от Tona (HMAC-SHA256 верификация)
+POST /api/payment/callback         — Webhook от Сам.Эквайринг (SHA256 верификация)
 GET  /api/download/{token}         — Скачать PDF (10 RPM/IP, одноразовый токен)
 GET  /api/referral/stats/{code}    — Статистика реферального кода
 ```
@@ -316,7 +332,7 @@ GET  /api/referral/stats/{code}    — Статистика реферально
 ### Пример: создание заказа
 
 ```bash
-curl -X POST https://bannerprintbot.ru/api/order \
+curl -X POST https://bannerbot.ru:8444/api/order \
   -H "Content-Type: application/json" \
   -d '{
     "size_key": "3x2",
@@ -330,19 +346,19 @@ curl -X POST https://bannerprintbot.ru/api/order \
   }'
 
 # Ответ:
-# {"order_id": "uuid4...", "pay_url": "https://pay.tona.ru/..."}
+# {"order_id": "uuid4...", "pay_url": "https://selfwork.ru/pay/..."}
 ```
 
 ### Пример: генерация превью
 
 ```bash
-curl -X POST https://bannerprintbot.ru/api/preview \
+curl -X POST https://bannerbot.ru:8444/api/preview \
   -H "Content-Type: application/json" \
   -d '{
     "size_key": "3x2",
     "bg_color": "Красный",
     "text_color": "Белый",
-    "font": "Fira Sans",
+    "font": "Fira Sans Cond",
     "text_lines": [{"text": "АКЦИЯ", "scale": 1.0}]
   }'
 
@@ -376,13 +392,13 @@ GET  /api/v1/batch/{id}
 GET  /api/v1/batch/{id}/download
 ```
 
-Интерактивная документация: `https://bannerprintbot.ru/api/docs`
+Интерактивная документация: `https://bannerbot.ru:8444/api/docs`
 
 ---
 
 ## База данных
 
-SQLite WAL-режим, файл `banner_web.db`. Отдельная от `banner_bot.db`. Инициализируется автоматически при старте через `schema.sql`.
+SQLite WAL-режим, файл `banner_web.db`. Отдельная от `banner_bot.db`. Инициализируется автоматически при старте через `schema.sql`. Хранится в named volume `bannerprint_data` — переживает деплои.
 
 ```
 web_orders          — заказы (статус управляется FSM)
@@ -394,10 +410,6 @@ batch_jobs          — задачи batch-рендера
 referrers           — рефереры и балансы
 referrals           — начисленные комиссии
 ```
-
-### Важно: что хранится в `web_orders`
-
-`config_json` хранится постоянно в `web_orders` и продублирован как TTL-буфер в `pending_orders`. `download.py` читает `config_json` из `web_orders` напрямую — PDF можно сгенерировать даже после истечения `pending_orders`.
 
 ---
 
@@ -432,7 +444,7 @@ PAID    ──[ttl_paid]──────► EXPIRED
 | Admin | `Authorization: Bearer <ADMIN_TOKEN>` | `/api/admin/*` |
 | Bot internal | `X-Bot-Secret: <BOT_INTERNAL_SECRET>` | `/api/referral/internal/*` |
 | Corp API | `Authorization: Bearer bp_live_<32b>` | `/api/v1/*` |
-| Tona webhook | `X-Tona-Signature` (HMAC-SHA256) | `/api/payment/callback` |
+| Selfwork webhook | `signature` в теле JSON (SHA256) | `/api/payment/callback` |
 
 **Форматы идентификаторов:**
 
@@ -442,6 +454,14 @@ token:       32 bytes hex  (64 символа)
 ref_code:    8 символов A-Z0-9
 api_key:     bp_live_<32 chars base64url>
 ```
+
+**Верификация Selfwork webhook:**
+
+```
+SHA256(order_id + amount_kopecks + SELFWORK_API_KEY) == body.signature
+```
+
+Верифицируется первым, до любой бизнес-логики. `amount` передаётся в копейках (`rub * 100`).
 
 ---
 
@@ -479,27 +499,27 @@ PYTHONPATH=. pytest web/tests/ -v
 PYTHONPATH=. pytest web/tests/test_fsm.py web/tests/test_hmac.py -v
 ```
 
-### Покрытие (~90 тестов)
+### Покрытие
 
 | Файл | Что проверяет |
 |---|---|
 | `test_fsm.py` | Все переходы FSM, guard, идемпотентность |
-| `test_hmac.py` | HMAC-SHA256 верификация, edge cases |
+| `test_hmac.py` | SHA256 верификация webhook, edge cases |
 | `test_token_store.py` | create/consume/cleanup токенов |
 | `test_order_store.py` | save/get/delete/cleanup pending_orders |
 | `test_sanitizer.py` | sanitize_line, validate_banner_config |
 | `test_order_api.py` | HTTP: POST /api/order, GET /api/payment/status |
-| `test_payment_webhook.py` | HTTP: webhook, HMAC первым, FSM через HTTP |
+| `test_payment_webhook.py` | HTTP: webhook, SHA256 первым, FSM через HTTP |
 | `test_preview_api.py` | HTTP: POST /api/preview, все size_key и цвета |
 | `test_renderer_preview.py` | build_render_data, executor lifecycle |
 
-**GS не нужен** — `render_preview_base64` и `ProcessPoolExecutor` замоканы в `conftest.py`. Tona API не дёргается — `create_payment` замокан.
+**GS не нужен** — `render_preview_base64` и `ProcessPoolExecutor` замоканы в `conftest.py`. Selfwork API не дёргается — `create_payment` замокан.
 
 ### CI (GitHub Actions)
 
 Workflow `.github/workflows/ci-web.yml` запускается на push в `main`/`dev` при изменениях в `web/**`:
 
-1. **Ruff** — проверка стиля и импортов (E, F, I правила)
+1. **Ruff** — проверка стиля и импортов
 2. **pytest** — все тесты без Docker и GS
 
 ---
@@ -514,7 +534,7 @@ Workflow `.github/workflows/ci-web.yml` запускается на push в `mai
 
 При превышении лимита возвращается `429 Too Many Requests`.
 
-Webhook `/api/payment/callback` не ограничен rate limit — Tona не спамит, а защита осуществляется через HMAC-SHA256 верификацию.
+Webhook `/api/payment/callback` не ограничен rate limit — защита осуществляется через SHA256 верификацию подписи.
 
 ---
 
@@ -533,7 +553,7 @@ Webhook `/api/payment/callback` не ограничен rate limit — Tona не
 
 ### P0 — выполнено
 
-- [x] HMAC-SHA256 верификация `X-Tona-Signature` в `payment.py`
+- [x] SHA256 верификация подписи Selfwork в `payment.py`
 - [x] `token_store` → SQLite `download_tokens`
 - [x] `order_store` → SQLite `pending_orders`
 - [x] FSM `OrderStatus(Enum)` + `transition()` + guard
@@ -542,19 +562,24 @@ Webhook `/api/payment/callback` не ограничен rate limit — Tona не
 - [x] `order.py`: `SITE_PDF_PRICE` из env, не хардкод
 - [x] `batch_worker.py`: `ProcessPoolExecutor(max_workers=2)`
 - [x] `main.py` lifespan: cleanup `download_tokens` + `pending_orders`
+- [x] Автодеплой через GitHub Actions
+- [x] SSL-сертификат (bannerbot.ru, истекает 2026-06-19)
+- [x] Фронтенд: динамический рендер размеров/цветов/шрифтов из `/api/templates`
+- [x] Фронтенд: sticky-превью на десктопе (двухколонка ≥820px)
+- [x] Шрифты подключены: GolosText, TenorSans, FiraSansCondensed, PTSansNarrow
 
 ### P1 — сразу после деплоя
 
-- [ ] Первый деплой на VPS + загрузка шрифтов и ICC-профиля
-- [ ] Smoke-тест: health → templates → preview → order → webhook → download
-- [ ] SSL-сертификат (certbot на хосте)
-- [ ] E2E тест полного флоу с реальным Tona webhook
+- [ ] Регистрация магазина в Сам.Эквайринг → получить реальные `SELFWORK_SHOP_ID` и `SELFWORK_API_KEY`
+- [ ] Настроить callback URL в панели Selfwork: `https://bannerbot.ru:8444/api/payment/callback`
+- [ ] E2E тест полного флоу: превью → заказ → webhook → FSM → download → PDF
+- [ ] Сменить пароль x-ui панели (`https://103.115.18.224:2053/...`)
 - [ ] Бот: таблица `referral_codes(tg_id, ref_code, created_at)` в `banner_bot.db`
 - [ ] Бот: команды `/referral`, `/balance`, `/payout`
-- [ ] `bot/` перенести в репо + `deploy-bot.yml`
 
-### P2 — масштаб
+### P2 — масштаб и улучшения
 
+- [ ] Перенос на чистый сервер (nginx на стандартных 80/443, убрать `:8444` из URL)
 - [ ] Preview → `image/jpeg` streaming вместо base64 (+33% overhead)
 - [ ] Structured JSON logging (structlog или python-json-logger)
 - [ ] Нагрузочный тест batch (100-строчный CSV)
