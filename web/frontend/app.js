@@ -78,6 +78,16 @@ const el = {
   customH:         $("custom-h"),
   customSizeHint:  $("custom-size-hint"),
 
+  // FAB + Bottom sheet (мобиле)
+  fabPreview:   $("fab-preview"),
+  bsOverlay:    $("bs-overlay"),
+  bsClose:      $("bs-close"),
+  bsPlaceholder:$("bs-placeholder"),
+  bsPreviewImg: $("bs-preview-img"),
+  bsLoader:     $("bs-loader"),
+  bsMeta:       $("bs-meta"),
+  bsBuyBtn:     $("bs-buy-btn"),
+
   // Модалки
   modalError:   $("modal-error"),
   errorTitle:   $("error-title"),
@@ -457,6 +467,7 @@ function showPlaceholder() {
 function showLoader() {
   el.previewPlaceholder.classList.add("hidden");
   el.previewLoader.classList.remove("hidden");
+  syncBottomSheetPreview();
 }
 
 function hideLoader() {
@@ -469,6 +480,8 @@ function showPreview(base64, widthMm, heightMm) {
   el.previewPlaceholder.classList.add("hidden");
   el.previewLoader.classList.add("hidden");
   el.previewMeta.textContent = `${(widthMm/1000).toFixed(1)} × ${(heightMm/1000).toFixed(1)} м · CMYK для типографии`;
+  // Обновляем bottom sheet если он сейчас открыт
+  syncBottomSheetPreview();
 }
 
 /* =====================================================================
@@ -541,6 +554,66 @@ el.addLineBtn.addEventListener("click", () => {
   if (state.lines.length >= state.maxLines) return;
   state.lines.push("");
   renderTextLines();
+});
+
+/* =====================================================================
+   FAB + BOTTOM SHEET — превью на мобиле
+   ===================================================================== */
+
+function openBottomSheet() {
+  el.bsOverlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+  // Синхронизируем состояние превью из основного блока
+  syncBottomSheetPreview();
+}
+
+function closeBottomSheet() {
+  el.bsOverlay.classList.remove("open");
+  document.body.style.overflow = "";
+}
+
+/**
+ * Копирует текущее состояние превью (img, placeholder, loader, meta)
+ * в bottom sheet. Вызывается при открытии и после каждого fetchPreview.
+ */
+function syncBottomSheetPreview() {
+  const mainImg = el.previewImg;
+  const mainHidden = mainImg.classList.contains("hidden");
+
+  if (!mainHidden && mainImg.src) {
+    // Есть готовое превью
+    el.bsPreviewImg.src = mainImg.src;
+    el.bsPreviewImg.classList.remove("hidden");
+    el.bsPlaceholder.classList.add("hidden");
+    el.bsLoader.classList.add("hidden");
+  } else if (!el.previewLoader.classList.contains("hidden")) {
+    // Идёт загрузка
+    el.bsPreviewImg.classList.add("hidden");
+    el.bsPlaceholder.classList.add("hidden");
+    el.bsLoader.classList.remove("hidden");
+  } else {
+    // Placeholder
+    el.bsPreviewImg.classList.add("hidden");
+    el.bsPlaceholder.classList.remove("hidden");
+    el.bsLoader.classList.add("hidden");
+  }
+  el.bsMeta.textContent = el.previewMeta.textContent;
+}
+
+// События FAB и bottom sheet
+el.fabPreview.addEventListener("click", openBottomSheet);
+el.bsClose.addEventListener("click", closeBottomSheet);
+
+// Тап по оверлею (мимо шита) — закрыть
+el.bsOverlay.addEventListener("click", (e) => {
+  if (e.target === el.bsOverlay) closeBottomSheet();
+});
+
+// Кнопка «Получить PDF» внутри bottom sheet — дублирует основную
+el.bsBuyBtn.addEventListener("click", () => {
+  closeBottomSheet();
+  // Небольшая задержка чтобы sheet успел закрыться до модалки
+  setTimeout(() => el.buyBtn.click(), 150);
 });
 
 /* =====================================================================

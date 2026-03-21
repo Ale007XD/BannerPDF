@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
   <style>
     /* ---- Кастомный размер ---- */
     .custom-size-block {
@@ -284,6 +284,43 @@
     </div>
   </div>
 
-  <script src="app.js?v=3"></script>
+
+  <!-- ===================== FAB + BOTTOM SHEET (только мобиле) ===================== -->
+
+  <!-- FAB — плавающая кнопка -->
+  <button class="fab-preview" id="fab-preview" aria-label="Показать превью">
+    <div class="fab-icon">👁</div>
+    Посмотреть превью
+  </button>
+
+  <!-- Bottom sheet — превью -->
+  <div class="bs-overlay" id="bs-overlay">
+    <div class="bottom-sheet" role="dialog" aria-label="Превью баннера">
+      <div class="bs-handle-row">
+        <div class="bs-handle"></div>
+        <span class="bs-title">Превью баннера</span>
+        <button class="bs-close" id="bs-close" aria-label="Закрыть">×</button>
+      </div>
+      <div class="bs-body">
+        <div class="bs-preview-wrap" id="bs-preview-wrap">
+          <div class="preview-placeholder" id="bs-placeholder">
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+              <rect x="2" y="2" width="36" height="36" rx="4" stroke="#c8c4bc" stroke-width="2"/>
+              <path d="M8 28L15 18L20 24L27 14L32 28H8Z" fill="#c8c4bc"/>
+            </svg>
+            <span>Настройте параметры</span>
+          </div>
+          <img id="bs-preview-img" class="bs-preview-img hidden" alt="Превью баннера">
+          <div class="preview-loader hidden" id="bs-loader">
+            <div class="spinner"></div>
+          </div>
+        </div>
+        <div class="bs-meta" id="bs-meta"></div>
+        <button class="bs-buy-btn" id="bs-buy-btn">Получить PDF — 299 ₽</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=4"></script>
 </body>
 </html>

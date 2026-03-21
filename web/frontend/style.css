@@ -92,20 +92,15 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  /* align-items: start обязателен — без него flex-элемент растягивается
-     по высоте и position:sticky внутри него не работает */
-  align-items: start;
+  /* align-items: start был нужен для мобильного sticky-превью.
+     Теперь на мобиле превью скрыто (bottom sheet), поэтому убираем. */
 }
 
 /* preview-col и settings-col на мобиле — блоки в потоке flex-колонки */
 /* display:contents не используем — баг в мобильном Chrome */
 .preview-col {
-  display: block;
-  /* Sticky: прилипает сразу под шапкой (52px), z-index ниже шапки */
-  position: sticky;
-  top: var(--header-h);
-  z-index: 50;
-  align-self: start;
+  /* На мобиле скрыт — превью открывается через FAB + bottom sheet */
+  display: none;
   width: 100%;
 }
 
@@ -692,6 +687,165 @@ body {
 /* ---- Утилиты ---- */
 .hidden { display: none !important; }
 
+/* ---- FAB — плавающая кнопка «Показать превью» (только мобиле) ---- */
+.fab-preview {
+  position: fixed;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 150;
+  background: var(--ink);
+  color: #fff;
+  font-family: 'Unbounded', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  border: none;
+  border-radius: 28px;
+  padding: 14px 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.30);
+  transition: transform 0.15s, box-shadow 0.15s;
+  white-space: nowrap;
+}
+.fab-preview:active {
+  transform: translateX(-50%) scale(0.96);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+}
+.fab-icon {
+  width: 24px;
+  height: 24px;
+  background: var(--accent);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+/* ---- Bottom sheet — превью на мобиле ---- */
+.bs-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(26,26,26,0.5);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: 300;
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+}
+.bs-overlay.open {
+  display: flex;
+  animation: overlay-in 0.2s ease;
+}
+
+.bottom-sheet {
+  background: var(--surface);
+  border-radius: 20px 20px 0 0;
+  padding: 0 0 calc(24px + env(safe-area-inset-bottom, 0px));
+  max-width: 480px;
+  width: 100%;
+  animation: sheet-up 0.28s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+@keyframes sheet-up {
+  from { transform: translateY(80px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+.bs-handle-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 24px 20px 12px;
+}
+.bs-handle {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+}
+.bs-title {
+  font-family: 'Unbounded', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  flex: 1;
+}
+.bs-close {
+  background: var(--bg);
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--ink-2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.bs-body {
+  padding: 0 16px;
+}
+.bs-preview-wrap {
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  min-height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+}
+.bs-preview-img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: var(--radius-sm);
+}
+.bs-meta {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ink-3);
+  text-align: center;
+  min-height: 18px;
+}
+.bs-buy-btn {
+  display: block;
+  width: 100%;
+  padding: 16px;
+  background: var(--accent);
+  color: #fff;
+  font-family: 'Unbounded', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  margin-top: 16px;
+  text-align: center;
+  transition: background 0.15s, transform 0.1s;
+}
+.bs-buy-btn:active {
+  transform: scale(0.98);
+  background: #e03000;
+}
+.bs-buy-btn:disabled {
+  background: #555;
+  cursor: default;
+  transform: none;
+}
+
 /* ---- Desktop: 520–819px — широкий одноколоночный ---- */
 @media (min-width: 520px) {
   .main-content {
@@ -719,12 +873,12 @@ body {
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto;
     gap: 20px;
-    /* Сброс мобильного align-items — в grid не нужен */
     align-items: unset;
   }
 
+  /* На десктопе превью возвращается в колонку */
   .preview-col {
-    /* Переопределяем мобильный sticky — в grid sticky работает иначе */
+    display: block;
     position: sticky;
     top: calc(var(--header-h) + 16px);
     align-self: start;
@@ -744,7 +898,6 @@ body {
   /* Превью занимает всю ширину левой колонки */
   .preview-card {
     width: 100%;
-    /* Сброс усиленной мобильной тени */
     box-shadow: var(--shadow);
   }
 
@@ -752,4 +905,8 @@ body {
   .preview-wrap {
     min-height: 200px;
   }
+
+  /* FAB и bottom sheet — только мобиле */
+  .fab-preview { display: none !important; }
+  .bs-overlay  { display: none !important; }
 }
