@@ -704,9 +704,11 @@ el.buyBtn.addEventListener("click", async () => {
 
     // Показываем короткий order_id в модалке для указания в комментарии СБП
     const shortEl = document.getElementById("pay-order-short");
-    if (shortEl) shortEl.textContent = `Номер заказа: #${data.order_id.slice(0, 8)}`;
+    if (shortEl) shortEl.textContent = data.order_id.slice(0, 6).toUpperCase();
 
     showModal(el.modalPayment);
+    // Поллинг стартует сразу — клиент может платить без нажатия кнопок
+    startPolling(/* silent= */ true);
   } catch (e) {
     showError("Не удалось создать заказ", e.message);
   } finally {
@@ -718,29 +720,27 @@ el.buyBtn.addEventListener("click", async () => {
 /* =====================================================================
    ОПЛАТА — переход и поллинг
    ===================================================================== */
+// «Я оплатил» — закрываем модалку реквизитов, показываем ожидание
+// Поллинг уже идёт с момента открытия модалки оплаты
 el.payBtn.addEventListener("click", () => {
   hideModal(el.modalPayment);
+  showModal(el.modalWait);
+});
 
-  // Размер: типовой "3x2 м" или кастомный "1200×800 мм"
+// Кнопка Telegram — открывает чат с предзаполненным сообщением,
+// модалку оплаты не закрываем (клиент может вернуться)
+document.getElementById("tg-btn").addEventListener("click", () => {
   const sizeLabel = state.sizeKey === "custom"
     ? `${state.customW}\u00d7${state.customH}\u00a0мм`
     : `${state.sizeKey}\u00a0м`;
-
-  // Дата и время на клиенте — позволяет определить заказ без БД
   const now     = new Date();
   const pad     = (n) => String(n).padStart(2, "0");
   const dateStr = `${pad(now.getDate())}.${pad(now.getMonth() + 1)} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-
-  // 6 символов UUID в верхнем регистре — достаточно для идентификации
   const shortId = state.orderId ? state.orderId.slice(0, 6).toUpperCase() : "??????";
-
-  const tgText = encodeURIComponent(
+  const tgText  = encodeURIComponent(
     `Баннер ${sizeLabel}, 299 ₽\nЗаказ #${shortId} от ${dateStr}\nОплачу по СБП`
   );
-  const tgUrl = `https://t.me/${CONTACT_TG}?text=${tgText}`;
-
-  window.open(tgUrl, "_blank");
-  startPolling();
+  window.open(`https://t.me/${CONTACT_TG}?text=${tgText}`, "_blank");
 });
 
 el.payCancel.addEventListener("click", () => {
@@ -749,9 +749,9 @@ el.payCancel.addEventListener("click", () => {
   state.payUrl  = null;
 });
 
-function startPolling() {
-  showModal(el.modalWait);
-  el.waitText.textContent = "Напишите нам — PDF придёт автоматически после оплаты";
+function startPolling(silent = false) {
+  if (!silent) showModal(el.modalWait);
+  el.waitText.textContent = "Ожидаем подтверждение оплаты...";
   el.waitBar.style.width = "0%";
 
   let attempt = 0;

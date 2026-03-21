@@ -251,29 +251,32 @@
     </div>
   </div>
 
-  <!-- Оплата (ручной флоу: Telegram + СБП) -->
+  <!-- Оплата (ручной флоу: СБП + Telegram) -->
   <div class="modal-overlay hidden" id="modal-payment">
     <div class="modal">
       <div class="modal-icon modal-icon--pay">299</div>
       <div class="modal-title">Оплата заказа</div>
-      <div class="modal-text">
-        Переведите <strong>299 ₽</strong> по СБП и напишите нам — PDF придёт автоматически.
-      </div>
 
       <!-- СБП реквизиты -->
-      <div style="background:var(--bg);border-radius:var(--radius-sm);padding:14px 16px;margin:4px 0;text-align:left;">
-        <div style="font-size:11px;color:var(--ink-3);font-family:'Unbounded',sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">СБП — быстрый перевод</div>
-        <div style="font-family:'Unbounded',sans-serif;font-size:17px;font-weight:700;color:var(--ink);letter-spacing:.02em;">+7 914 002-27-77</div>
-        <div style="font-size:12px;color:var(--ink-3);margin-top:3px;">МТС Банк · в комментарии укажите номер заказа</div>
-        <div style="font-size:13px;color:var(--ink-2);margin-top:6px;font-weight:600;" id="pay-order-short"></div>
+      <div style="background:var(--bg);border-radius:var(--radius-sm);padding:14px 16px;margin:8px 0;text-align:left;">
+        <div style="font-size:10px;color:var(--ink-3);font-family:'Unbounded',sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">СБП — быстрый перевод</div>
+        <div style="font-family:'Unbounded',sans-serif;font-size:20px;font-weight:900;color:var(--ink);letter-spacing:.01em;">+7 914 002-27-77</div>
+        <div style="font-size:12px;color:var(--ink-3);margin-top:4px;">МТС Банк</div>
+        <div style="font-size:12px;color:var(--ink-2);margin-top:10px;">Сумма: <strong>299 ₽</strong></div>
+        <div style="font-size:12px;color:var(--ink-2);margin-top:2px;">Комментарий: <strong id="pay-order-short">—</strong></div>
       </div>
 
-      <!-- Кнопка Telegram -->
-      <button class="modal-btn modal-btn--accent" id="pay-btn" style="margin-top:12px;">
+      <!-- Я оплатил -->
+      <button class="modal-btn modal-btn--accent" id="pay-btn" style="margin-top:4px;">
+        ✓ Я оплатил — жду PDF
+      </button>
+
+      <!-- Telegram -->
+      <button class="modal-btn" id="tg-btn" style="background:var(--bg);color:var(--ink-2);margin-top:8px;">
         ✈ Написать в Telegram
       </button>
-      <div style="font-size:11px;color:var(--ink-3);margin:6px 0 4px;">После оплаты — напишите нам, PDF придёт автоматически</div>
-      <button class="modal-btn modal-btn--ghost" id="pay-cancel">Отмена</button>
+
+      <button class="modal-btn modal-btn--ghost" id="pay-cancel" style="margin-top:4px;">Отмена</button>
     </div>
   </div>
 
@@ -337,6 +340,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>
