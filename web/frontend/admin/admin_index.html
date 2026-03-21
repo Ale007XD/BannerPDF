@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>BannerPrint — Админ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:       #f2f0eb;
+      --surface:  #ffffff;
+      --ink:      #1a1a1a;
+      --ink-2:    #5a5650;
+      --ink-3:    #9a958f;
+      --accent:   #ff3c00;
+      --accent2:  #0057ff;
+      --ok:       #1a8a1a;
+      --border:   #e0ddd7;
+      --radius:   16px;
+      --radius-sm:8px;
+      --shadow:   0 2px 12px rgba(0,0,0,0.07);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { -webkit-tap-highlight-color: transparent; }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: 'Onest', system-ui, sans-serif;
+      font-size: 15px;
+      min-height: 100dvh;
+    }
+
+    /* ---- Шапка ---- */
+    .site-header {
+      background: var(--ink);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    .logo {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.02em;
+    }
+    .logo-accent { color: var(--accent); }
+    .header-badge {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--ink);
+      background: var(--accent);
+      padding: 4px 10px;
+      border-radius: 20px;
+    }
+
+    /* ---- Контент ---- */
+    .main {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 16px 16px 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* ---- Карточка ---- */
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 18px 16px;
+      box-shadow: var(--shadow);
+    }
+    .card-label {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--ink-3);
+      margin-bottom: 14px;
+    }
+
+    /* ---- Авторизация ---- */
+    #auth-card { display: block; }
+    #main-ui   { display: none; }
+
+    .token-input {
+      width: 100%;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+      font-family: 'Onest', sans-serif;
+      font-size: 15px;
+      color: var(--ink);
+      background: var(--bg);
+      outline: none;
+      margin-bottom: 10px;
+      transition: border-color 0.15s;
+    }
+    .token-input:focus { border-color: var(--accent2); background: var(--surface); }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-family: 'Unbounded', sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      text-align: center;
+      transition: background 0.15s, transform 0.1s;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn--accent { background: var(--accent); color: #fff; }
+    .btn--accent:hover { background: #e03000; }
+    .btn--ghost { background: var(--bg); color: var(--ink-2); margin-top: 8px; }
+    .btn--ok    { background: var(--ok); color: #fff; }
+    .btn--ok:hover { background: #156815; }
+    .btn--ok:disabled { background: #888; cursor: default; transform: none; }
+
+    .auth-error {
+      font-size: 13px;
+      color: var(--accent);
+      margin-top: 8px;
+      min-height: 20px;
+    }
+
+    /* ---- Статистика ---- */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .stat-item {
+      background: var(--bg);
+      border-radius: var(--radius-sm);
+      padding: 12px 10px;
+      text-align: center;
+    }
+    .stat-value {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 20px;
+      font-weight: 900;
+      color: var(--ink);
+      line-height: 1;
+    }
+    .stat-value--accent { color: var(--accent); }
+    .stat-value--ok     { color: var(--ok); }
+    .stat-label {
+      font-size: 11px;
+      color: var(--ink-3);
+      margin-top: 4px;
+    }
+
+    /* ---- Фильтры ---- */
+    .filter-row {
+      display: flex;
+      gap: 8px;
+    }
+    .filter-btn {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 7px 14px;
+      border-radius: 20px;
+      border: 2px solid var(--border);
+      background: transparent;
+      color: var(--ink-3);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-btn.active {
+      background: var(--ink);
+      border-color: var(--ink);
+      color: #fff;
+    }
+
+    /* ---- Список заказов ---- */
+    .orders-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .order-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      box-shadow: var(--shadow);
+      border-left: 4px solid transparent;
+    }
+    .order-card--pending      { border-left-color: #f0a000; }
+    .order-card--paid         { border-left-color: var(--accent2); }
+    .order-card--token_issued { border-left-color: var(--ok); }
+    .order-card--expired      { border-left-color: var(--border); opacity: 0.6; }
+
+    .order-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .order-id {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: 0.02em;
+    }
+    .order-status {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 9px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 20px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .status--pending      { background: #fff3cc; color: #8a6000; }
+    .status--paid         { background: #e0e8ff; color: #003db0; }
+    .status--token_issued { background: #e0f5e0; color: var(--ok); }
+    .status--expired      { background: var(--bg); color: var(--ink-3); }
+
+    .order-meta {
+      font-size: 13px;
+      color: var(--ink-2);
+      line-height: 1.6;
+    }
+    .order-meta strong {
+      color: var(--ink);
+      font-weight: 600;
+    }
+
+    .order-actions { margin-top: 12px; }
+
+    /* ---- Пустое состояние ---- */
+    .empty-state {
+      text-align: center;
+      padding: 32px 16px;
+      color: var(--ink-3);
+      font-size: 14px;
+    }
+
+    /* ---- Автообновление ---- */
+    .refresh-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--ink-3);
+    }
+    .refresh-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--ok);
+      margin-right: 6px;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--ink);
+      color: #fff;
+      font-family: 'Unbounded', sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 12px 20px;
+      border-radius: 24px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      z-index: 500;
+      white-space: nowrap;
+      animation: toast-in 0.2s ease;
+    }
+    .toast--ok  { background: var(--ok); }
+    .toast--err { background: var(--accent); }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+      to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-inner">
+    <span class="logo">Banner<span class="logo-accent">Print</span></span>
+    <span class="header-badge">ADMIN</span>
+  </div>
+</header>
+
+<main class="main">
+
+  <!-- ---- АВТОРИЗАЦИЯ ---- -->
+  <div class="card" id="auth-card">
+    <div class="card-label">Вход</div>
+    <input class="token-input" type="password" id="token-input"
+           placeholder="Admin token" autocomplete="current-password">
+    <button class="btn btn--accent" id="auth-btn">Войти</button>
+    <div class="auth-error" id="auth-error"></div>
+  </div>
+
+  <!-- ---- ОСНОВНОЙ UI ---- -->
+  <div id="main-ui">
+
+    <!-- Статистика -->
+    <div class="card" id="stats-card">
+      <div class="card-label">Сегодня</div>
+      <div class="stats-row">
+        <div class="stat-item">
+          <div class="stat-value" id="stat-pending">—</div>
+          <div class="stat-label">Ожидают</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value stat-value--ok" id="stat-paid">—</div>
+          <div class="stat-label">Оплачено</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value stat-value--accent" id="stat-revenue">—</div>
+          <div class="stat-label">Выручка ₽</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Фильтры + обновление -->
+    <div class="card" style="padding:12px 16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div class="filter-row">
+          <button class="filter-btn active" data-filter="pending" id="f-pending">Ожидают</button>
+          <button class="filter-btn" data-filter="all" id="f-all">Все</button>
+        </div>
+        <div class="refresh-row">
+          <span class="refresh-dot"></span>
+          <span id="refresh-label">авто</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Список заказов -->
+    <div class="orders-list" id="orders-list">
+      <div class="empty-state">Загрузка...</div>
+    </div>
+
+    <!-- Выйти -->
+    <button class="btn btn--ghost" id="logout-btn">Выйти</button>
+
+  </div>
+</main>
+
+<script>
+"use strict";
+
+const API_BASE     = "/api";
+const REFRESH_MS   = 10_000;  // автообновление каждые 10 сек
+
+// Метки статусов
+const STATUS_LABEL = {
+  pending:      "Ожидает",
+  paid:         "Оплачен",
+  token_issued: "Выдан",
+  expired:      "Истёк",
+};
+
+/* =====================================================================
+   СОСТОЯНИЕ
+   ===================================================================== */
+let _token  = sessionStorage.getItem("bp_admin_token") || "";
+let _filter = "pending";   // "pending" | "all"
+let _timer  = null;
+
+/* =====================================================================
+   DOM
+   ===================================================================== */
+const $ = (id) => document.getElementById(id);
+
+const el = {
+  authCard:    $("auth-card"),
+  mainUi:      $("main-ui"),
+  tokenInput:  $("token-input"),
+  authBtn:     $("auth-btn"),
+  authError:   $("auth-error"),
+  statPending: $("stat-pending"),
+  statPaid:    $("stat-paid"),
+  statRevenue: $("stat-revenue"),
+  ordersList:  $("orders-list"),
+  refreshLabel:$("refresh-label"),
+  logoutBtn:   $("logout-btn"),
+};
+
+/* =====================================================================
+   УТИЛИТЫ
+   ===================================================================== */
+function authHeaders() {
+  return { "Authorization": `Bearer ${_token}` };
+}
+
+function formatDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}.${pad(d.getMonth()+1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function showToast(text, type = "") {
+  document.querySelectorAll(".toast").forEach((t) => t.remove());
+  const t = document.createElement("div");
+  t.className = `toast${type ? " toast--" + type : ""}`;
+  t.textContent = text;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2800);
+}
+
+/* =====================================================================
+   АВТОРИЗАЦИЯ
+   ===================================================================== */
+async function tryLogin() {
+  const token = el.tokenInput.value.trim();
+  if (!token) return;
+
+  el.authBtn.disabled = true;
+  el.authError.textContent = "";
+
+  try {
+    const resp = await fetch(`${API_BASE}/admin/stats`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
+    if (resp.status === 403) {
+      el.authError.textContent = "Неверный токен";
+      return;
+    }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+    _token = token;
+    sessionStorage.setItem("bp_admin_token", token);
+    showMainUi();
+  } catch (e) {
+    el.authError.textContent = "Ошибка соединения";
+  } finally {
+    el.authBtn.disabled = false;
+  }
+}
+
+function showMainUi() {
+  el.authCard.style.display = "none";
+  el.mainUi.style.display   = "block";
+  startAutoRefresh();
+}
+
+el.authBtn.addEventListener("click", tryLogin);
+el.tokenInput.addEventListener("keydown", (e) => { if (e.key === "Enter") tryLogin(); });
+
+el.logoutBtn.addEventListener("click", () => {
+  sessionStorage.removeItem("bp_admin_token");
+  _token = "";
+  clearInterval(_timer);
+  el.mainUi.style.display   = "none";
+  el.authCard.style.display = "block";
+  el.tokenInput.value = "";
+});
+
+/* =====================================================================
+   ФИЛЬТРЫ
+   ===================================================================== */
+document.querySelectorAll(".filter-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".filter-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    _filter = btn.dataset.filter;
+    loadOrders();
+  });
+});
+
+/* =====================================================================
+   ЗАГРУЗКА ДАННЫХ
+   ===================================================================== */
+async function loadStats() {
+  try {
+    const resp = await fetch(`${API_BASE}/admin/stats`, { headers: authHeaders() });
+    if (!resp.ok) return;
+    const d = await resp.json();
+    el.statPending.textContent = d.pending_orders ?? "—";
+    el.statPaid.textContent    = d.paid_orders    ?? "—";
+    el.statRevenue.textContent = d.revenue_rub    ?? "—";
+  } catch { /* некритично */ }
+}
+
+async function loadOrders() {
+  try {
+    const params = _filter === "pending" ? "?status=pending&limit=50" : "?limit=100";
+    const resp = await fetch(`${API_BASE}/admin/orders${params}`, { headers: authHeaders() });
+
+    if (resp.status === 403) {
+      // Токен протух
+      clearInterval(_timer);
+      el.mainUi.style.display   = "none";
+      el.authCard.style.display = "block";
+      showToast("Сессия истекла", "err");
+      return;
+    }
+    if (!resp.ok) return;
+
+    const data = await resp.json();
+    renderOrders(data.orders);
+  } catch { /* сетевая ошибка — ждём следующего тика */ }
+}
+
+async function refresh() {
+  await Promise.all([loadStats(), loadOrders()]);
+  el.refreshLabel.textContent = "обновлено " + new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
+}
+
+function startAutoRefresh() {
+  refresh();
+  _timer = setInterval(refresh, REFRESH_MS);
+}
+
+/* =====================================================================
+   РЕНДЕР ЗАКАЗОВ
+   ===================================================================== */
+function renderOrders(orders) {
+  if (!orders || orders.length === 0) {
+    el.ordersList.innerHTML = `<div class="empty-state">${
+      _filter === "pending" ? "Нет заказов, ожидающих оплаты" : "Заказов нет"
+    }</div>`;
+    return;
+  }
+
+  el.ordersList.innerHTML = "";
+  orders.forEach((o) => {
+    const card = document.createElement("div");
+    card.className = `order-card order-card--${o.status}`;
+
+    const shortId    = o.id.slice(0, 6).toUpperCase();
+    const statusText = STATUS_LABEL[o.status] || o.status;
+    const isPending  = o.status === "pending";
+    const isPaid     = o.status === "paid";
+    const canIssue   = isPending || isPaid;
+
+    card.innerHTML = `
+      <div class="order-head">
+        <span class="order-id">#${shortId}</span>
+        <span class="order-status status--${o.status}">${statusText}</span>
+      </div>
+      <div class="order-meta">
+        <strong>${o.size_key || "—"}</strong> · ${o.amount_rub} ₽<br>
+        Создан: ${formatDate(o.created_at)}<br>
+        ${o.paid_at ? `Оплачен: ${formatDate(o.paid_at)}<br>` : ""}
+        ${o.ref_code ? `Реферал: ${o.ref_code}<br>` : ""}
+        <span style="font-size:11px;color:var(--ink-3);">${o.id}</span>
+      </div>
+      ${canIssue ? `
+        <div class="order-actions">
+          <button class="btn btn--ok" data-order-id="${o.id}" id="issue-${o.id}">
+            ✓ Выдать PDF
+          </button>
+        </div>
+      ` : ""}
+    `;
+
+    if (canIssue) {
+      card.querySelector(`#issue-${o.id}`).addEventListener("click", () => issueToken(o.id));
+    }
+
+    el.ordersList.appendChild(card);
+  });
+}
+
+/* =====================================================================
+   ВЫДАЧА ТОКЕНА
+   ===================================================================== */
+async function issueToken(orderId) {
+  const btn = document.getElementById(`issue-${orderId}`);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Выдаём...";
+  }
+
+  try {
+    const resp = await fetch(`${API_BASE}/admin/force_token/${orderId}`, {
+      method:  "POST",
+      headers: authHeaders(),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    showToast(data.already_issued ? "Токен уже был выдан" : "✓ PDF выдан клиенту", "ok");
+
+    // Обновляем список через секунду
+    setTimeout(refresh, 1000);
+
+  } catch (e) {
+    showToast(`Ошибка: ${e.message}`, "err");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "✓ Выдать PDF";
+    }
+  }
+}
+
+/* =====================================================================
+   ИНИЦИАЛИЗАЦИЯ
+   ===================================================================== */
+// Если токен уже сохранён — пробуем сразу войти
+if (_token) {
+  (async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/admin/stats`, { headers: authHeaders() });
+      if (resp.ok) {
+        showMainUi();
+      } else {
+        sessionStorage.removeItem("bp_admin_token");
+        _token = "";
+      }
+    } catch {
+      // Нет соединения — показываем форму входа
+    }
+  })();
+}
+</script>
+</body>
+</html>
