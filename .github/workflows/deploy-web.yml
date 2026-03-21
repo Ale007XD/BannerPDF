@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # нужно для git diff HEAD~1
 
       - name: Копирование файлов на VPS
         uses: appleboy/scp-action@v0.1.7
@@ -40,8 +42,16 @@ jobs:
             set -e
             cd /home/bannerpdf/banner_web
 
-            echo "=== Пересборка образов без кэша ==="
-            docker compose build --no-cache api
+            echo "=== Пересборка образа api ==="
+            # --no-cache только если изменился Dockerfile или requirements.txt
+            if git -C /home/bannerpdf/banner_web diff --name-only HEAD~1 HEAD 2>/dev/null \
+                | grep -qE '(Dockerfile|requirements\.txt)'; then
+              echo "Dockerfile/requirements изменились — пересборка без кэша"
+              docker compose build --no-cache api
+            else
+              echo "Пересборка с кэшем (только код/статика)"
+              docker compose build api
+            fi
 
             echo "=== Перезапуск контейнеров ==="
             docker compose up -d --force-recreate --remove-orphans
@@ -50,7 +60,7 @@ jobs:
             docker image prune -f
 
             echo "=== Health check ==="
-            sleep 15
+            sleep 10
             docker compose ps
             curl -sf http://localhost:8444/api/health || (echo "Health check failed" && exit 1)
             echo "Деплой успешен"
