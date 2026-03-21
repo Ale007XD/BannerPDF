@@ -188,6 +188,14 @@ function renderColors(colors) {
   });
 }
 
+// Маппинг имён шрифтов из шаблона → CSS font-family (Google Fonts)
+const FONT_CSS_MAP = {
+  "Golos Text":     "'Golos Text', sans-serif",
+  "Tenor Sans":     "'Tenor Sans', serif",
+  "Fira Sans Cond": "'Fira Sans Condensed', sans-serif",
+  "PT Sans Narrow": "'PT Sans Narrow', sans-serif",
+};
+
 /** Рендерит кнопки шрифтов. Первый шрифт становится активным. */
 function renderFonts(fonts) {
   el.fontList.innerHTML = "";
@@ -195,9 +203,10 @@ function renderFonts(fonts) {
     const btn = document.createElement("button");
     btn.className = "font-btn" + (i === 0 ? " active" : "");
     btn.dataset.font = name;
+    const cssFontFamily = FONT_CSS_MAP[name] || "sans-serif";
     btn.innerHTML = `
       <span class="font-name">${escapeHtml(name)}</span>
-      <span class="font-sample">Продажа 123-45-67</span>
+      <span class="font-sample" style="font-family:${cssFontFamily}">${escapeHtml("Продажа 123-45-67")}</span>
       <span class="font-check">✓</span>
     `;
     el.fontList.appendChild(btn);
