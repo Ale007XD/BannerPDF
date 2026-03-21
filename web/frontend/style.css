@@ -94,10 +94,11 @@ body {
   gap: 12px;
 }
 
-/* preview-col и settings-col на мобиле — просто блоки в потоке */
+/* preview-col и settings-col на мобиле — блоки в потоке flex-колонки */
+/* display:contents не используем — баг в мобильном Chrome */
 .preview-col,
 .settings-col {
-  display: contents;
+  display: block;
 }
 
 /* ---- Карточка ---- */
@@ -702,17 +703,16 @@ body {
     display: grid;
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto;
-    align-items: start;
     gap: 20px;
   }
 
-  /* Сбрасываем display:contents — теперь реальные колонки */
   .preview-col {
     display: block;
     grid-column: 1;
     grid-row: 1;
     position: sticky;
     top: calc(var(--header-h) + 16px);
+    align-self: start;  /* обязательно для sticky внутри grid */
   }
 
   .settings-col {
