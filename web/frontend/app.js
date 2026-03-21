@@ -24,9 +24,14 @@ const API = {
 
 const PREVIEW_DEBOUNCE_MS  = 500;
 const POLL_INTERVAL_MS     = 2500;
-const POLL_MAX_ATTEMPTS    = 80;    // ~200 сек максимум
+const POLL_MAX_ATTEMPTS    = 240;   // ~600 сек (10 мин) — время ручной обработки
 const CUSTOM_SIZE_MIN      = 100;   // мм
 const CUSTOM_SIZE_MAX      = 3000;  // мм
+
+// Контакты для ручной оплаты
+const CONTACT_TG       = "ale007xd";
+const CONTACT_SBP      = "+79140022777";
+const CONTACT_SBP_BANK = "МТС Банк";
 
 /* =====================================================================
    СОСТОЯНИЕ
@@ -697,6 +702,10 @@ el.buyBtn.addEventListener("click", async () => {
     state.orderId = data.order_id;
     state.payUrl  = data.pay_url;
 
+    // Показываем короткий order_id в модалке для указания в комментарии СБП
+    const shortEl = document.getElementById("pay-order-short");
+    if (shortEl) shortEl.textContent = `Номер заказа: #${data.order_id.slice(0, 8)}`;
+
     showModal(el.modalPayment);
   } catch (e) {
     showError("Не удалось создать заказ", e.message);
@@ -711,7 +720,15 @@ el.buyBtn.addEventListener("click", async () => {
    ===================================================================== */
 el.payBtn.addEventListener("click", () => {
   hideModal(el.modalPayment);
-  window.open(state.payUrl, "_blank");
+
+  // Формируем сообщение с order_id для идентификации заказа
+  const shortId = state.orderId ? state.orderId.slice(0, 8) : "???";
+  const tgText  = encodeURIComponent(
+    `Хочу баннер, заказ #${shortId}\nОплачу по СБП`
+  );
+  const tgUrl = `https://t.me/${CONTACT_TG}?text=${tgText}`;
+
+  window.open(tgUrl, "_blank");
   startPolling();
 });
 
@@ -723,7 +740,7 @@ el.payCancel.addEventListener("click", () => {
 
 function startPolling() {
   showModal(el.modalWait);
-  el.waitText.textContent = "Ожидаем подтверждение оплаты...";
+  el.waitText.textContent = "Напишите нам — PDF придёт автоматически после оплаты";
   el.waitBar.style.width = "0%";
 
   let attempt = 0;
