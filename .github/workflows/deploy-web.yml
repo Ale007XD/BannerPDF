@@ -62,5 +62,8 @@ jobs:
             echo "=== Health check ==="
             sleep 10
             docker compose ps
-            curl -sf http://localhost:8444/api/health || (echo "Health check failed" && exit 1)
+            # curl недоступен в python:slim — проверяем через stdlib
+            docker exec bannerprint_api python -c \
+              "import urllib.request, sys; r=urllib.request.urlopen('http://localhost:8000/api/health'); sys.exit(0 if b'ok' in r.read() else 1)" \
+              || (echo "Health check failed" && exit 1)
             echo "Деплой успешен"
