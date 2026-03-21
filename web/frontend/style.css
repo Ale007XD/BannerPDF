@@ -92,13 +92,26 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* align-items: start обязателен — без него flex-элемент растягивается
+     по высоте и position:sticky внутри него не работает */
+  align-items: start;
 }
 
 /* preview-col и settings-col на мобиле — блоки в потоке flex-колонки */
 /* display:contents не используем — баг в мобильном Chrome */
-.preview-col,
+.preview-col {
+  display: block;
+  /* Sticky: прилипает сразу под шапкой (52px), z-index ниже шапки */
+  position: sticky;
+  top: var(--header-h);
+  z-index: 50;
+  align-self: start;
+  width: 100%;
+}
+
 .settings-col {
   display: block;
+  width: 100%;
 }
 
 /* ---- Карточка ---- */
@@ -129,6 +142,8 @@ body {
 /* ---- Превью ---- */
 .preview-card {
   padding: 12px;
+  /* Тень снизу — визуально отделяет от карточек настроек, уходящих под него */
+  box-shadow: var(--shadow), 0 6px 20px rgba(0,0,0,0.10);
 }
 
 .preview-wrap {
@@ -704,15 +719,18 @@ body {
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto;
     gap: 20px;
+    /* Сброс мобильного align-items — в grid не нужен */
+    align-items: unset;
   }
 
   .preview-col {
-    display: block;
-    grid-column: 1;
-    grid-row: 1;
+    /* Переопределяем мобильный sticky — в grid sticky работает иначе */
     position: sticky;
     top: calc(var(--header-h) + 16px);
-    align-self: start;  /* обязательно для sticky внутри grid */
+    align-self: start;
+    grid-column: 1;
+    grid-row: 1;
+    z-index: 50;
   }
 
   .settings-col {
@@ -726,6 +744,8 @@ body {
   /* Превью занимает всю ширину левой колонки */
   .preview-card {
     width: 100%;
+    /* Сброс усиленной мобильной тени */
+    box-shadow: var(--shadow);
   }
 
   /* Мин-высота wrap чуть выше на десктопе */
