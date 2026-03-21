@@ -52,5 +52,5 @@ jobs:
             echo "=== Health check ==="
             sleep 15
             docker compose ps
-            curl -sf http://localhost:8000/api/health || (echo "Health check failed" && exit 1)
+            curl -sf http://localhost:8444/api/health || (echo "Health check failed" && exit 1)
             echo "Деплой успешен"
