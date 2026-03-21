@@ -161,17 +161,24 @@ def create_preview_jpeg(data: dict) -> io.BytesIO:
 
     details = _calculate_layout(text_items, safe_w, safe_h, measure_fn=pillow_measure)
 
-    # Вертикальное центрирование
-    total_h = sum(d["height"] * 1.2 for d in details)
-    y = safe_px + (safe_h - total_h) / 2
+    # Слотовое вертикальное распределение:
+    # safe zone делится на n равных слотов, каждая строка центрируется в своём слоте.
+    # Строки равномерно заполняют всю высоту от safe_px до h_px - safe_px.
+    n = len(details)
+    slot_h = safe_h / n if n > 0 else safe_h
 
-    for d in details:
+    for i, d in enumerate(details):
         fnt = ImageFont.truetype(font_path, int(d["font_size"]))
         bbox = draw.textbbox((0, 0), d["text"], font=fnt)
         text_w = bbox[2] - bbox[0]
         x = safe_px + (safe_w - text_w) / 2
-        draw.text((x, y), d["text"], font=fnt, fill=text_rgb)
-        y += d["height"] * 1.2
+        # Центр слота → верхняя граница строки
+        slot_top = safe_px + slot_h * i
+        y = slot_top + (slot_h - d["height"]) / 2
+        # Компенсируем bbox[0] и bbox[1] — offset глифа относительно origin.
+        # Без этого каждая строка рисуется на bbox[1] пикселей ниже расчётной
+        # позиции, что при нескольких строках накапливается в заметный сдвиг.
+        draw.text((x - bbox[0], y - bbox[1]), d["text"], font=fnt, fill=text_rgb)
 
     buf = io.BytesIO()
     image.save(buf, format="JPEG", quality=90)
@@ -218,33 +225,48 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
     c.setFillColorCMYK(tc, tm, ty, tk)
 
     def rl_measure(text: str, size: float):
+        # size — в pt (единицы layout для PDF).
+        # Ширина через ReportLab stringWidth.
+        # Высота — через Pillow textbbox (точный визуальный bbox).
+        # face.ascent / 1000 * size (~0.85×size) завышает высоту
+        # относительно реального bbox (~0.65×size), что вызывает
+        # преждевременный вертикальный fit и уменьшает шрифт в PDF.
+        # Pillow даёт точный визуальный bbox — layout идентичен превью.
         w = pdfmetrics.stringWidth(text, font_name, size)
-        face = pdfmetrics.getFont(font_name).face
-        h = (face.ascent - face.descent) / 1000 * size
+        font_path = FONTS[font_name]
+        _fnt = ImageFont.truetype(font_path, int(size))
+        _bbox = ImageDraw.Draw(Image.new("RGB", (1, 1))).textbbox((0, 0), text, font=_fnt)
+        h = _bbox[3] - _bbox[1]
         return w, h
 
     details = _calculate_layout(text_items, safe_w, safe_h, measure_fn=rl_measure)
 
-    # ReportLab: y=0 снизу, считаем от верха
-    total_h = sum(d["height"] * 1.2 for d in details)
-    y_cursor = (h_pt + total_h) / 2  # верхняя граница блока текста
+    # Слотовое вертикальное распределение — зеркало Pillow.
+    # ReportLab: y=0 внизу страницы, поэтому слоты считаем снизу вверх.
+    #   safe_h делится на n равных слотов.
+    #   Строка i (0 = верхняя) → слот (n-1-i) снизу.
+    safe_pt = SAFE_ZONE_MM * mm
+    n = len(details)
+    slot_h_pt = safe_h / n if n > 0 else safe_h
 
-    for d in details:
+    for i, d in enumerate(details):
         size = d["font_size"]
-        face = pdfmetrics.getFont(font_name).face
-        ascent = face.ascent / 1000 * size
-        line_h = d["height"]
         text_w = pdfmetrics.stringWidth(d["text"], font_name, size)
-        x = (SAFE_ZONE_MM * mm) + (safe_w - text_w) / 2
-        y_pos = y_cursor - ascent
+        x = safe_pt + (safe_w - text_w) / 2
+
+        # Нижняя граница слота i (в координатах ReportLab от низа страницы)
+        slot_bottom = safe_pt + slot_h_pt * (n - 1 - i)
+        # Центрируем строку в слоте по высоте bbox
+        # y_pos — baseline для ReportLab: slot_bottom + (slot_h - height) / 2
+        # Но ReportLab рисует от baseline вверх, Pillow — от верхнего края вниз.
+        # Добавляем height чтобы перейти от верхнего края к baseline.
+        y_pos = slot_bottom + (slot_h_pt - d["height"]) / 2 + d["height"]
 
         c.setFont(font_name, size)
         to = c.beginText(x, y_pos)
         to.setFont(font_name, size)
         to.textLine(d["text"])
         c.drawText(to)
-
-        y_cursor -= line_h * 1.2
 
     c.showPage()
     c.save()
