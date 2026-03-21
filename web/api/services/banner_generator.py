@@ -76,7 +76,10 @@ def _calculate_layout(
       - индивидуального масштаба строки (scale)
       - ограничения по высоте (вертикальный fit)
 
-    measure_fn(text, size) → (width, height)
+    measure_fn(text, size) → (width, height, bbox_top)
+      bbox_top — bbox[1] из Pillow textbbox: offset от origin до верхнего края глифа.
+                 Обычно отрицательное или 0 (глиф рисуется выше origin).
+                 Используется в ReportLab для точного центрирования baseline.
     """
     details = []
     for item in text_items:
@@ -87,27 +90,32 @@ def _calculate_layout(
         effective_width = safe_width * scale_modifier
 
         ref_size = 100.0
-        ref_w, ref_h = measure_fn(line, ref_size)
+        ref_w, ref_h, _ = measure_fn(line, ref_size)
         if ref_w == 0:
             continue
 
         font_size = ref_size * (effective_width / ref_w)
-        _, line_h = measure_fn(line, font_size)
+        _, line_h, bbox_top = measure_fn(line, font_size)
         details.append(
             {
                 "text": line,
                 "font_size": font_size,
                 "height": line_h,
+                "bbox_top": bbox_top,
             }
         )
 
-    # Вертикальный fit: если не влезает — масштабируем все строки
+    # Вертикальный fit: если не влезает — масштабируем шрифт и перемеряем реальный bbox.
+    # Линейное масштабирование height через fit даёт приближение, но реальный bbox
+    # при очень крупных кеглях может отличаться. Перемеряем явно после масштабирования.
     total_h = sum(d["height"] * line_spacing_ratio for d in details)
     if total_h > safe_height and total_h > 0:
         fit = safe_height / total_h
         for d in details:
             d["font_size"] *= fit
-            d["height"] *= fit
+            _, real_h, real_bbox_top = measure_fn(d["text"], d["font_size"])
+            d["height"] = real_h
+            d["bbox_top"] = real_bbox_top
 
     return details
 
@@ -157,7 +165,7 @@ def create_preview_jpeg(data: dict) -> io.BytesIO:
     def pillow_measure(text: str, size: float):
         fnt = ImageFont.truetype(font_path, int(size))
         bbox = draw.textbbox((0, 0), text, font=fnt)
-        return bbox[2] - bbox[0], bbox[3] - bbox[1]
+        return bbox[2] - bbox[0], bbox[3] - bbox[1], bbox[1]
 
     details = _calculate_layout(text_items, safe_w, safe_h, measure_fn=pillow_measure)
 
@@ -176,8 +184,6 @@ def create_preview_jpeg(data: dict) -> io.BytesIO:
         slot_top = safe_px + slot_h * i
         y = slot_top + (slot_h - d["height"]) / 2
         # Компенсируем bbox[0] и bbox[1] — offset глифа относительно origin.
-        # Без этого каждая строка рисуется на bbox[1] пикселей ниже расчётной
-        # позиции, что при нескольких строках накапливается в заметный сдвиг.
         draw.text((x - bbox[0], y - bbox[1]), d["text"], font=fnt, fill=text_rgb)
 
     buf = io.BytesIO()
@@ -225,9 +231,8 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
     c.setFillColorCMYK(tc, tm, ty, tk)
 
     def rl_measure(text: str, size: float):
-        # size — в pt (единицы layout для PDF).
         # Ширина через ReportLab stringWidth.
-        # Высота — через Pillow textbbox (точный визуальный bbox).
+        # Высота и bbox_top — через Pillow textbbox (точный визуальный bbox).
         # face.ascent / 1000 * size (~0.85×size) завышает высоту
         # относительно реального bbox (~0.65×size), что вызывает
         # преждевременный вертикальный fit и уменьшает шрифт в PDF.
@@ -237,7 +242,7 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
         _fnt = ImageFont.truetype(font_path, int(size))
         _bbox = ImageDraw.Draw(Image.new("RGB", (1, 1))).textbbox((0, 0), text, font=_fnt)
         h = _bbox[3] - _bbox[1]
-        return w, h
+        return w, h, _bbox[1]
 
     details = _calculate_layout(text_items, safe_w, safe_h, measure_fn=rl_measure)
 
@@ -254,13 +259,21 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
         text_w = pdfmetrics.stringWidth(d["text"], font_name, size)
         x = safe_pt + (safe_w - text_w) / 2
 
-        # Нижняя граница слота i (в координатах ReportLab от низа страницы)
+        # Центр слота i (строки идут сверху вниз: i=0 — верхний слот).
+        # ReportLab: y=0 внизу, поэтому слот i=0 → верхний → (n-1-i)-й снизу.
         slot_bottom = safe_pt + slot_h_pt * (n - 1 - i)
-        # Центрируем строку в слоте по высоте bbox
-        # y_pos — baseline для ReportLab: slot_bottom + (slot_h - height) / 2
-        # Но ReportLab рисует от baseline вверх, Pillow — от верхнего края вниз.
-        # Добавляем height чтобы перейти от верхнего края к baseline.
-        y_pos = slot_bottom + (slot_h_pt - d["height"]) / 2 + d["height"]
+        slot_center = slot_bottom + slot_h_pt / 2
+
+        # Центрируем bbox в слоте.
+        # В Pillow textbbox((0,0),...): bbox_top = bbox[1] — offset от origin
+        # до верхнего края глифа (обычно ≤ 0, т.к. глиф рисуется выше origin).
+        # В ReportLab drawText(x, y): y — baseline (origin Pillow).
+        # Центр bbox относительно baseline = bbox_top + height/2.
+        # Чтобы центр bbox совпал с центром слота:
+        #   baseline + bbox_top + height/2 = slot_center
+        #   baseline = slot_center - bbox_top - height/2
+        bbox_top = d["bbox_top"]
+        y_pos = slot_center - bbox_top - d["height"] / 2
 
         c.setFont(font_name, size)
         to = c.beginText(x, y_pos)
