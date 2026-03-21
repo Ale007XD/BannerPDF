@@ -22,9 +22,11 @@ const API = {
   refStats:  (code) => `/api/referral/stats/${code}`,
 };
 
-const PREVIEW_DEBOUNCE_MS = 500;
-const POLL_INTERVAL_MS    = 2500;
-const POLL_MAX_ATTEMPTS   = 80;   // ~200 сек максимум
+const PREVIEW_DEBOUNCE_MS  = 500;
+const POLL_INTERVAL_MS     = 2500;
+const POLL_MAX_ATTEMPTS    = 80;    // ~200 сек максимум
+const CUSTOM_SIZE_MIN      = 100;   // мм
+const CUSTOM_SIZE_MAX      = 3000;  // мм
 
 /* =====================================================================
    СОСТОЯНИЕ
@@ -37,6 +39,10 @@ const state = {
   lines:     ["", ""],   // до max_lines строк
   maxLines:  6,          // обновляется из шаблонов
   refCode:   "",
+
+  // Кастомный размер (мм, null = не задан)
+  customW:   null,
+  customH:   null,
 
   // Оплата
   orderId:   null,
@@ -66,6 +72,11 @@ const el = {
   refInput:    $("ref-input"),
   refStatus:   $("ref-status"),
   buyBtn:      $("buy-btn"),
+
+  // Кастомный размер
+  customW:         $("custom-w"),
+  customH:         $("custom-h"),
+  customSizeHint:  $("custom-size-hint"),
 
   // Модалки
   modalError:   $("modal-error"),
@@ -110,6 +121,7 @@ async function loadTemplates() {
     bindSwatches(el.bgSwatches,  "bgColor",   "textColor");
     bindSwatches(el.txtSwatches, "textColor", "bgColor");
     bindFonts();
+    bindCustomSize();
 
   } catch (e) {
     el.buyBtn.disabled = true;
@@ -183,7 +195,7 @@ function renderFonts(fonts) {
   if (fonts.length > 0) state.font = fonts[0];
 }
 
-/** Форматирует размеры мм → "Стандарт" / "3×2 м" как подпись */
+/** Форматирует размеры мм → "3×2 м" как подпись */
 function formatDimensions(w, h) {
   return `${(w / 1000).toFixed(w % 1000 === 0 ? 0 : 1)}×${(h / 1000).toFixed(h % 1000 === 0 ? 0 : 1)} м`;
 }
@@ -192,16 +204,13 @@ function formatDimensions(w, h) {
    ЗАЩИТА ОТ СОВПАДЕНИЯ ЦВЕТОВ
    ===================================================================== */
 
-/**
- * Возвращает контейнер свотчей по имени поля состояния.
- */
+/** Возвращает контейнер свотчей по имени поля состояния. */
 function swatchContainerFor(field) {
   return field === "bgColor" ? el.bgSwatches : el.txtSwatches;
 }
 
 /**
  * Принудительно активирует свотч с указанным именем цвета в контейнере.
- * Возвращает true если свотч найден и переключён.
  */
 function activateSwatch(container, colorName) {
   const swatches = container.querySelectorAll(".swatch");
@@ -219,21 +228,117 @@ function activateSwatch(container, colorName) {
  * Проверяет совпадение bgColor и textColor.
  * Если совпадают — переключает oppositeField на первый доступный
  * отличный от выбранного цвет и обновляет UI.
- *
- * @param {string} chosenField   — поле, которое только что изменили ("bgColor" | "textColor")
- * @param {string} oppositeField — противоположное поле
  */
 function resolveColorConflict(chosenField, oppositeField) {
-  if (state.bgColor !== state.textColor) return; // конфликта нет
+  if (state.bgColor !== state.textColor) return;
 
-  // Ищем первый цвет, отличный от только что выбранного
   const chosen = state[chosenField];
   const fallback = state.colorNames.find((name) => name !== chosen);
 
-  if (!fallback) return; // только один цвет в системе — защита невозможна
+  if (!fallback) return;
 
   state[oppositeField] = fallback;
   activateSwatch(swatchContainerFor(oppositeField), fallback);
+}
+
+/* =====================================================================
+   КАСТОМНЫЙ РАЗМЕР
+   ===================================================================== */
+
+/**
+ * Разбирает значение инпута и возвращает целое число в диапазоне
+ * [CUSTOM_SIZE_MIN, CUSTOM_SIZE_MAX] или null если невалидно.
+ */
+function parseCustomDim(value) {
+  const n = parseInt(value, 10);
+  if (isNaN(n) || n < CUSTOM_SIZE_MIN || n > CUSTOM_SIZE_MAX) return null;
+  return n;
+}
+
+/**
+ * Обновляет state.customW / customH из инпутов,
+ * показывает/скрывает подсказку с ошибкой,
+ * переключает sizeKey на "custom" если оба поля валидны
+ * или возвращает к первой типовой кнопке если оба пустые.
+ */
+function handleCustomSizeInput() {
+  const wRaw = el.customW.value.trim();
+  const hRaw = el.customH.value.trim();
+
+  // Оба пустые → выходим из режима custom, не трогаем активную кнопку
+  if (wRaw === "" && hRaw === "") {
+    el.customW.classList.remove("active-custom", "error");
+    el.customH.classList.remove("active-custom", "error");
+    setCustomHint("100–3000 мм по каждой стороне", false);
+
+    // Если до этого был выбран custom — снимаем, возвращаем первую кнопку
+    if (state.sizeKey === "custom") {
+      state.sizeKey  = null;
+      state.customW  = null;
+      state.customH  = null;
+      const firstBtn = el.sizeGrid.querySelector(".size-btn");
+      if (firstBtn) {
+        firstBtn.classList.add("active");
+        state.sizeKey = firstBtn.dataset.size;
+      }
+      schedulePreview();
+    }
+    return;
+  }
+
+  const w = parseCustomDim(wRaw);
+  const h = parseCustomDim(hRaw);
+
+  const wErr = wRaw !== "" && w === null;
+  const hErr = hRaw !== "" && h === null;
+
+  el.customW.classList.toggle("error", wErr);
+  el.customH.classList.toggle("error", hErr);
+
+  if (wErr || hErr) {
+    setCustomHint(`Введите целое число от ${CUSTOM_SIZE_MIN} до ${CUSTOM_SIZE_MAX}`, true);
+    return;
+  }
+
+  // Одно из полей ещё не заполнено — ждём
+  if (w === null || h === null) {
+    setCustomHint("Заполните оба поля", false);
+    return;
+  }
+
+  // Оба валидны — активируем режим custom
+  state.customW  = w;
+  state.customH  = h;
+  state.sizeKey  = "custom";
+
+  el.customW.classList.add("active-custom");
+  el.customH.classList.add("active-custom");
+  el.customW.classList.remove("error");
+  el.customH.classList.remove("error");
+
+  // Снимаем активность со всех типовых кнопок
+  el.sizeGrid.querySelectorAll(".size-btn").forEach((b) => b.classList.remove("active"));
+
+  setCustomHint(`${w} × ${h} мм`, false);
+  schedulePreview();
+}
+
+function setCustomHint(text, isError) {
+  el.customSizeHint.textContent = text;
+  el.customSizeHint.classList.toggle("error", isError);
+}
+
+/** Привязывает события к инпутам кастомного размера. */
+function bindCustomSize() {
+  [el.customW, el.customH].forEach((input) => {
+    input.addEventListener("input", handleCustomSizeInput);
+    // На blur убираем .active-custom если поле пустое
+    input.addEventListener("blur", () => {
+      if (input.value.trim() === "") {
+        input.classList.remove("active-custom", "error");
+      }
+    });
+  });
 }
 
 /* =====================================================================
@@ -246,6 +351,16 @@ function bindSizes() {
     el.sizeGrid.querySelectorAll(".size-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     state.sizeKey = btn.dataset.size;
+
+    // Сброс кастомного размера при выборе типовой кнопки
+    state.customW = null;
+    state.customH = null;
+    el.customW.value = "";
+    el.customH.value = "";
+    el.customW.classList.remove("active-custom", "error");
+    el.customH.classList.remove("active-custom", "error");
+    setCustomHint("100–3000 мм по каждой стороне", false);
+
     schedulePreview();
   });
 }
@@ -255,8 +370,8 @@ function bindSizes() {
    ===================================================================== */
 
 /**
- * @param {HTMLElement} container    — контейнер свотчей
- * @param {string}      field        — поле state ("bgColor" | "textColor")
+ * @param {HTMLElement} container     — контейнер свотчей
+ * @param {string}      field         — поле state ("bgColor" | "textColor")
  * @param {string}      oppositeField — противоположное поле для проверки конфликта
  */
 function bindSwatches(container, field, oppositeField) {
@@ -302,6 +417,11 @@ async function fetchPreview() {
   const lines = getTextLines();
   if (lines.length === 0) {
     showPlaceholder();
+    return;
+  }
+
+  // Кастомный режим: оба размера должны быть валидны
+  if (state.sizeKey === "custom" && (state.customW === null || state.customH === null)) {
     return;
   }
 
@@ -361,15 +481,25 @@ function getTextLines() {
     .map((t) => ({ text: t, scale: 1.0 }));
 }
 
+/**
+ * Собирает конфиг для /api/preview и /api/order.
+ * При кастомном размере передаёт width_mm / height_mm напрямую
+ * вместо size_key.
+ */
 function buildConfig() {
-  return {
-    size_key:   state.sizeKey,
+  const base = {
     bg_color:   state.bgColor,
     text_color: state.textColor,
     font:       state.font,
     text_lines: getTextLines(),
     ref_code:   state.refCode || undefined,
   };
+
+  if (state.sizeKey === "custom") {
+    return { ...base, width_mm: state.customW, height_mm: state.customH };
+  }
+
+  return { ...base, size_key: state.sizeKey };
 }
 
 /* =====================================================================
@@ -455,6 +585,15 @@ el.buyBtn.addEventListener("click", async () => {
   if (getTextLines().length === 0) {
     showError("Введите текст", "Добавьте хотя бы одну строку текста для баннера.");
     return;
+  }
+
+  // Валидация кастомного размера перед заказом
+  if (state.sizeKey === "custom") {
+    if (state.customW === null || state.customH === null) {
+      showError("Укажите размер", `Введите ширину и высоту от ${CUSTOM_SIZE_MIN} до ${CUSTOM_SIZE_MAX} мм.`);
+      el.customW.focus();
+      return;
+    }
   }
 
   el.buyBtn.disabled = true;
@@ -565,7 +704,9 @@ async function downloadPdf(token) {
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href     = url;
-    a.download = `banner_${state.sizeKey}_${Date.now()}.pdf`;
+    a.download = `banner_${state.sizeKey === "custom"
+      ? `${state.customW}x${state.customH}mm`
+      : state.sizeKey}_${Date.now()}.pdf`;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => {

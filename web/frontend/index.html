@@ -8,7 +8,108 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=3">
+  <style>
+    /* ---- Кастомный размер ---- */
+    .custom-size-block {
+      margin-top: 10px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    .custom-size-label {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--ink-3);
+      margin-bottom: 10px;
+    }
+
+    .custom-size-inputs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .custom-size-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+    }
+
+    .custom-size-field label {
+      font-size: 11px;
+      color: var(--ink-2);
+      font-weight: 500;
+    }
+
+    .custom-size-input {
+      width: 100%;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 10px;
+      font-family: 'Unbounded', sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--ink);
+      background: var(--bg);
+      outline: none;
+      transition: border-color 0.15s, background 0.15s;
+      text-align: center;
+      /* убираем стрелки браузера */
+      -moz-appearance: textfield;
+    }
+
+    .custom-size-input::-webkit-outer-spin-button,
+    .custom-size-input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+    }
+
+    .custom-size-input:focus {
+      border-color: var(--accent2);
+      background: var(--surface);
+    }
+
+    .custom-size-input.active-custom {
+      border-color: var(--accent);
+      background: #fff5f3;
+    }
+
+    .custom-size-input.error {
+      border-color: var(--accent);
+      background: #fff5f3;
+    }
+
+    .custom-size-sep {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--ink-3);
+      padding-top: 20px; /* выравнивание по инпуту с учётом label */
+      flex-shrink: 0;
+    }
+
+    .custom-size-unit {
+      font-size: 11px;
+      color: var(--ink-3);
+      padding-top: 20px;
+      flex-shrink: 0;
+    }
+
+    .custom-size-hint {
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--ink-3);
+      min-height: 16px;
+    }
+
+    .custom-size-hint.error {
+      color: var(--accent);
+    }
+  </style>
 </head>
 <body>
 
@@ -50,6 +151,28 @@
       <div class="card" id="card-size">
         <div class="card-label">Размер баннера</div>
         <div class="size-grid" id="size-grid"></div>
+
+        <!-- Кастомный размер — рендерится JS-ом после кнопок -->
+        <div class="custom-size-block" id="custom-size-block">
+          <div class="custom-size-label">Свой размер</div>
+          <div class="custom-size-inputs">
+            <div class="custom-size-field">
+              <label for="custom-w">Ширина</label>
+              <input class="custom-size-input" id="custom-w"
+                     type="number" min="100" max="3000" step="1"
+                     placeholder="мм">
+            </div>
+            <span class="custom-size-sep">×</span>
+            <div class="custom-size-field">
+              <label for="custom-h">Высота</label>
+              <input class="custom-size-input" id="custom-h"
+                     type="number" min="100" max="3000" step="1"
+                     placeholder="мм">
+            </div>
+            <span class="custom-size-unit">мм</span>
+          </div>
+          <div class="custom-size-hint" id="custom-size-hint">100–3000 мм по каждой стороне</div>
+        </div>
       </div>
 
       <!-- ЦВЕТА — свотчи рендерятся из /api/templates -->
@@ -161,6 +284,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>
