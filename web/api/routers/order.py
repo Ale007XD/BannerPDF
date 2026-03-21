@@ -29,7 +29,9 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from typing import Optional
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..db import get_db
 from ..services.config import BANNER_SIZES
@@ -127,12 +129,22 @@ class TextLine(BaseModel):
 
 
 class OrderRequest(BaseModel):
-    size_key:   str            = Field(...)
+    size_key:   Optional[str] = None
+    width_mm:   Optional[int] = None
+    height_mm:  Optional[int] = None
+
     bg_color:   str            = Field(...)
     text_color: str            = Field(...)
     font:       str            = Field(...)
     text_lines: list[TextLine] = Field(..., min_length=1, max_length=6)
     ref_code:   str | None     = Field(default=None, min_length=8, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_size(self):
+        if not self.size_key:
+            if self.width_mm is None or self.height_mm is None:
+                raise ValueError("Either size_key or width_mm+height_mm must be provided")
+        return self
 
     @field_validator("ref_code")
     @classmethod
@@ -189,12 +201,17 @@ async def create_order(req: OrderRequest):
     import uuid
 
     config = {
-        "size_key":   req.size_key,
         "bg_color":   req.bg_color,
         "text_color": req.text_color,
         "font":       req.font,
         "text_lines": [{"text": line.text, "scale": line.scale} for line in req.text_lines],
     }
+
+    if req.size_key:
+        config["size_key"] = req.size_key
+    else:
+        config["width_mm"]  = req.width_mm
+        config["height_mm"] = req.height_mm
 
     errors = validate_banner_config(config)
     if errors:
@@ -218,7 +235,7 @@ async def create_order(req: OrderRequest):
             (
                 order_id,
                 amount_rub,
-                req.size_key,
+                req.size_key or "custom",
                 req.ref_code,
                 config_str,
                 datetime.now(timezone.utc).isoformat(),
@@ -233,13 +250,13 @@ async def create_order(req: OrderRequest):
         payment = await create_payment(
             order_id=order_id,
             amount_rub=amount_rub,
-            description=f"Баннер {req.size_key} — BannerPrint",
+            description="Баннер " + (req.size_key or f"{req.width_mm}x{req.height_mm}мм") + " — BannerPrint",
         )
     except Exception as e:
         logger.error("Ошибка подготовки платежа для заказа %s: %s", order_id, e)
         raise HTTPException(status_code=500, detail="Ошибка подготовки платежа. Попробуйте позже.")
 
-    logger.info("Создан заказ %s, размер=%s, сумма=%d руб", order_id, req.size_key, amount_rub)
+    logger.info("Создан заказ %s, размер=%s, сумма=%d руб", order_id, req.size_key or f"{req.width_mm}x{req.height_mm}мм", amount_rub)
     return {
         "order_id":       order_id,
         "amount_kopecks": payment["amount_kopecks"],
