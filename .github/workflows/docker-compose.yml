@@ -1,0 +1,58 @@
+# ============================================================
+# BannerPrint — docker-compose.yml
+# Сервисы: api (FastAPI) + nginx_web (реверс-прокси + статика)
+# Порт 443 занят amnezia-xray — nginx слушает 8444 снаружи
+# ============================================================
+
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bannerprint_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - bannerprint_data:/app/data
+      - ./fonts:/app/fonts:ro
+      - ./profiles:/profiles:ro
+      - ./templates.json:/app/templates.json:ro
+    expose:
+      - "8000"
+    networks:
+      - bannerprint_net
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  nginx_web:
+    image: nginx:1.25-alpine
+    container_name: bannerprint_nginx
+    restart: unless-stopped
+    ports:
+      - "8444:8444"
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend:/app/frontend:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/log/nginx:/var/log/nginx
+    networks:
+      - bannerprint_net
+    depends_on:
+      - api
+
+volumes:
+  bannerprint_data:
+    name: bannerprint_data
+
+networks:
+  bannerprint_net:
+    name: bannerprint_net
