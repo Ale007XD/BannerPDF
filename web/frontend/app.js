@@ -147,6 +147,7 @@ async function loadTemplates() {
 
   } catch (e) {
     el.buyBtn.disabled = true;
+    syncBuyButtons();
     el.previewMeta.textContent = "Не удалось загрузить параметры шаблонов";
     console.error("loadTemplates:", e);
   }
@@ -647,7 +648,11 @@ function syncBottomSheetPreview() {
     el.bsLoader.classList.add("hidden");
   }
   el.bsMeta.textContent = el.previewMeta.textContent;
-  // Синхронизируем доступность кнопки покупки
+  syncBuyButtons();
+}
+
+/** Синхронизирует disabled кнопки покупки между main и bottom sheet. */
+function syncBuyButtons() {
   el.bsBuyBtn.disabled = el.buyBtn.disabled;
 }
 
@@ -722,6 +727,7 @@ el.buyBtn.addEventListener("click", async () => {
 
   el.buyBtn.disabled = true;
   el.buyBtn.textContent = "Создаём заказ...";
+  syncBuyButtons();
 
   try {
     const resp = await fetch(API.order, {
@@ -751,6 +757,7 @@ el.buyBtn.addEventListener("click", async () => {
   } finally {
     el.buyBtn.disabled = false;
     el.buyBtn.textContent = BUY_BTN_TEXT;
+    syncBuyButtons();
   }
 });
 
