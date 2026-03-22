@@ -79,7 +79,21 @@ def _calculate_layout(
       - ограничения по высоте (вертикальный fit)
 
     measure_fn(text, size) → (width, height)
+
+    Алгоритм (три прохода):
+      1. Width-fit: font_size подгоняется так, чтобы строка занимала
+         effective_width по горизонтали.
+      2. Global fit: если суммарная высота со spacing превышает safe_height,
+         все строки масштабируются вниз пропорционально.
+      3. Per-slot clamp: safe_height делится на n равных слотов.
+         Если строка высотой > slot_h * SLOT_FILL_RATIO — масштабируем её
+         отдельно. Это устраняет overflow при вытянутых баннерах (2x1, 1.5x0.5)
+         с малым числом строк, когда width-fit даёт шрифт выше слота.
     """
+    # Доля слота, которую разрешаем занять одной строке.
+    # 0.85 оставляет 7.5% сверху и снизу — визуальный зазор между строками.
+    SLOT_FILL_RATIO = 0.85
+
     details = []
     for item in text_items:
         line = item.get("text", "").strip()
@@ -103,13 +117,29 @@ def _calculate_layout(
             }
         )
 
-    # Вертикальный fit: если не влезает — масштабируем все строки
+    if not details:
+        return details
+
+    # Проход 2: global fit — суммарная высота не превышает safe_height
     total_h = sum(d["height"] * line_spacing_ratio for d in details)
     if total_h > safe_height and total_h > 0:
         fit = safe_height / total_h
         for d in details:
             d["font_size"] *= fit
             d["height"] *= fit
+
+    # Проход 3: per-slot clamp — каждая строка влезает в свой слот.
+    # Слот = safe_height / n; строка не должна занимать больше SLOT_FILL_RATIO слота.
+    # Без этого при вытянутых баннерах (мало строк, большой шрифт по ширине)
+    # height строки > slot_h → строка вылезает за границы слота.
+    n = len(details)
+    slot_h = safe_height / n
+    max_text_h = slot_h * SLOT_FILL_RATIO
+    for d in details:
+        if d["height"] > max_text_h:
+            clamp = max_text_h / d["height"]
+            d["font_size"] *= clamp
+            d["height"] *= clamp
 
     return details
 
