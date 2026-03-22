@@ -79,19 +79,26 @@ def _calculate_layout(
       - ограничения по высоте (вертикальный fit)
 
     measure_fn(text, size) → (width, height)
+    Единицы size и возвращаемых значений определяются вызывающей стороной
+    (мм для PDF-ветки, px для Pillow-превью).
 
-    Алгоритм (три прохода):
+    Алгоритм (два прохода):
       1. Width-fit: font_size подгоняется так, чтобы строка занимала
          effective_width по горизонтали.
-      2. Global fit: если суммарная высота со spacing превышает safe_height,
-         все строки масштабируются вниз пропорционально.
-      3. Per-slot clamp: safe_height делится на n равных слотов.
-         Если строка высотой > slot_h * SLOT_FILL_RATIO — масштабируем её
-         отдельно. Это устраняет overflow при вытянутых баннерах (2x1, 1.5x0.5)
-         с малым числом строк, когда width-fit даёт шрифт выше слота.
+      2. Uniform scale: все строки масштабируются одним коэффициентом,
+         определяемым самой «высокой» строкой. Это гарантирует:
+           а) все строки остаются одинаковой относительной ширины;
+           б) каждая строка влезает в свой слот (safe_height / n).
+         SLOT_FILL_RATIO=0.85 оставляет ~7.5% отступа сверху и снизу.
+
+    Почему не per-строчный clamp:
+      Если масштабировать каждую строку независимо, строки с разным
+      соотношением height/font_size (буквы vs цифры) получают разный
+      коэффициент и визуально выглядят разной ширины, хотя технически
+      обе были подогнаны под safe_width.
     """
-    # Доля слота, которую разрешаем занять одной строке.
-    # 0.85 оставляет 7.5% сверху и снизу — визуальный зазор между строками.
+    # Доля слота, которую разрешаем занять одной строке по высоте.
+    # 0.85 → при равномерном распределении остаётся по 7.5% padding сверху/снизу.
     SLOT_FILL_RATIO = 0.85
 
     details = []
@@ -120,26 +127,17 @@ def _calculate_layout(
     if not details:
         return details
 
-    # Проход 2: global fit — суммарная высота не превышает safe_height
-    total_h = sum(d["height"] * line_spacing_ratio for d in details)
-    if total_h > safe_height and total_h > 0:
-        fit = safe_height / total_h
-        for d in details:
-            d["font_size"] *= fit
-            d["height"] *= fit
-
-    # Проход 3: per-slot clamp — каждая строка влезает в свой слот.
-    # Слот = safe_height / n; строка не должна занимать больше SLOT_FILL_RATIO слота.
-    # Без этого при вытянутых баннерах (мало строк, большой шрифт по ширине)
-    # height строки > slot_h → строка вылезает за границы слота.
+    # Uniform scale: один коэффициент для всех строк — по самой высокой.
+    # Слот каждой строки = safe_height / n; строка не должна превышать SLOT_FILL_RATIO слота.
     n = len(details)
     slot_h = safe_height / n
-    max_text_h = slot_h * SLOT_FILL_RATIO
-    for d in details:
-        if d["height"] > max_text_h:
-            clamp = max_text_h / d["height"]
-            d["font_size"] *= clamp
-            d["height"] *= clamp
+    max_allowed_h = slot_h * SLOT_FILL_RATIO
+    max_h = max(d["height"] for d in details)
+    if max_h > max_allowed_h:
+        scale = max_allowed_h / max_h
+        for d in details:
+            d["font_size"] *= scale
+            d["height"] *= scale
 
     return details
 
@@ -326,9 +324,10 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
 
     details = _calculate_layout(text_items, safe_w_mm, safe_h_mm, measure_fn=rl_measure)
 
-    # font_size из layout в мм → переводим в pt для ReportLab.
+    # font_size и height из layout в мм → переводим в pt для ReportLab.
     for d in details:
         d["font_size_pt"] = d["font_size"] * mm
+        d["height_pt"] = d["height"] * mm
 
     # Слотовое вертикальное распределение — зеркало Pillow.
     # ReportLab: y=0 внизу страницы, поэтому слоты считаем снизу вверх.
@@ -339,28 +338,18 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
     n = len(details)
     slot_h_pt = safe_h_pt / n if n > 0 else safe_h_pt
 
-    # Кэшируем face для расчёта ascent/descent (одинаковый для всех строк шрифта)
-    face = pdfmetrics.getFont(font_name).face
-
     for i, d in enumerate(details):
         size_pt = d["font_size_pt"]
         text_w = pdfmetrics.stringWidth(d["text"], font_name, size_pt)
         x = safe_pt + (safe_w_mm * mm - text_w) / 2
 
-        # Центр слота i (строки сверху вниз: i=0 → верхний слот)
+        # Нижняя граница слота i (в координатах ReportLab от низа страницы)
         slot_bottom = safe_pt + slot_h_pt * (n - 1 - i)
-        slot_center = slot_bottom + slot_h_pt / 2
-
-        # Центрирование по baseline через метрики шрифта.
-        # В ReportLab drawString(x, y): y — это baseline.
-        # Визуальный центр строки = baseline + (ascent + descent) / 2,
-        # где descent отрицательный (глиф ниже baseline).
-        # Приравниваем к центру слота:
-        #   baseline + (ascent + descent) / 2 = slot_center
-        #   baseline = slot_center - (ascent + descent) / 2
-        ascent_pt  = face.ascent  / 1000 * size_pt
-        descent_pt = face.descent / 1000 * size_pt  # отрицательный
-        y_pos = slot_center - (ascent_pt + descent_pt) / 2
+        # Центрируем строку в слоте через Pillow bbox height (идентично превью).
+        # В ReportLab drawString(x, y): y — baseline.
+        # Pillow bbox даёт высоту видимых пикселей (не ascent+descent шрифта),
+        # поэтому y_pos = slot_bottom + (slot_h - height) / 2 совпадает с Pillow.
+        y_pos = slot_bottom + (slot_h_pt - d["height_pt"]) / 2
 
         c.setFont(font_name, size_pt)
         to = c.beginText(x, y_pos)
