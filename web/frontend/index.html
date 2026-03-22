@@ -109,6 +109,87 @@
     .custom-size-hint.error {
       color: var(--accent);
     }
+
+    /* ---- Футер ---- */
+    .site-footer {
+      background: var(--ink);
+      margin-top: 32px;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 14px 20px;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    .footer-copy {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.4);
+    }
+
+    .footer-links {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .footer-link {
+      font-family: 'Onest', sans-serif;
+      font-size: 12px;
+      color: rgba(255,255,255,0.55);
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+      text-decoration: none;
+      transition: color 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .footer-link:hover {
+      color: #fff;
+    }
+
+    /* ---- Модалка-документ ---- */
+    .modal--doc {
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .modal-doc-body {
+      overflow-y: auto;
+      flex: 1;
+      margin: 12px 0 16px;
+      padding-right: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .modal-doc-body p {
+      font-size: 13px;
+      color: var(--ink-2);
+      line-height: 1.65;
+      margin: 0 0 10px;
+    }
+
+    .modal-doc-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    @media (max-width: 819px) {
+      .site-footer {
+        /* на мобиле — над sticky-bar превью */
+        margin-bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+      }
+    }
   </style>
 </head>
 <body>
@@ -239,6 +320,18 @@
 
   </main>
 
+  <!-- ===================== ФУТЕР ===================== -->
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <span class="footer-copy">© 2026 BannerPrint</span>
+      <nav class="footer-links">
+        <button class="footer-link" id="open-terms">Соглашение</button>
+        <button class="footer-link" id="open-privacy">Конфиденциальность</button>
+        <a class="footer-link" href="https://t.me/ale007xd" target="_blank" rel="noopener">Связаться</a>
+      </nav>
+    </div>
+  </footer>
+
   <!-- ===================== МОДАЛКИ ===================== -->
 
   <!-- Ошибка -->
@@ -276,6 +369,10 @@
         ✈ Написать в Telegram
       </button>
 
+      <div style="font-size:11px;color:var(--ink-3);text-align:center;margin-top:8px;line-height:1.5;">
+        Оплачивая, вы подтверждаете согласие с <button class="footer-link" id="pay-open-terms" style="font-size:11px;">условиями использования</button>
+      </div>
+
       <button class="modal-btn modal-btn--ghost" id="pay-cancel" style="margin-top:4px;">Отмена</button>
     </div>
   </div>
@@ -303,6 +400,36 @@
     </div>
   </div>
 
+
+  <!-- Пользовательское соглашение -->
+  <div class="modal-overlay hidden" id="modal-terms">
+    <div class="modal modal--doc">
+      <div class="modal-title">Пользовательское соглашение</div>
+      <div class="modal-doc-body">
+        <p><strong>1.</strong> Сервис предоставляет инструмент для создания текстовых макетов баннеров.</p>
+        <p><strong>2.</strong> Пользователь самостоятельно вводит текст и несёт ответственность за его содержание.</p>
+        <p><strong>3.</strong> Сервис не гарантирует коммерческий результат (продажи, отклики и т.д.).</p>
+        <p><strong>4.</strong> Возврат средств не осуществляется — услуга является цифровой и выполняется мгновенно после оплаты.</p>
+        <p><strong>5.</strong> Сервис не собирает и не обрабатывает персональные данные пользователей. Работа осуществляется без регистрации и передачи личной информации.</p>
+        <p><strong>6.</strong> Используя сервис, пользователь соглашается с условиями данного соглашения.</p>
+      </div>
+      <button class="modal-btn" id="terms-close">Понятно</button>
+    </div>
+  </div>
+
+  <!-- Конфиденциальность -->
+  <div class="modal-overlay hidden" id="modal-privacy">
+    <div class="modal modal--doc">
+      <div class="modal-title">Конфиденциальность</div>
+      <div class="modal-doc-body">
+        <p>Сервис не собирает и не обрабатывает персональные данные пользователей.</p>
+        <p>Все действия выполняются без регистрации и без передачи личной информации. Для работы используются только технические данные, не позволяющие идентифицировать пользователя.</p>
+        <p>Что сохраняется при оформлении заказа: уникальный номер заказа, выбранный размер баннера, сумма оплаты. Эти данные не являются персональными и не позволяют установить личность пользователя.</p>
+        <p>Сервис не использует сторонние трекеры, рекламные системы и не передаёт какие-либо данные третьим лицам.</p>
+      </div>
+      <button class="modal-btn" id="privacy-close">Понятно</button>
+    </div>
+  </div>
 
   <!-- ===================== FAB + BOTTOM SHEET (только мобиле) ===================== -->
 
@@ -341,6 +468,30 @@
     </button>
   </div>
 
+  <script>
+    // Вспомогательная функция (дублирует $ из app.js — нужна до его загрузки)
+    function openModal(id) {
+      document.getElementById(id).classList.remove('hidden');
+    }
+    function closeModal(id) {
+      document.getElementById(id).classList.add('hidden');
+    }
+
+    document.getElementById('open-terms').addEventListener('click', () => openModal('modal-terms'));
+    document.getElementById('open-privacy').addEventListener('click', () => openModal('modal-privacy'));
+    document.getElementById('terms-close').addEventListener('click', () => closeModal('modal-terms'));
+    document.getElementById('privacy-close').addEventListener('click', () => closeModal('modal-privacy'));
+
+    // Клик по оверлею — закрыть
+    ['modal-terms', 'modal-privacy'].forEach(id => {
+      document.getElementById(id).addEventListener('click', function(e) {
+        if (e.target === this) closeModal(id);
+      });
+    });
+
+    // Кнопка "условия" внутри модалки оплаты
+    document.getElementById('pay-open-terms').addEventListener('click', () => openModal('modal-terms'));
+  </script>
   <script src="app.js?v=9"></script>
 </body>
 </html>
