@@ -307,8 +307,16 @@ body {
 
 .text-line-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
+}
+
+/* Обёртка: input + строка масштаба */
+.line-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .line-num {
@@ -318,6 +326,7 @@ body {
   color: var(--ink-3);
   min-width: 18px;
   text-align: center;
+  padding-top: 12px; /* выравниваем по середине input */
 }
 
 .line-input {
@@ -331,6 +340,8 @@ body {
   background: var(--bg);
   outline: none;
   transition: border-color 0.15s;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .line-input:focus {
@@ -340,6 +351,63 @@ body {
 
 .line-input::placeholder {
   color: var(--ink-3);
+}
+
+/* Строка масштаба под input */
+.line-scale-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scale-btn {
+  background: none;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--ink-2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.scale-btn:hover {
+  border-color: var(--accent2);
+  color: var(--accent2);
+  background: var(--surface);
+}
+
+.scale-btn:active {
+  background: var(--accent2);
+  color: #fff;
+  border-color: var(--accent2);
+}
+
+/* Кнопка задизейблена когда на границе диапазона */
+.scale-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.scale-label {
+  font-family: 'Unbounded', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink-3);
+  min-width: 32px;
+  text-align: center;
+}
+
+/* При 100% — label неактивный, при < 100% — акцентный */
+.scale-label.scaled {
+  color: var(--accent2);
 }
 
 .remove-line-btn {
@@ -352,6 +420,7 @@ body {
   padding: 4px 6px;
   border-radius: var(--radius-sm);
   transition: color 0.12s, background 0.12s;
+  padding-top: 10px; /* выравниваем по верху input */
 }
 
 .remove-line-btn:hover {

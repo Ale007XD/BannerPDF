@@ -41,7 +41,7 @@ const state = {
   bgColor:   null,   // задаётся после загрузки шаблонов (первый цвет)
   textColor: null,   // задаётся после загрузки шаблонов (второй цвет)
   font:      null,   // задаётся после загрузки шаблонов (первый шрифт)
-  lines:     ["", ""],   // до max_lines строк
+  lines:     [{ text: "", scale: 1.0 }, { text: "", scale: 1.0 }],   // до max_lines строк
   maxLines:  6,          // обновляется из шаблонов
   refCode:   "",
 
@@ -503,9 +503,8 @@ function showPreview(base64, widthMm, heightMm) {
    ===================================================================== */
 function getTextLines() {
   return state.lines
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0)
-    .map((t) => ({ text: t, scale: 1.0 }));
+    .filter((l) => l.text.trim().length > 0)
+    .map((l) => ({ text: l.text.trim(), scale: l.scale }));
 }
 
 /**
@@ -535,29 +534,58 @@ function buildConfig() {
 function renderTextLines() {
   el.textLines.innerHTML = "";
 
-  state.lines.forEach((text, i) => {
+  state.lines.forEach((line, i) => {
     const row = document.createElement("div");
     row.className = "text-line-row";
     row.dataset.index = i;
+
+    const scalePct = Math.round(line.scale * 100);
+
     row.innerHTML = `
       <span class="line-num">${i + 1}</span>
-      <input class="line-input" type="text"
-             placeholder="Строка ${i + 1}..."
-             maxlength="120"
-             value="${escapeHtml(text)}">
+      <div class="line-body">
+        <input class="line-input" type="text"
+               placeholder="Строка ${i + 1}..."
+               maxlength="120"
+               value="${escapeHtml(line.text)}">
+        <div class="line-scale-row">
+          <button class="scale-btn scale-minus" data-index="${i}" title="Уменьшить ширину строки"${scalePct <= 50 ? " disabled" : ""}>−</button>
+          <span class="scale-label${scalePct < 100 ? " scaled" : ""}">${scalePct}%</span>
+          <button class="scale-btn scale-plus" data-index="${i}" title="Увеличить ширину строки"${scalePct >= 100 ? " disabled" : ""}>+</button>
+        </div>
+      </div>
       <button class="remove-line-btn" title="Удалить строку">×</button>
     `;
+
     const input = row.querySelector("input");
     input.addEventListener("input", () => {
-      state.lines[i] = input.value;
+      state.lines[i].text = input.value;
       schedulePreview();
     });
+
     row.querySelector(".remove-line-btn").addEventListener("click", () => {
       if (state.lines.length <= 1) return;
       state.lines.splice(i, 1);
       renderTextLines();
       schedulePreview();
     });
+
+    row.querySelector(".scale-minus").addEventListener("click", () => {
+      const cur = Math.round(state.lines[i].scale * 100);
+      if (cur <= 50) return;
+      state.lines[i].scale = (cur - 10) / 100;
+      renderTextLines();
+      schedulePreview();
+    });
+
+    row.querySelector(".scale-plus").addEventListener("click", () => {
+      const cur = Math.round(state.lines[i].scale * 100);
+      if (cur >= 100) return;
+      state.lines[i].scale = (cur + 10) / 100;
+      renderTextLines();
+      schedulePreview();
+    });
+
     el.textLines.appendChild(row);
   });
 
@@ -566,7 +594,7 @@ function renderTextLines() {
 
 el.addLineBtn.addEventListener("click", () => {
   if (state.lines.length >= state.maxLines) return;
-  state.lines.push("");
+  state.lines.push({ text: "", scale: 1.0 });
   renderTextLines();
 });
 
