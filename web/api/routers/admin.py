@@ -15,9 +15,11 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
 
 from ..db import get_db
 from ..routers.order import transition, OrderStatus
+from ..services.api_key_store import create_api_key, deactivate_key, list_keys
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -203,3 +205,73 @@ async def force_token(order_id: str):
         "expires_at":    expires_at,
         "already_issued": False,
     }
+
+
+# ---------------------------------------------------------------------------
+# Управление корп. API-ключами
+# ---------------------------------------------------------------------------
+
+class CreateKeyRequest(BaseModel):
+    plan_id: str
+    label:   str
+    email:   str
+
+
+@router.get("/v1/admin/keys", dependencies=[Depends(require_admin)])
+async def admin_list_keys():
+    """Список всех API-ключей (без key_hash)."""
+    return {"keys": list_keys()}
+
+
+@router.post("/v1/admin/keys", dependencies=[Depends(require_admin)])
+async def admin_create_key(body: CreateKeyRequest):
+    """
+    Создаёт новый API-ключ.
+    Возвращает ключ ОДИН РАЗ — сохранить сразу, повторно получить нельзя.
+    """
+    # Проверяем существование плана
+    with get_db() as conn:
+        plan = conn.execute(
+            "SELECT id FROM api_plans WHERE id = ?", (body.plan_id,)
+        ).fetchone()
+    if plan is None:
+        raise HTTPException(status_code=422, detail=f"Неизвестный план: {body.plan_id!r}")
+
+    key = create_api_key(
+        plan_id=body.plan_id,
+        label=body.label,
+        email=body.email,
+    )
+
+    logger.info(
+        "admin_create_key: создан ключ для %s план=%s", body.email, body.plan_id
+    )
+
+    return {
+        "key":     key,           # показывается только один раз
+        "prefix":  key[:12],
+        "plan_id": body.plan_id,
+        "label":   body.label,
+        "email":   body.email,
+        "note":    "Сохраните ключ — повторно получить его невозможно",
+    }
+
+
+@router.delete("/v1/admin/keys/{key_id}", dependencies=[Depends(require_admin)])
+async def admin_deactivate_key(key_id: int):
+    """Деактивирует API-ключ (active=false). Не удаляет из БД."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT key_prefix, active FROM api_keys WHERE id = ?", (key_id,)
+        ).fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Ключ не найден")
+
+    if not row["active"]:
+        return {"key_id": key_id, "status": "already_inactive"}
+
+    deactivate_key(key_id)
+    logger.info("admin_deactivate_key: деактивирован ключ id=%d (%s)", key_id, row["key_prefix"])
+
+    return {"key_id": key_id, "status": "deactivated"}
