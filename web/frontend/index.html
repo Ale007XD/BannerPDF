@@ -10,48 +10,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Onest:wght@400;500;600&family=Golos+Text:wght@400;700&family=Tenor+Sans&family=Fira+Sans+Condensed:wght@800&family=PT+Sans+Narrow:wght@700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=5">
   <style>
-    /* ---- Inline-кнопка превью в buy-card (только мобиле) ---- */
-    .preview-inline-btn {
-      display: none; /* скрыта на десктопе */
-    }
-
-    @media (max-width: 767px) {
-      .preview-inline-btn {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        width: 100%;
-        padding: 13px 16px;
-        margin-bottom: 10px;
-        border-radius: 0; /* прямые углы */
-        border: 2px solid var(--accent, #ff4d1a);
-        background: transparent;
-        color: var(--accent, #ff4d1a);
-        font-family: 'Unbounded', sans-serif;
-        font-size: 13px;
-        font-weight: 700;
-        cursor: pointer;
-        transition: background 0.15s, color 0.15s;
-        -webkit-tap-highlight-color: transparent;
-      }
-
-      .preview-inline-btn:active {
-        background: var(--accent, #ff4d1a);
-        color: #fff;
-      }
-
-      .preview-inline-icon {
-        font-size: 16px;
-        line-height: 1;
-      }
-
-      /* FAB больше не нужен — скрываем на случай если где-то остался */
-      .fab-preview {
-        display: none !important;
-      }
-    }
-
     /* ---- Кастомный размер ---- -->
     .custom-size-block {
       margin-top: 10px;
@@ -274,9 +232,6 @@
           <span class="buy-price">299 ₽</span>
         </div>
         <div class="buy-desc">CMYK · Шрифты в кривых · ICC-профиль ISOcoated_v2_300</div>
-        <button class="preview-inline-btn" id="preview-inline-btn">
-          <span class="preview-inline-icon">👁</span> Посмотреть превью
-        </button>
         <button class="buy-btn" id="buy-btn">Получить PDF</button>
       </div>
 
@@ -377,6 +332,13 @@
         <button class="bs-buy-btn" id="bs-buy-btn">Получить PDF — 299 ₽</button>
       </div>
     </div>
+  </div>
+
+  <!-- ===================== STICKY PREVIEW BAR (только мобиле) ===================== -->
+  <div class="preview-sticky-bar" id="preview-sticky-bar">
+    <button class="preview-inline-btn" id="preview-inline-btn">
+      <span class="preview-inline-icon">👁</span> Посмотреть превью
+    </button>
   </div>
 
   <script src="app.js?v=9"></script>
