@@ -38,6 +38,7 @@
       flex-direction: column;
       gap: 4px;
       flex: 1;
+      min-width: 0; /* фикс flex overflow на мобиле */
     }
 
     .custom-size-field label {
@@ -47,7 +48,7 @@
     }
 
     .custom-size-input {
-      width: 100%;
+      width: auto;
       border: 1.5px solid var(--border);
       border-radius: var(--radius-sm);
       padding: 10px 10px;
