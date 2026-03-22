@@ -29,26 +29,14 @@
 
     .custom-size-inputs {
       display: flex;
-      align-items: flex-end;
+      align-items: center;
       gap: 8px;
     }
 
-    .custom-size-field {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      flex: 1;
-      min-width: 0; /* фикс flex overflow на мобиле */
-    }
-
-    .custom-size-field label {
-      font-size: 11px;
-      color: var(--ink-2);
-      font-weight: 500;
-    }
+    /* .custom-size-field удалён — лейблов нет, инпуты стоят напрямую */
 
     .custom-size-input {
-      width: auto;
+      width: 80px; /* фиксированная ширина — не растягивается */
       border: 1.5px solid var(--border);
       border-radius: var(--radius-sm);
       padding: 10px 10px;
@@ -89,15 +77,15 @@
       font-size: 16px;
       font-weight: 700;
       color: var(--ink-3);
-      padding-bottom: 11px; /* выравнивание по центру инпута */
       flex-shrink: 0;
+      line-height: 1;
     }
 
     .custom-size-unit {
       font-size: 11px;
       color: var(--ink-3);
-      padding-bottom: 12px;
       flex-shrink: 0;
+      line-height: 1;
     }
 
     .custom-size-hint {
@@ -238,19 +226,13 @@
         <div class="custom-size-block" id="custom-size-block">
           <div class="custom-size-label">Свой размер</div>
           <div class="custom-size-inputs">
-            <div class="custom-size-field">
-              <label for="custom-w">Ширина</label>
-              <input class="custom-size-input" id="custom-w"
-                     type="number" min="100" max="3000" step="1"
-                     placeholder="напр. 2000">
-            </div>
+            <input class="custom-size-input" id="custom-w"
+                   type="number" min="100" max="3000" step="1"
+                   placeholder="2000">
             <span class="custom-size-sep">×</span>
-            <div class="custom-size-field">
-              <label for="custom-h">Высота</label>
-              <input class="custom-size-input" id="custom-h"
-                     type="number" min="100" max="3000" step="1"
-                     placeholder="напр. 1000">
-            </div>
+            <input class="custom-size-input" id="custom-h"
+                   type="number" min="100" max="3000" step="1"
+                   placeholder="1000">
             <span class="custom-size-unit">мм</span>
           </div>
           <div class="custom-size-hint" id="custom-size-hint">100–3000 мм по каждой стороне</div>
