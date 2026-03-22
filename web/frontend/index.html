@@ -277,16 +277,7 @@
           <button class="add-line-btn" id="add-line-btn" title="Добавить строку">+ строка</button>
         </div>
         <div class="text-lines" id="text-lines">
-          <div class="text-line-row" data-index="0">
-            <span class="line-num">1</span>
-            <input class="line-input" type="text" placeholder="Строка 1..." maxlength="120">
-            <button class="remove-line-btn" title="Удалить строку">×</button>
-          </div>
-          <div class="text-line-row" data-index="1">
-            <span class="line-num">2</span>
-            <input class="line-input" type="text" placeholder="Строка 2..." maxlength="120">
-            <button class="remove-line-btn" title="Удалить строку">×</button>
-          </div>
+        <!-- строки рендерятся через renderTextLines() в app.js -->
         </div>
       </div>
 
@@ -494,6 +485,6 @@
     // Кнопка "условия" внутри модалки оплаты
     document.getElementById('pay-open-terms').addEventListener('click', () => openModal('modal-terms'));
   </script>
-  <script src="app.js?v=10"></script>
+  <script src="app.js?v=11"></script>
 </body>
 </html>

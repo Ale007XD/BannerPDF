@@ -28,6 +28,13 @@ const POLL_MAX_ATTEMPTS    = 240;   // ~600 сек (10 мин) — время р
 const CUSTOM_SIZE_MIN      = 100;   // мм
 const CUSTOM_SIZE_MAX      = 3000;  // мм
 
+// Реферальная программа: false — блок скрыт, true — показан.
+// Чтобы включить: 1) поменять false → true здесь, 2) инкрементировать ?v= в index.html (строка с app.js).
+const REFERRAL_ENABLED = false;
+
+// Текст кнопки покупки — один источник правды (используется в finally)
+const BUY_BTN_TEXT = "Получить PDF";
+
 // Контакты для ручной оплаты
 const CONTACT_TG       = "ale007xd";
 const CONTACT_SBP      = "+79140022777";
@@ -83,8 +90,8 @@ const el = {
   customH:         $("custom-h"),
   customSizeHint:  $("custom-size-hint"),
 
-  // Inline-кнопка превью в buy-card (мобиле)
-  fabPreview:   $("preview-inline-btn"),
+  // Sticky-бар превью (мобиле)
+  previewStickyBtn: $("preview-inline-btn"),
   bsOverlay:    $("bs-overlay"),
   bsClose:      $("bs-close"),
   bsPlaceholder:$("bs-placeholder"),
@@ -545,7 +552,7 @@ function renderTextLines() {
       <span class="line-num">${i + 1}</span>
       <div class="line-body">
         <input class="line-input" type="text"
-               placeholder="Строка ${i + 1}..."
+               placeholder="${i === 0 ? 'ВАША РЕКЛАМА' : i === 1 ? 'Телефон или адрес' : 'Строка ' + (i + 1)}"
                maxlength="120"
                value="${escapeHtml(line.text)}">
         <div class="line-scale-row">
@@ -640,10 +647,12 @@ function syncBottomSheetPreview() {
     el.bsLoader.classList.add("hidden");
   }
   el.bsMeta.textContent = el.previewMeta.textContent;
+  // Синхронизируем доступность кнопки покупки
+  el.bsBuyBtn.disabled = el.buyBtn.disabled;
 }
 
-// События FAB и bottom sheet
-el.fabPreview.addEventListener("click", openBottomSheet);
+// События sticky-bar и bottom sheet
+el.previewStickyBtn.addEventListener("click", openBottomSheet);
 el.bsClose.addEventListener("click", closeBottomSheet);
 
 // Тап по оверлею (мимо шита) — закрыть
@@ -741,7 +750,7 @@ el.buyBtn.addEventListener("click", async () => {
     showError("Не удалось создать заказ", e.message);
   } finally {
     el.buyBtn.disabled = false;
-    el.buyBtn.textContent = "Получить PDF";
+    el.buyBtn.textContent = BUY_BTN_TEXT;
   }
 });
 
@@ -906,8 +915,13 @@ function escapeHtml(str) {
    ИНИЦИАЛИЗАЦИЯ
    ===================================================================== */
 async function init() {
-  renderTextLines();
   await loadTemplates();
+  renderTextLines(); // после loadTemplates — maxLines уже актуален
+
+  // Реферальный блок — управляется флагом REFERRAL_ENABLED
+  const refCard = $("card-ref");
+  if (refCard) refCard.style.display = REFERRAL_ENABLED ? "" : "none";
+
   // Первое превью не запускаем — поля пустые
 }
 
