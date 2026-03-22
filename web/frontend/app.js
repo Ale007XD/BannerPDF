@@ -83,8 +83,8 @@ const el = {
   customH:         $("custom-h"),
   customSizeHint:  $("custom-size-hint"),
 
-  // FAB + Bottom sheet (мобиле)
-  fabPreview:   $("fab-preview"),
+  // Inline-кнопка превью в buy-card (мобиле)
+  fabPreview:   $("preview-inline-btn"),
   bsOverlay:    $("bs-overlay"),
   bsClose:      $("bs-close"),
   bsPlaceholder:$("bs-placeholder"),
