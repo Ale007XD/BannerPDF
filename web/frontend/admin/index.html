@@ -280,6 +280,105 @@
       50%       { opacity: 0.3; }
     }
 
+    /* ---- Вкладки ---- */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      background: var(--bg);
+      border-radius: 10px;
+      padding: 4px;
+    }
+    .tab-btn {
+      flex: 1;
+      font-family: 'Unbounded', sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 8px 4px;
+      border: none;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--ink-3);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .tab-btn.active {
+      background: var(--surface);
+      color: var(--ink);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+
+    /* ---- Карточки API-ключей ---- */
+    .key-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      box-shadow: var(--shadow);
+      border-left: 4px solid var(--accent2);
+    }
+    .key-card--inactive { border-left-color: var(--border); opacity: 0.6; }
+    .key-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .key-prefix {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--ink);
+    }
+    .key-plan {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 9px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 20px;
+      background: #e0e8ff;
+      color: #003db0;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .key-plan--enterprise { background: #fef3e0; color: #8a5000; }
+    .key-meta { font-size: 12px; color: var(--ink-2); line-height: 1.7; }
+    .key-usage { display: inline-block; margin-top: 4px; font-size: 11px; font-weight: 600; color: var(--ink-3); }
+    .key-usage--warn { color: var(--accent); }
+
+    /* ---- Форма создания ключа ---- */
+    .create-key-form { display: flex; flex-direction: column; gap: 10px; }
+    .form-input, .form-select {
+      width: 100%;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 11px 14px;
+      font-family: 'Onest', sans-serif;
+      font-size: 14px;
+      color: var(--ink);
+      background: var(--bg);
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-input:focus, .form-select:focus { border-color: var(--accent2); background: var(--surface); }
+    .form-select { appearance: none; cursor: pointer; }
+
+    /* Новый ключ — показывается один раз */
+    .new-key-box {
+      background: #e8f5e8;
+      border: 1.5px solid var(--ok);
+      border-radius: var(--radius-sm);
+      padding: 14px;
+      word-break: break-all;
+    }
+    .new-key-value {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--ok);
+      margin-bottom: 6px;
+    }
+    .new-key-warn { font-size: 11px; color: var(--ink-2); }
+
     /* ---- Toast ---- */
     .toast {
       position: fixed;
@@ -329,6 +428,17 @@
   <!-- ---- ОСНОВНОЙ UI ---- -->
   <div id="main-ui">
 
+    <!-- Вкладки -->
+    <div class="card" style="padding:8px;">
+      <div class="tabs">
+        <button class="tab-btn active" id="tab-orders" data-tab="orders">Заказы</button>
+        <button class="tab-btn" id="tab-keys" data-tab="keys">API ключи</button>
+      </div>
+    </div>
+
+    <!-- ======= ВКЛАДКА: ЗАКАЗЫ ======= -->
+    <div id="pane-orders">
+
     <!-- Статистика -->
     <div class="card" id="stats-card">
       <div class="card-label">Сегодня</div>
@@ -366,6 +476,41 @@
     <div class="orders-list" id="orders-list">
       <div class="empty-state">Загрузка...</div>
     </div>
+
+    </div><!-- /pane-orders -->
+
+    <!-- ======= ВКЛАДКА: API КЛЮЧИ ======= -->
+    <div id="pane-keys" style="display:none;">
+
+      <!-- Создать ключ -->
+      <div class="card">
+        <div class="card-label">Создать ключ</div>
+        <div class="create-key-form">
+          <input class="form-input" type="text" id="key-label" placeholder="Название (клиент / проект)">
+          <input class="form-input" type="email" id="key-email" placeholder="Email">
+          <select class="form-select" id="key-plan">
+            <option value="starter">Starter — 100 PDF/мес, 10 RPM — 1 900 ₽</option>
+            <option value="business">Business — 1 000 PDF/мес, 60 RPM — 9 900 ₽</option>
+            <option value="enterprise">Enterprise — безлимит, 300 RPM — договор</option>
+          </select>
+          <button class="btn btn--accent" id="create-key-btn">Создать ключ</button>
+        </div>
+        <!-- Новый ключ показывается здесь один раз -->
+        <div id="new-key-result" style="display:none;margin-top:14px;">
+          <div class="new-key-box">
+            <div class="new-key-value" id="new-key-value"></div>
+            <div class="new-key-warn">⚠ Сохраните ключ — повторно получить его невозможно</div>
+          </div>
+          <button class="btn btn--ghost" id="copy-key-btn" style="margin-top:8px;">Копировать</button>
+        </div>
+      </div>
+
+      <!-- Список ключей -->
+      <div class="orders-list" id="keys-list">
+        <div class="empty-state">Загрузка...</div>
+      </div>
+
+    </div><!-- /pane-keys -->
 
     <!-- Выйти -->
     <button class="btn btn--ghost" id="logout-btn">Выйти</button>
@@ -409,8 +554,18 @@ const el = {
   statPaid:    $("stat-paid"),
   statRevenue: $("stat-revenue"),
   ordersList:  $("orders-list"),
+  keysList:    $("keys-list"),
   refreshLabel:$("refresh-label"),
   logoutBtn:   $("logout-btn"),
+  paneOrders:  $("pane-orders"),
+  paneKeys:    $("pane-keys"),
+  createKeyBtn:$("create-key-btn"),
+  keyLabel:    $("key-label"),
+  keyEmail:    $("key-email"),
+  keyPlan:     $("key-plan"),
+  newKeyResult:$("new-key-result"),
+  newKeyValue: $("new-key-value"),
+  copyKeyBtn:  $("copy-key-btn"),
 };
 
 /* =====================================================================
@@ -624,6 +779,169 @@ async function issueToken(orderId) {
       btn.disabled = false;
       btn.textContent = "✓ Выдать PDF";
     }
+  }
+}
+
+/* =====================================================================
+   ВКЛАДКИ
+   ===================================================================== */
+let _activeTab = "orders";
+
+document.querySelectorAll(".tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    _activeTab = btn.dataset.tab;
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+
+    el.paneOrders.style.display = _activeTab === "orders" ? "" : "none";
+    el.paneKeys.style.display   = _activeTab === "keys"   ? "" : "none";
+
+    if (_activeTab === "keys") loadKeys();
+  });
+});
+
+/* =====================================================================
+   API КЛЮЧИ — ЗАГРУЗКА И РЕНДЕР
+   ===================================================================== */
+async function loadKeys() {
+  try {
+    const resp = await fetch(`${API_BASE}/v1/admin/keys`, { headers: authHeaders() });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    renderKeys(data.keys);
+  } catch { /* некритично */ }
+}
+
+function renderKeys(keys) {
+  if (!keys || keys.length === 0) {
+    el.keysList.innerHTML = `<div class="empty-state">Ключей нет — создайте первый</div>`;
+    return;
+  }
+
+  el.keysList.innerHTML = "";
+  keys.forEach((k) => {
+    const card = document.createElement("div");
+    card.className = `key-card${k.active ? "" : " key-card--inactive"}`;
+
+    const usagePct  = k.pdf_limit > 0 ? Math.round(k.pdf_used / k.pdf_limit * 100) : 0;
+    const usageWarn = k.pdf_limit > 0 && usagePct >= 80;
+    const usageText = k.pdf_limit === -1
+      ? `${k.pdf_used} PDF (безлимит)`
+      : `${k.pdf_used} / ${k.pdf_limit} PDF (${usagePct}%)`;
+
+    const planClass = k.plan_name === "enterprise" ? " key-plan--enterprise" : "";
+
+    card.innerHTML = `
+      <div class="key-head">
+        <span class="key-prefix">${k.key_prefix}…</span>
+        <span class="key-plan${planClass}">${k.plan_name}</span>
+      </div>
+      <div class="key-meta">
+        <strong>${k.label || "—"}</strong><br>
+        ${k.email || "—"}<br>
+        <span class="key-usage${usageWarn ? " key-usage--warn" : ""}">${usageText}</span>
+      </div>
+      ${k.active ? `
+        <div class="order-actions">
+          <button class="btn btn--ghost" style="margin-top:8px;font-size:11px;"
+                  data-key-id="${k.id}" id="deact-${k.id}">
+            Деактивировать
+          </button>
+        </div>` : `<div style="margin-top:8px;font-size:11px;color:var(--ink-3);">Деактивирован</div>`
+      }
+    `;
+
+    if (k.active) {
+      card.querySelector(`#deact-${k.id}`).addEventListener("click", () => deactivateKey(k.id));
+    }
+
+    el.keysList.appendChild(card);
+  });
+}
+
+/* =====================================================================
+   API КЛЮЧИ — СОЗДАНИЕ
+   ===================================================================== */
+el.createKeyBtn.addEventListener("click", async () => {
+  const label = el.keyLabel.value.trim();
+  const email = el.keyEmail.value.trim();
+  const plan  = el.keyPlan.value;
+
+  if (!label || !email) {
+    showToast("Заполните название и email", "err");
+    return;
+  }
+
+  el.createKeyBtn.disabled = true;
+  el.createKeyBtn.textContent = "Создаём...";
+  el.newKeyResult.style.display = "none";
+
+  try {
+    const resp = await fetch(`${API_BASE}/v1/admin/keys`, {
+      method:  "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body:    JSON.stringify({ plan_id: plan, label, email }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+
+    const data = await resp.json();
+
+    // Показываем ключ один раз
+    el.newKeyValue.textContent = data.key;
+    el.newKeyResult.style.display = "block";
+
+    // Очищаем форму
+    el.keyLabel.value = "";
+    el.keyEmail.value = "";
+
+    showToast("✓ Ключ создан", "ok");
+    loadKeys();
+
+  } catch (e) {
+    showToast(`Ошибка: ${e.message}`, "err");
+  } finally {
+    el.createKeyBtn.disabled = false;
+    el.createKeyBtn.textContent = "Создать ключ";
+  }
+});
+
+el.copyKeyBtn.addEventListener("click", () => {
+  const key = el.newKeyValue.textContent;
+  if (!key) return;
+  navigator.clipboard.writeText(key).then(
+    () => showToast("Скопировано", "ok"),
+    () => showToast("Не удалось скопировать", "err"),
+  );
+});
+
+/* =====================================================================
+   API КЛЮЧИ — ДЕАКТИВАЦИЯ
+   ===================================================================== */
+async function deactivateKey(keyId) {
+  const btn = document.getElementById(`deact-${keyId}`);
+  if (btn) { btn.disabled = true; btn.textContent = "..."; }
+
+  try {
+    const resp = await fetch(`${API_BASE}/v1/admin/keys/${keyId}`, {
+      method:  "DELETE",
+      headers: authHeaders(),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+
+    showToast("Ключ деактивирован", "ok");
+    loadKeys();
+
+  } catch (e) {
+    showToast(`Ошибка: ${e.message}`, "err");
+    if (btn) { btn.disabled = false; btn.textContent = "Деактивировать"; }
   }
 }
 
