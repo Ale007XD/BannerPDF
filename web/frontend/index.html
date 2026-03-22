@@ -29,7 +29,7 @@
 
     .custom-size-inputs {
       display: flex;
-      align-items: center;
+      align-items: flex-end;
       gap: 8px;
     }
 
@@ -88,14 +88,14 @@
       font-size: 16px;
       font-weight: 700;
       color: var(--ink-3);
-      padding-top: 20px; /* выравнивание по инпуту с учётом label */
+      padding-bottom: 11px; /* выравнивание по центру инпута */
       flex-shrink: 0;
     }
 
     .custom-size-unit {
       font-size: 11px;
       color: var(--ink-3);
-      padding-top: 20px;
+      padding-bottom: 12px;
       flex-shrink: 0;
     }
 
@@ -241,14 +241,14 @@
               <label for="custom-w">Ширина</label>
               <input class="custom-size-input" id="custom-w"
                      type="number" min="100" max="3000" step="1"
-                     placeholder="мм">
+                     placeholder="напр. 2000">
             </div>
             <span class="custom-size-sep">×</span>
             <div class="custom-size-field">
               <label for="custom-h">Высота</label>
               <input class="custom-size-input" id="custom-h"
                      type="number" min="100" max="3000" step="1"
-                     placeholder="мм">
+                     placeholder="напр. 1000">
             </div>
             <span class="custom-size-unit">мм</span>
           </div>
