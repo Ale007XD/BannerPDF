@@ -29,6 +29,8 @@ from reportlab.pdfgen import canvas
 
 from .config import COLORS, FONTS, ICC_PROFILE_PATH, SAFE_ZONE_MM
 
+SITE_BASE_URL: str = os.getenv("SITE_BASE_URL", "bannerprintbot.ru")
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -180,14 +182,62 @@ def create_preview_jpeg(data: dict) -> io.BytesIO:
         # позиции, что при нескольких строках накапливается в заметный сдвиг.
         draw.text((x - bbox[0], y - bbox[1]), d["text"], font=fnt, fill=text_rgb)
 
+    # --- Вотермарка ---
+    # Плашка «Сделано за 3 минуты в <сайт>» в правом нижнем углу.
+    # Ширина ≈ 1/4 ширины баннера; шрифт подбирается по ширине плашки.
+    # Фон: чёрный полупрозрачный; для чёрного фона — белый полупрозрачный.
+    wm_text = f"Сделано за 3 минуты в {SITE_BASE_URL}"
+    wm_font_path = FONTS.get("Golos Text") or next(iter(FONTS.values()))
+
+    wm_target_w = int(w_px * 0.25)   # целевая ширина плашки = 1/4 баннера
+    wm_pad_x = int(wm_target_w * 0.08)
+    wm_pad_y = int(wm_target_w * 0.06)
+    margin = max(4, int(safe_px * 0.5))  # отступ плашки от края
+
+    # Подбираем размер шрифта так, чтобы текст занимал ~(target_w - 2*pad_x)
+    wm_text_max_w = wm_target_w - 2 * wm_pad_x
+    wm_size = max(8, int(wm_target_w * 0.08))
+    for _ in range(30):
+        _fnt = ImageFont.truetype(wm_font_path, wm_size)
+        _bb = draw.textbbox((0, 0), wm_text, font=_fnt)
+        if (_bb[2] - _bb[0]) <= wm_text_max_w:
+            break
+        wm_size -= 1
+
+    wm_fnt = ImageFont.truetype(wm_font_path, wm_size)
+    wm_bb = draw.textbbox((0, 0), wm_text, font=wm_fnt)
+    wm_tw = wm_bb[2] - wm_bb[0]
+    wm_th = wm_bb[3] - wm_bb[1]
+
+    # Размер плашки подстраивается под реальный текст
+    plate_w = wm_tw + 2 * wm_pad_x
+    plate_h = wm_th + 2 * wm_pad_y
+
+    # Позиция: правый нижний угол с отступом margin
+    plate_x = w_px - plate_w - margin
+    plate_y = h_px - plate_h - margin
+
+    # Цвет плашки: чёрный фон → белая плашка, иначе → чёрная
+    is_dark_bg = (bg_rgb[0] + bg_rgb[1] + bg_rgb[2]) < 128 * 3
+    plate_fill = (255, 255, 255, 160) if is_dark_bg else (0, 0, 0, 160)
+    text_fill  = (0, 0, 0, 220)       if is_dark_bg else (255, 255, 255, 220)
+
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    ov_draw = ImageDraw.Draw(overlay)
+    ov_draw.rectangle(
+        [plate_x, plate_y, plate_x + plate_w, plate_y + plate_h],
+        fill=plate_fill,
+    )
+    # Текст на плашке: компенсируем bbox offset
+    tx = plate_x + wm_pad_x - wm_bb[0]
+    ty = plate_y + wm_pad_y - wm_bb[1]
+    ov_draw.text((tx, ty), wm_text, font=wm_fnt, fill=text_fill)
+    image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
+
     buf = io.BytesIO()
     image.save(buf, format="JPEG", quality=90)
     buf.seek(0)
     return buf
-
-
-# ---------------------------------------------------------------------------
-# Шаг 1: промежуточный PDF через ReportLab (DeviceCMYK)
 # ---------------------------------------------------------------------------
 def _create_raw_pdf(data: dict) -> io.BytesIO:
     width_mm: int = data["width"]
