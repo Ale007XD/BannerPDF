@@ -70,13 +70,10 @@ def _calculate_layout(
     text_items: list[dict],
     safe_width: float,
     safe_height: float,
-    line_spacing_ratio: float = 1.2,
     measure_fn=None,
 ) -> list[dict]:
     """
-    Рассчитывает финальные размеры шрифта для каждой строки с учётом:
-      - индивидуального масштаба строки (scale)
-      - ограничения по высоте (вертикальный fit)
+    Рассчитывает финальные размеры шрифта для каждой строки.
 
     measure_fn(text, size) → (width, height)
     Единицы size и возвращаемых значений определяются вызывающей стороной
@@ -84,22 +81,22 @@ def _calculate_layout(
 
     Алгоритм (два прохода):
       1. Width-fit: font_size подгоняется так, чтобы строка занимала
-         effective_width по горизонтали.
-      2. Uniform scale: все строки масштабируются одним коэффициентом,
-         определяемым самой «высокой» строкой. Это гарантирует:
-           а) все строки остаются одинаковой относительной ширины;
-           б) каждая строка влезает в свой слот (safe_height / n).
-         SLOT_FILL_RATIO=0.85 оставляет ~7.5% отступа сверху и снизу.
+         effective_width (safe_width * scale) по горизонтали.
+      2. Uniform scale: все строки масштабируются ОДНИМ коэффициентом,
+         если суммарная высота строк превышает safe_height * FILL_RATIO.
+         Один коэффициент гарантирует, что все строки остаются одинаковой
+         относительной ширины (обе 100% или обе N% — но одинаково).
 
-    Почему не per-строчный clamp:
-      Если масштабировать каждую строку независимо, строки с разным
-      соотношением height/font_size (буквы vs цифры) получают разный
-      коэффициент и визуально выглядят разной ширины, хотя технически
-      обе были подогнаны под safe_width.
+    Позиционирование строк — НЕ здесь. Вызывающий код (Pillow / ReportLab)
+    распределяет строки пропорционально их реальным высотам с равными отступами:
+        total_h  = sum(d["height"])
+        padding  = (safe_height - total_h) / (n + 1)
+        y_i = safe_px + padding*(i+1) + sum(h_0..h_{i-1})
+    Это устраняет overflow при коротких строках с крупным шрифтом.
     """
-    # Доля слота, которую разрешаем занять одной строке по высоте.
-    # 0.85 → при равномерном распределении остаётся по 7.5% padding сверху/снизу.
-    SLOT_FILL_RATIO = 0.85
+    # Какую долю safe_height разрешаем занять строкам суммарно.
+    # 0.85 оставляет 15% на равномерные отступы между строками.
+    FILL_RATIO = 0.85
 
     details = []
     for item in text_items:
@@ -110,7 +107,7 @@ def _calculate_layout(
         effective_width = safe_width * scale_modifier
 
         ref_size = 100.0
-        ref_w, ref_h = measure_fn(line, ref_size)
+        ref_w, _ = measure_fn(line, ref_size)
         if ref_w == 0:
             continue
 
@@ -127,14 +124,12 @@ def _calculate_layout(
     if not details:
         return details
 
-    # Uniform scale: один коэффициент для всех строк — по самой высокой.
-    # Слот каждой строки = safe_height / n; строка не должна превышать SLOT_FILL_RATIO слота.
-    n = len(details)
-    slot_h = safe_height / n
-    max_allowed_h = slot_h * SLOT_FILL_RATIO
-    max_h = max(d["height"] for d in details)
-    if max_h > max_allowed_h:
-        scale = max_allowed_h / max_h
+    # Uniform scale: если суммарная высота > safe_height * FILL_RATIO
+    # масштабируем все строки одним коэффициентом.
+    total_h = sum(d["height"] for d in details)
+    max_total_h = safe_height * FILL_RATIO
+    if total_h > max_total_h:
+        scale = max_total_h / total_h
         for d in details:
             d["font_size"] *= scale
             d["height"] *= scale
@@ -191,24 +186,23 @@ def create_preview_jpeg(data: dict) -> io.BytesIO:
 
     details = _calculate_layout(text_items, safe_w, safe_h, measure_fn=pillow_measure)
 
-    # Слотовое вертикальное распределение:
-    # safe zone делится на n равных слотов, каждая строка центрируется в своём слоте.
-    # Строки равномерно заполняют всю высоту от safe_px до h_px - safe_px.
+    # Пропорциональное вертикальное распределение.
+    # Строки занимают ровно столько высоты, сколько у них реальных пикселей.
+    # Оставшееся место делится на (n+1) равных отступов: сверху, между строками, снизу.
     n = len(details)
-    slot_h = safe_h / n if n > 0 else safe_h
+    total_h = sum(d["height"] for d in details)
+    padding = (safe_h - total_h) / (n + 1) if n > 0 else 0
 
-    for i, d in enumerate(details):
+    y_cursor = safe_px + padding
+    for d in details:
         fnt = ImageFont.truetype(font_path, int(d["font_size"]))
         bbox = draw.textbbox((0, 0), d["text"], font=fnt)
         text_w = bbox[2] - bbox[0]
         x = safe_px + (safe_w - text_w) / 2
-        # Центр слота → верхняя граница строки
-        slot_top = safe_px + slot_h * i
-        y = slot_top + (slot_h - d["height"]) / 2
-        # Компенсируем bbox[0] и bbox[1] — offset глифа относительно origin.
-        # Без этого каждая строка рисуется на bbox[1] пикселей ниже расчётной
-        # позиции, что при нескольких строках накапливается в заметный сдвиг.
-        draw.text((x - bbox[0], y - bbox[1]), d["text"], font=fnt, fill=text_rgb)
+        # y_cursor — верхняя граница строки (видимых пикселей).
+        # Компенсируем bbox[1] чтобы верхний пиксель глифа попал точно в y_cursor.
+        draw.text((x - bbox[0], y_cursor - bbox[1]), d["text"], font=fnt, fill=text_rgb)
+        y_cursor += d["height"] + padding
 
     # --- Вотермарка ---
     # Плашка «Сделано за 3 минуты в <сайт>» в правом нижнем углу.
@@ -329,33 +323,38 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
         d["font_size_pt"] = d["font_size"] * mm
         d["height_pt"] = d["height"] * mm
 
-    # Слотовое вертикальное распределение — зеркало Pillow.
-    # ReportLab: y=0 внизу страницы, поэтому слоты считаем снизу вверх.
-    #   safe_h_pt делится на n равных слотов.
-    #   Строка i (0 = верхняя) → слот (n-1-i) снизу.
+    # Пропорциональное вертикальное распределение — зеркало Pillow.
+    # ReportLab: y=0 внизу страницы, поэтому строки располагаем снизу вверх.
+    # total_h + padding*(n+1) = safe_h_pt → одинаковые отступы сверху, снизу и между строками.
     safe_pt = SAFE_ZONE_MM * mm
     safe_h_pt = safe_h_mm * mm
     n = len(details)
-    slot_h_pt = safe_h_pt / n if n > 0 else safe_h_pt
+    total_h_pt = sum(d["height_pt"] for d in details)
+    padding_pt = (safe_h_pt - total_h_pt) / (n + 1) if n > 0 else 0
 
-    for i, d in enumerate(details):
+    # Считаем y_top_i для каждой строки (от верха safe zone вниз),
+    # затем переводим в ReportLab координаты (от низа страницы вверх).
+    y_top = safe_pt + padding_pt  # отступ сверху от safe zone
+    for d in details:
         size_pt = d["font_size_pt"]
         text_w = pdfmetrics.stringWidth(d["text"], font_name, size_pt)
         x = safe_pt + (safe_w_mm * mm - text_w) / 2
 
-        # Нижняя граница слота i (в координатах ReportLab от низа страницы)
-        slot_bottom = safe_pt + slot_h_pt * (n - 1 - i)
-        # Центрируем строку в слоте через Pillow bbox height (идентично превью).
+        # y_top — верхняя граница строки в координатах от низа страницы.
+        # Нижняя граница строки = y_top - height_pt.
         # В ReportLab drawString(x, y): y — baseline.
-        # Pillow bbox даёт высоту видимых пикселей (не ascent+descent шрифта),
-        # поэтому y_pos = slot_bottom + (slot_h - height) / 2 совпадает с Pillow.
-        y_pos = slot_bottom + (slot_h_pt - d["height_pt"]) / 2
+        # Pillow bbox: верхний пиксель = y_top, нижний = y_top - height_pt.
+        # baseline ≈ нижняя граница bbox (descent ≈ 0 для заглавных букв).
+        # Точное соответствие Pillow: y_pos = нижняя граница bbox = y_top - height_pt.
+        y_pos = y_top - d["height_pt"]
 
         c.setFont(font_name, size_pt)
         to = c.beginText(x, y_pos)
         to.setFont(font_name, size_pt)
         to.textLine(d["text"])
         c.drawText(to)
+
+        y_top -= d["height_pt"] + padding_pt
 
     c.showPage()
     c.save()
