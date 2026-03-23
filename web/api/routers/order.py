@@ -25,6 +25,7 @@ order.py
 import json
 import logging
 import os
+import uuid
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -38,6 +39,7 @@ from ..services.config import BANNER_SIZES
 from ..services.order_store import save_pending
 from ..services.payment import create_payment
 from ..services.sanitizer import sanitize_text_lines, validate_banner_config
+from ..services.tg_notify import notify_new_order
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -198,8 +200,6 @@ async def create_order(req: OrderRequest):
     4. Вычисляет подпись selfwork
     5. Возвращает {order_id, amount_kopecks, signature, item_name, quantity}
     """
-    import uuid
-
     config = {
         "bg_color":   req.bg_color,
         "text_color": req.text_color,
@@ -257,6 +257,18 @@ async def create_order(req: OrderRequest):
         raise HTTPException(status_code=500, detail="Ошибка подготовки платежа. Попробуйте позже.")
 
     logger.info("Создан заказ %s, размер=%s, сумма=%d руб", order_id, req.size_key or f"{req.width_mm}x{req.height_mm}мм", amount_rub)
+
+    # Уведомляем администратора в Telegram (no-op если TG_NOTIFY_TOKEN не задан)
+    size_label = req.size_key or f"{req.width_mm}×{req.height_mm} мм"
+    text_lines = [line.text for line in req.text_lines]
+    await notify_new_order(
+        order_id=order_id,
+        amount_rub=amount_rub,
+        size_label=size_label,
+        lines=text_lines,
+        font=req.font,
+    )
+
     return {
         "order_id":       order_id,
         "amount_kopecks": payment["amount_kopecks"],
