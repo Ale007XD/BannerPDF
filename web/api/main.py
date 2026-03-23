@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .db import init_db
-from .routers import admin, batch, corp_api, download, order, payment, preview, referral
+from .routers import admin, batch, corp_api, download, order, payment, preview, referral, tg_webhook
 from .services import batch_worker, renderer
 from .services.order_store import cleanup_expired as cleanup_orders
 from .services.token_store import cleanup_expired as cleanup_tokens
@@ -116,6 +116,7 @@ app.include_router(admin.router,    prefix="/api")
 app.include_router(referral.router, prefix="/api")
 app.include_router(corp_api.router, prefix="/api")
 app.include_router(batch.router,    prefix="/api")
+app.include_router(tg_webhook.router, prefix="/api")
 
 # Health-check
 @app.get("/api/health")
