@@ -112,20 +112,23 @@ async def admin_funnel():
     return {r["status"]: r["cnt"] for r in rows}
 
 
-@router.post("/admin/force_token/{order_id}", dependencies=[Depends(require_admin)])
-async def force_token(order_id: str):
+async def do_force_token(order_id: str) -> dict:
     """
-    Ручная выдача download-токена после подтверждения оплаты.
+    Бизнес-логика ручной выдачи download-токена.
 
     Используется при ручном флоу (без платёжного провайдера):
-      1. Проверяет что заказ существует и находится в статусе PENDING
-      2. Переводит PENDING → PAID → TOKEN_ISSUED через FSM (два перехода)
+      1. Проверяет что заказ существует и не истёк
+      2. Переводит PENDING → PAID → TOKEN_ISSUED через FSM
       3. Создаёт одноразовый download-токен TTL 15 минут
-      4. Возвращает токен и прямую ссылку для скачивания
+      4. Возвращает dict с токеном и ссылкой для скачивания
 
-    Каждый вызов логируется. Выдача невозможна для expired-заказов.
+    Идемпотентна: если токен уже выдан — возвращает существующий.
+    Raises HTTPException при ошибках (404, 409).
+
+    Вызывается из:
+      - POST /api/admin/force_token/{order_id}  (adminка)
+      - POST /api/tg/callback                   (inline-кнопка Telegram)
     """
-    # Проверяем существование и текущий статус заказа
     with get_db() as conn:
         row = conn.execute(
             "SELECT status, amount_rub, size_key, created_at FROM web_orders WHERE id = ?",
@@ -159,9 +162,9 @@ async def force_token(order_id: str):
                 order_id,
             )
             return {
-                "order_id":      order_id,
-                "token":         token_row["token"],
-                "download_url":  f"/api/download/{token_row['token']}",
+                "order_id":       order_id,
+                "token":          token_row["token"],
+                "download_url":   f"/api/download/{token_row['token']}",
                 "already_issued": True,
             }
 
@@ -199,12 +202,21 @@ async def force_token(order_id: str):
     )
 
     return {
-        "order_id":      order_id,
-        "token":         token,
-        "download_url":  f"/api/download/{token}",
-        "expires_at":    expires_at,
+        "order_id":       order_id,
+        "token":          token,
+        "download_url":   f"/api/download/{token}",
+        "expires_at":     expires_at,
         "already_issued": False,
     }
+
+
+@router.post("/admin/force_token/{order_id}", dependencies=[Depends(require_admin)])
+async def force_token(order_id: str):
+    """
+    Ручная выдача download-токена после подтверждения оплаты (adminка).
+    Каждый вызов логируется. Выдача невозможна для expired-заказов.
+    """
+    return await do_force_token(order_id)
 
 
 # ---------------------------------------------------------------------------
