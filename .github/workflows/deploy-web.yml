@@ -1,8 +1,3 @@
-# ============================================================
-# deploy-web.yml
-# Деплой BannerPrint сайта на VPS при push в main
-# ============================================================
-
 name: Deploy BannerPrint Web
 
 on:
@@ -15,55 +10,43 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2   # нужно для git diff HEAD~1
 
       - name: Копирование файлов на VPS
         uses: appleboy/scp-action@v0.1.7
         with:
-          host:     ${{ secrets.VPS_HOST }}
+          host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
-          key:      ${{ secrets.VPS_SSH_KEY }}
-          source:   "web/"
-          target:   "/home/bannerpdf/banner_web"
-          strip_components: 1   # убираем префикс web/
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "web/*"
+          target: "/home/bannerpdf/banner_web"
+          strip_components: 1
 
-      - name: Пересборка и перезапуск контейнеров
+      - name: Перезапуск через SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host:     ${{ secrets.VPS_HOST }}
+          host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
-          key:      ${{ secrets.VPS_SSH_KEY }}
+          key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             set -e
             cd /home/bannerpdf/banner_web
-
-            echo "=== Пересборка образа api ==="
-            # --no-cache только если изменился Dockerfile или requirements.txt
-            if git -C /home/bannerpdf/banner_web diff --name-only HEAD~1 HEAD 2>/dev/null \
-                | grep -qE '(Dockerfile|requirements\.txt)'; then
-              echo "Dockerfile/requirements изменились — пересборка без кэша"
-              docker compose build --no-cache api
-            else
-              echo "Пересборка с кэшем (только код/статика)"
-              docker compose build api
-            fi
-
+            
+            echo "=== Сборка образа (используя кэш Docker) ==="
+            docker compose build api
+            
             echo "=== Перезапуск контейнеров ==="
             docker compose up -d --force-recreate --remove-orphans
-
-            echo "=== Удаление висячих образов ==="
+            
+            echo "=== Очистка старых образов ==="
             docker image prune -f
-
+            
             echo "=== Health check ==="
             sleep 10
-            docker compose ps
-            # curl недоступен в python:slim — проверяем через stdlib
             docker exec bannerprint_api python -c \
-              "import urllib.request, sys; r=urllib.request.urlopen('http://localhost:8000/api/health'); sys.exit(0 if b'ok' in r.read() else 1)" \
-              || (echo "Health check failed" && exit 1)
-            echo "Деплой успешен"
+              "import urllib.request, sys; r=urllib.request.urlopen('http://localhost:8000/api/health'); sys.exit(0 if b'ok' in r.read() else 1)"
+            
+            echo "Деплой завершен успешно"
+            
