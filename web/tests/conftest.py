@@ -6,11 +6,11 @@ conftest.py
 Ключевые решения:
   - БД во временном файле (tmp_path per-test, WEB_DB_PATH перекрывается monkeypatch)
   - ProcessPoolExecutor мокается — GS не нужен
-  - create_payment мокается — selfwork signature считается локально, внешних запросов нет
+  - create_payment мокается — HTTP к ЮKassa не делается
+  - verify_yookassa_webhook мокается — HTTP к ЮKassa не делается
   - AsyncClient из httpx для тестирования FastAPI
 """
 
-import hashlib
 import sqlite3
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -38,8 +38,8 @@ def set_env(tmp_db_path, monkeypatch):
     monkeypatch.setenv("WEB_DB_PATH", tmp_db_path)
     monkeypatch.setenv("SITE_PDF_PRICE", "299")
     monkeypatch.setenv("SITE_BASE_URL", "https://bannerprintbot.ru")
-    monkeypatch.setenv("SELFWORK_API_KEY", "test_secret_key")
-    monkeypatch.setenv("SELFWORK_SHOP_ID", "test_shop")
+    monkeypatch.setenv("YOOKASSA_SHOP_ID", "test_shop_id")
+    monkeypatch.setenv("YOOKASSA_SECRET_KEY", "test_secret_key")
     monkeypatch.setenv("ADMIN_TOKEN", "test_admin_token_32bytes_padding_x")
     monkeypatch.setenv("BOT_INTERNAL_SECRET", "test_bot_secret")
     monkeypatch.setenv("ALLOWED_ORIGINS", "http://testserver")
@@ -69,17 +69,15 @@ def init_test_db(tmp_db_path):
 async def client(set_env, init_test_db):
     """
     HTTPX AsyncClient с замоканными внешними зависимостями:
-      - create_payment  → возвращает тестовые данные для виджета (без HTTP к selfwork)
-      - render_preview_base64 → возвращает строку-заглушку
-      - ProcessPoolExecutor  → не запускается
+      - create_payment          → возвращает тестовые данные ЮKassa (без HTTP)
+      - verify_yookassa_webhook → по умолчанию возвращает успешный платёж (без HTTP)
+      - render_preview_base64   → возвращает строку-заглушку
+      - ProcessPoolExecutor     → не запускается
     """
-    # Тестовая подпись — selfwork signature для фиктивного заказа
-    # create_payment не делает HTTP, но мокаем для детерминизма (фиксированный order_id недоступен)
+    # Мок create_payment — возвращает confirmation_token без HTTP к ЮKassa
     mock_payment = AsyncMock(return_value={
-        "amount_kopecks": 29900,
-        "signature":      "test_selfwork_signature_hex",
-        "item_name":      "Печатный баннер (PDF)",
-        "quantity":       1,
+        "yookassa_payment_id": "test_yookassa_payment_id",
+        "confirmation_token":  "test_confirmation_token",
     })
 
     # Заглушка превью — base64 однопиксельного JPEG
@@ -95,12 +93,10 @@ async def client(set_env, init_test_db):
     mock_preview = MagicMock(return_value=tiny_jpeg_b64)
 
     with (
-        # Патчим в модулях-потребителях (from ... import создаёт локальную ссылку)
         patch("web.api.routers.order.create_payment", mock_payment),
         patch("web.api.routers.preview.render_preview_base64", mock_preview),
         patch("web.api.services.renderer.ProcessPoolExecutor"),
     ):
-        # Импортируем app после выставления env и патчей
         from web.api.main import app
 
         async with AsyncClient(
@@ -111,19 +107,23 @@ async def client(set_env, init_test_db):
 
 
 # ---------------------------------------------------------------------------
-# Вспомогательные функции для тестов webhook
+# Вспомогательные функции для тестов webhook ЮKassa
 # ---------------------------------------------------------------------------
 
-def make_selfwork_signature(order_id: str, amount_kopecks: int,
-                             secret: str = "test_secret_key") -> str:
+def make_yookassa_succeeded_payment(order_id: str,
+                                     yookassa_payment_id: str = "test_yk_payment_id",
+                                     amount_rub: int = 299) -> dict:
     """
-    Генерирует корректную SHA256 подпись для тестового callback selfwork.
-
-    Алгоритм: SHA256(order_id + amount_kopecks + api_key)
-    Соответствует verify_selfwork_callback() в services/payment.py.
+    Возвращает словарь, имитирующий успешный ответ GET /v3/payments/{id} от ЮKassa.
+    Используется для мока verify_yookassa_webhook в тестах.
     """
-    raw = str(order_id) + str(amount_kopecks) + secret
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return {
+        "id":     yookassa_payment_id,
+        "status": "succeeded",
+        "paid":   True,
+        "amount": {"value": f"{amount_rub:.2f}", "currency": "RUB"},
+        "metadata": {"order_id": order_id},
+    }
 
 
 # ---------------------------------------------------------------------------
