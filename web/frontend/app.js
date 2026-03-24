@@ -36,9 +36,7 @@ const REFERRAL_ENABLED = false;
 const BUY_BTN_TEXT = "Получить PDF";
 
 // Контакты для ручной оплаты
-const CONTACT_TG       = "ale007xd";
-const CONTACT_SBP      = "+79140022777";
-const CONTACT_SBP_BANK = "МТС Банк";
+const CONTACT_TG = "ale007xd";
 
 /* =====================================================================
    СОСТОЯНИЕ
@@ -105,10 +103,6 @@ const el = {
   errorTitle:   $("error-title"),
   errorText:    $("error-text"),
   errorClose:   $("error-close"),
-
-  modalPayment: $("modal-payment"),
-  payBtn:       $("pay-btn"),
-  payCancel:    $("pay-cancel"),
 
   modalWait:    $("modal-wait"),
   waitText:     $("wait-text"),
@@ -743,15 +737,9 @@ el.buyBtn.addEventListener("click", async () => {
 
     const data = await resp.json();
     state.orderId = data.order_id;
-    state.payUrl  = data.pay_url;
 
-    // Показываем короткий order_id в модалке для указания в комментарии СБП
-    const shortEl = document.getElementById("pay-order-short");
-    if (shortEl) shortEl.textContent = data.order_id.slice(0, 6).toUpperCase();
-
-    showModal(el.modalPayment);
-    // Поллинг стартует сразу — клиент может платить без нажатия кнопок
-    startPolling(/* silent= */ true);
+    // Инициализируем виджет ЮKassa с полученным confirmation_token
+    openYooKassaWidget(data.confirmation_token, data.order_id);
   } catch (e) {
     showError("Не удалось создать заказ", e.message);
   } finally {
@@ -762,36 +750,64 @@ el.buyBtn.addEventListener("click", async () => {
 });
 
 /* =====================================================================
-   ОПЛАТА — переход и поллинг
+   ОПЛАТА — виджет ЮKassa
    ===================================================================== */
-// «Я оплатил» — закрываем модалку реквизитов, показываем ожидание
-// Поллинг уже идёт с момента открытия модалки оплаты
-el.payBtn.addEventListener("click", () => {
-  hideModal(el.modalPayment);
-  showModal(el.modalWait);
-});
 
-// Кнопка Telegram — открывает чат с предзаполненным сообщением,
-// модалку оплаты не закрываем (клиент может вернуться)
-document.getElementById("tg-btn").addEventListener("click", () => {
-  const sizeLabel = state.sizeKey === "custom"
-    ? `${state.customW}\u00d7${state.customH}\u00a0мм`
-    : `${state.sizeKey}\u00a0м`;
-  const now     = new Date();
-  const pad     = (n) => String(n).padStart(2, "0");
-  const dateStr = `${pad(now.getDate())}.${pad(now.getMonth() + 1)} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  const shortId = state.orderId ? state.orderId.slice(0, 6).toUpperCase() : "??????";
-  const tgText  = encodeURIComponent(
-    `Баннер ${sizeLabel}, 299 ₽\nЗаказ #${shortId} от ${dateStr}\nОплачу по СБП`
-  );
-  window.open(`https://t.me/${CONTACT_TG}?text=${tgText}`, "_blank");
-});
+/**
+ * Открывает виджет ЮKassa (YooMoneyCheckoutWidget) с переданным токеном.
+ * После успешной оплаты виджет вызывает onSuccess → запускаем поллинг.
+ * После закрытия без оплаты (onClose) — ничего не делаем, пользователь
+ * может нажать «Получить PDF» снова.
+ *
+ * @param {string} confirmationToken — токен из POST /api/order
+ * @param {string} orderId           — наш UUID заказа
+ */
+function openYooKassaWidget(confirmationToken, orderId) {
+  const checkout = new window.YooMoneyCheckoutWidget({
+    confirmation_token: confirmationToken,
+    // Цвет кнопки виджета — подбираем под акцентный цвет сайта
+    customization: {
+      colors: {
+        control_primary: "#0d0d0d",
+      },
+    },
+    error_callback: (err) => {
+      console.error("ЮKassa widget error:", err);
+      showError("Ошибка виджета оплаты", "Попробуйте ещё раз или напишите нам.");
+    },
+  });
 
-el.payCancel.addEventListener("click", () => {
-  hideModal(el.modalPayment);
-  state.orderId = null;
-  state.payUrl  = null;
-});
+  checkout.on("success", () => {
+    // Пользователь оплатил — закрываем виджет и ждём webhook
+    checkout.destroy();
+    showModal(el.modalWait);
+    startPolling();
+  });
+
+  checkout.on("fail", () => {
+    // Платёж отклонён — виджет сам покажет ошибку, просто логируем
+    console.warn("ЮKassa: платёж отклонён для заказа", orderId);
+    checkout.destroy();
+  });
+
+  // Монтируем в скрытый контейнер — виджет откроется как оверлей сам
+  checkout.render("yookassa-widget-container");
+}
+
+// Если пользователь вернулся на страницу с ?order_id= в URL (после redirect),
+// автоматически открываем ожидание и запускаем поллинг
+(function checkReturnFromPayment() {
+  const params = new URLSearchParams(window.location.search);
+  const returnOrderId = params.get("order_id");
+  if (returnOrderId) {
+    state.orderId = returnOrderId;
+    // Убираем параметр из URL без перезагрузки
+    const cleanUrl = window.location.pathname;
+    window.history.replaceState({}, "", cleanUrl);
+    showModal(el.modalWait);
+    startPolling();
+  }
+})();
 
 function startPolling(silent = false) {
   if (!silent) showModal(el.modalWait);
