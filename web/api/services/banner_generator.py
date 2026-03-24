@@ -324,7 +324,9 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
         d["height_pt"] = d["height"] * mm
 
     # Пропорциональное вертикальное распределение — зеркало Pillow.
-    # ReportLab: y=0 внизу страницы, поэтому строки располагаем снизу вверх.
+    # ReportLab: y=0 внизу страницы, ось Y направлена вверх.
+    # Верх safe zone в RL = h_pt - safe_pt.
+    # Первая строка начинается на padding_pt ниже верха safe zone.
     # total_h + padding*(n+1) = safe_h_pt → одинаковые отступы сверху, снизу и между строками.
     safe_pt = SAFE_ZONE_MM * mm
     safe_h_pt = safe_h_mm * mm
@@ -332,20 +334,16 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
     total_h_pt = sum(d["height_pt"] for d in details)
     padding_pt = (safe_h_pt - total_h_pt) / (n + 1) if n > 0 else 0
 
-    # Считаем y_top_i для каждой строки (от верха safe zone вниз),
-    # затем переводим в ReportLab координаты (от низа страницы вверх).
-    y_top = safe_pt + padding_pt  # отступ сверху от safe zone
+    # y_top — верхняя граница текущей строки в RL-координатах (от низа страницы вверх).
+    # Начинаем от верха safe zone, опускаемся на padding_pt.
+    y_top = h_pt - safe_pt - padding_pt
     for d in details:
         size_pt = d["font_size_pt"]
         text_w = pdfmetrics.stringWidth(d["text"], font_name, size_pt)
         x = safe_pt + (safe_w_mm * mm - text_w) / 2
 
-        # y_top — верхняя граница строки в координатах от низа страницы.
-        # Нижняя граница строки = y_top - height_pt.
-        # В ReportLab drawString(x, y): y — baseline.
-        # Pillow bbox: верхний пиксель = y_top, нижний = y_top - height_pt.
-        # baseline ≈ нижняя граница bbox (descent ≈ 0 для заглавных букв).
-        # Точное соответствие Pillow: y_pos = нижняя граница bbox = y_top - height_pt.
+        # y_top — верхняя граница bbox строки в RL-координатах.
+        # Нижняя граница = y_top - height_pt = baseline (descent ≈ 0 для заглавных букв).
         y_pos = y_top - d["height_pt"]
 
         c.setFont(font_name, size_pt)
@@ -354,6 +352,7 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
         to.textLine(d["text"])
         c.drawText(to)
 
+        # Следующая строка: опускаемся на height + padding (в RL — вычитаем).
         y_top -= d["height_pt"] + padding_pt
 
     c.showPage()
