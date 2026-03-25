@@ -3,39 +3,35 @@ name: Deploy BannerPrint Web
 on:
   push:
     branches: [main]
-    paths:
-      - "web/**"
-      - "docker-compose.yml"
-      - "Dockerfile"
-      - ".github/workflows/deploy-web.yml"
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Копирование web/* на VPS
+      # 🔍 DEBUG — чтобы больше не гадать
+      - name: Debug files
+        run: |
+          echo "=== ROOT ==="
+          ls -la
+          echo "=== WEB ==="
+          ls -la web || true
+
+      # 🚀 Копируем ВСЁ (самый надёжный способ)
+      - name: Upload project to VPS
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          source: "web/*"
-          target: "/home/bannerweb/banner_web"
-          strip_components: 1
-
-      - name: Копирование docker-compose.yml и Dockerfile на VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: "docker-compose.yml,Dockerfile"
+          source: "."
           target: "/home/bannerweb/banner_web"
 
-      - name: Перезапуск через SSH
+      # 🔁 Деплой
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -45,7 +41,7 @@ jobs:
             set -e
             cd /home/bannerweb/banner_web
 
-            echo "=== Сборка образа (используя кэш Docker) ==="
+            echo "=== Сборка образа ==="
             docker compose build api
 
             echo "=== Перезапуск контейнеров ==="
@@ -54,16 +50,17 @@ jobs:
             echo "=== Очистка старых образов ==="
             docker image prune -f
 
-            echo "=== Health check (ждём до 60с) ==="
+            echo "=== Health check (до 60 сек) ==="
             for i in $(seq 1 12); do
               sleep 5
               if docker exec bannerprint_api python -c \
                 "import urllib.request, sys; r=urllib.request.urlopen('http://localhost:8000/api/health'); sys.exit(0 if b'ok' in r.read() else 1)" 2>/dev/null; then
-                echo "Деплой завершен успешно"
+                echo "✅ Деплой успешен"
                 exit 0
               fi
-              echo "Попытка $i/12..."
+              echo "⏳ Попытка $i/12..."
             done
-            echo "Health check не прошёл за 60 секунд"
+
+            echo "❌ Health check не прошёл"
             docker compose logs --tail=50 api
             exit 1
