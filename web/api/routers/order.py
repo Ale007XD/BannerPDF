@@ -6,7 +6,7 @@ order.py
 Содержит:
   - FSM OrderStatus(str, Enum)
   - transition(order_id, event) — единственная точка изменения статуса
-  - POST /api/order — создание заказа + подготовка данных для виджета selfwork
+  - POST /api/order — создание заказа + подготовка данных для виджета ЮКassa
   - GET  /api/payment/status/{order_id} — статус для поллинга с фронтенда
   - GET  /api/templates — список доступных параметров
 
@@ -14,11 +14,10 @@ order.py
 
 Ответ POST /api/order:
   {
-    "order_id":      "<uuid>",
-    "amount_kopecks": <int>,   -- сумма в копейках для формы виджета
-    "signature":     "<hex>",  -- SHA256 для selfwork init
-    "item_name":     "<str>",  -- название товара в чеке
-    "quantity":      1
+    "order_id":            "<uuid>",
+    "amount_rub":          <int>,
+    "confirmation_token":  "<str>",  -- токен для YooMoneyCheckoutWidget
+    "payment_id":          "<str>"   -- ID платежа в ЮКassa (для отладки)
   }
 """
 
@@ -100,52 +99,64 @@ def transition(order_id: str, event: str) -> OrderStatus:
             logger.info("FSM %s: уже в статусе %s (идемпотент)", order_id, to_status)
             return OrderStatus(to_status)
 
+        # Проверка допустимости перехода
         if current != from_status:
             raise ValueError(
-                f"FSM: недопустимый переход для заказа {order_id}: "
-                f"{current} --[{event}]--> {to_status} "
-                f"(ожидается from={from_status})"
+                f"Недопустимый переход FSM для {order_id}: "
+                f"event={event!r} требует {from_status!r}, но текущий={current!r}"
             )
 
-        extra_fields = ""
-        extra_values: list = []
-        if event == "webhook_paid":
-            extra_fields = ", paid_at = ?"
-            extra_values = [datetime.now(timezone.utc).isoformat()]
-
+        # Обновление статуса
         conn.execute(
-            f"UPDATE web_orders SET status = ?{extra_fields} WHERE id = ?",
-            [to_status] + extra_values + [order_id],
+            "UPDATE web_orders SET status = ? WHERE id = ?",
+            (to_status, order_id),
         )
 
-    logger.info("FSM %s: %s --[%s]--> %s", order_id, from_status, event, to_status)
+        # Если переход в PAID — сохраняем paid_at
+        if to_status == OrderStatus.PAID:
+            conn.execute(
+                "UPDATE web_orders SET paid_at = ? WHERE id = ?",
+                (datetime.now(timezone.utc).isoformat(), order_id),
+            )
+
+    logger.info("FSM %s: %s → %s (событие=%s)", order_id, from_status, to_status, event)
     return OrderStatus(to_status)
 
 
 # ---------------------------------------------------------------------------
-# Pydantic-модели
+# Pydantic-схемы
 # ---------------------------------------------------------------------------
 class TextLine(BaseModel):
-    text:  str   = Field(..., max_length=120)
-    scale: float = Field(default=1.0, ge=0.3, le=1.5)
+    text: str = Field(..., min_length=1, max_length=200)
+    scale: int = Field(default=100, ge=50, le=100)
 
 
 class OrderRequest(BaseModel):
-    size_key:   Optional[str] = None
-    width_mm:   Optional[int] = None
-    height_mm:  Optional[int] = None
+    """
+    Конфиг баннера для заказа.
 
-    bg_color:   str            = Field(...)
-    text_color: str            = Field(...)
-    font:       str            = Field(...)
+    size_key XOR (width_mm + height_mm):
+      - Либо задан size_key (шаблонный размер)
+      - Либо заданы оба: width_mm и height_mm (кастомный размер)
+    """
+    bg_color: str
+    text_color: str
+    font: str
     text_lines: list[TextLine] = Field(..., min_length=1, max_length=6)
-    ref_code:   str | None     = Field(default=None, min_length=8, max_length=8)
+    size_key: Optional[str] = None
+    width_mm: Optional[int] = Field(None, ge=100, le=3000)
+    height_mm: Optional[int] = Field(None, ge=100, le=3000)
+    ref_code: Optional[str] = None
 
     @model_validator(mode="after")
-    def validate_size(self):
-        if not self.size_key:
-            if self.width_mm is None or self.height_mm is None:
-                raise ValueError("Either size_key or width_mm+height_mm must be provided")
+    def check_size_xor(self):
+        has_key = self.size_key is not None
+        has_custom = (self.width_mm is not None) and (self.height_mm is not None)
+
+        if has_key == has_custom:
+            raise ValueError(
+                "Укажите либо size_key, либо width_mm+height_mm (но не оба варианта)"
+            )
         return self
 
     @field_validator("ref_code")
@@ -192,13 +203,13 @@ async def get_templates():
 @router.post("/order")
 async def create_order(req: OrderRequest):
     """
-    Создаёт заказ и возвращает данные для инициализации виджета selfwork.
+    Создаёт заказ и возвращает данные для инициализации виджета ЮКassa.
 
     1. Валидирует конфиг баннера
     2. Сохраняет заказ в web_orders (status=pending)
     3. Сохраняет config_json в pending_orders (TTL 30 мин)
-    4. Вычисляет подпись selfwork
-    5. Возвращает {order_id, amount_kopecks, signature, item_name, quantity}
+    4. Создаёт платёж через API ЮКassa
+    5. Возвращает {order_id, amount_rub, confirmation_token, payment_id}
     """
     config = {
         "bg_color":   req.bg_color,
@@ -245,7 +256,7 @@ async def create_order(req: OrderRequest):
     # Сохраняем в pending_orders (TTL-буфер для webhook)
     save_pending(order_id, config)
 
-    # Подготавливаем данные для виджета (без HTTP-запроса к selfwork)
+    # Создаём платёж через API ЮКassa
     try:
         payment = await create_payment(
             order_id=order_id,
@@ -253,8 +264,8 @@ async def create_order(req: OrderRequest):
             description="Баннер " + (req.size_key or f"{req.width_mm}x{req.height_mm}мм") + " — BannerPrint",
         )
     except Exception as e:
-        logger.error("Ошибка подготовки платежа для заказа %s: %s", order_id, e)
-        raise HTTPException(status_code=500, detail="Ошибка подготовки платежа. Попробуйте позже.")
+        logger.error("Ошибка создания платежа для заказа %s: %s", order_id, e)
+        raise HTTPException(status_code=500, detail="Ошибка создания платежа. Попробуйте позже.")
 
     logger.info("Создан заказ %s, размер=%s, сумма=%d руб", order_id, req.size_key or f"{req.width_mm}x{req.height_mm}мм", amount_rub)
 
@@ -270,11 +281,10 @@ async def create_order(req: OrderRequest):
     )
 
     return {
-        "order_id":       order_id,
-        "amount_kopecks": payment["amount_kopecks"],
-        "signature":      payment["signature"],
-        "item_name":      payment["item_name"],
-        "quantity":       payment["quantity"],
+        "order_id":           order_id,
+        "amount_rub":         amount_rub,
+        "confirmation_token": payment["confirmation_token"],
+        "payment_id":         payment["payment_id"],
     }
 
 
@@ -282,40 +292,36 @@ async def create_order(req: OrderRequest):
 # GET /api/payment/status/{order_id}
 # ---------------------------------------------------------------------------
 @router.get("/payment/status/{order_id}")
-async def get_payment_status(order_id: str):
+async def payment_status(order_id: str):
     """
-    Статус заказа для поллинга с фронтенда.
-    Если статус token_issued — возвращает download_token.
+    Возвращает статус заказа для поллинга фронтендом.
+
+    status:
+      - pending      → оплата не получена
+      - paid         → оплачен, токен генерируется
+      - token_issued → токен готов, можно скачивать
+      - expired      → истёк TTL
+
+    Если status='token_issued', также возвращает download_token.
     """
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT status, amount_rub, size_key, created_at FROM web_orders WHERE id = ?",
+        order = conn.execute(
+            "SELECT status FROM web_orders WHERE id = ?",
             (order_id,),
         ).fetchone()
 
-    if row is None:
-        raise HTTPException(status_code=404, detail="Заказ не найден")
+        if not order:
+            raise HTTPException(status_code=404, detail="Заказ не найден")
 
-    result = {
-        "order_id":   order_id,
-        "status":     row["status"],
-        "amount_rub": row["amount_rub"],
-        "size_key":   row["size_key"],
-    }
+        result = {"status": order["status"]}
 
-    if row["status"] == OrderStatus.TOKEN_ISSUED:
-        # Отдаём актуальный (последний неиспользованный) токен
-        with get_db() as conn:
+        if order["status"] == OrderStatus.TOKEN_ISSUED:
             token_row = conn.execute(
-                """
-                SELECT token FROM download_tokens
-                WHERE order_id = ? AND used = FALSE AND expires_at > ?
-                ORDER BY expires_at DESC LIMIT 1
-                """,
-                (order_id, datetime.now(timezone.utc).isoformat()),
+                "SELECT token FROM download_tokens WHERE order_id = ? AND used = 0",
+                (order_id,),
             ).fetchone()
 
-        if token_row:
-            result["download_token"] = token_row["token"]
+            if token_row:
+                result["download_token"] = token_row["token"]
 
     return result
