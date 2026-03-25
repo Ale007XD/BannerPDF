@@ -1,7 +1,7 @@
 # BannerPrint — сайт-конструктор печатных баннеров 
 
 Веб-сервис для самостоятельного создания и заказа печатных баннеров.
-Сайт: [bannerbot.ru:8444](https://bannerbot.ru:8444)
+Сайт: [bannerbot.ru](https://bannerbot.ru)
 
 ---
 
