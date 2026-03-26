@@ -74,7 +74,7 @@ async def notify_new_order(
         f"<b>ID:</b> <code>{order_id}</code>\n"
         f"<b>Размер:</b> {size_label}\n"
         f"<b>Шрифт:</b> {font}\n"
-        f"<b>Текст:</b>\n{lines_text}\n\n"
+        # f"<b>Текст:</b>\n{lines_text}\n\n"
         f"<b>Сумма:</b> {amount_rub} ₽\n\n"
         f"Ожидание оплаты..."
     )
