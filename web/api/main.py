@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .db import init_db
-from .routers import admin, batch, corp_api, download, order, payment, preview, referral, tg_webhook
+from .routers import admin, batch, corp_api, download, order, payment_router as payment, preview, referral, tg_webhook
 from .services import batch_worker, renderer
 from .services.order_store import cleanup_expired as cleanup_orders
 from .services.token_store import cleanup_expired as cleanup_tokens
