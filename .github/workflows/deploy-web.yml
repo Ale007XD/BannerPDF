@@ -39,7 +39,7 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             set -e
-            cd /home/bannerweb/banner_web
+            cd /home/bannerweb/banner_web/web
 
             echo "=== Сборка образа ==="
             docker compose build api
