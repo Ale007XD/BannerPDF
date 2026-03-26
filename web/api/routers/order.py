@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from ..db import get_db
 from ..services.config import BANNER_SIZES
 from ..services.order_store import save_pending
-from ..services.payment_service import create_payment
+from ..services.payment import create_payment
 from ..services.sanitizer import sanitize_text_lines, validate_banner_config
 from ..services.tg_notify import notify_new_order
 
