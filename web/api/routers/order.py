@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from ..db import get_db
 from ..services.config import BANNER_SIZES
 from ..services.order_store import save_pending
-from ..services.payment import create_payment
+from ..services.payment_service import create_payment
 from ..services.sanitizer import sanitize_text_lines, validate_banner_config
 from ..services.tg_notify import notify_new_order
 
@@ -266,6 +266,13 @@ async def create_order(req: OrderRequest):
     except Exception as e:
         logger.error("Ошибка создания платежа для заказа %s: %s", order_id, e)
         raise HTTPException(status_code=500, detail="Ошибка создания платежа. Попробуйте позже.")
+
+    # Сохраняем yookassa_payment_id для сверки в webhook
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE web_orders SET yookassa_payment_id = ? WHERE id = ?",
+            (payment["payment_id"], order_id),
+        )
 
     logger.info("Создан заказ %s, размер=%s, сумма=%d руб", order_id, req.size_key or f"{req.width_mm}x{req.height_mm}мм", amount_rub)
 
