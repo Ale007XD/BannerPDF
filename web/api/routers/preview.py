@@ -25,7 +25,7 @@ router = APIRouter()
 
 class TextLine(BaseModel):
     text:  str   = Field(..., max_length=120)
-    scale: float = Field(default=1.0, ge=0.3, le=1.5)
+    scale: int   = Field(default=100, ge=50, le=100)
 
 
 class PreviewRequest(BaseModel):
@@ -56,7 +56,7 @@ async def generate_preview(req: PreviewRequest):
         "bg_color":   req.bg_color,
         "text_color": req.text_color,
         "font":       req.font,
-        "text_lines": [{"text": item.text, "scale": item.scale} for item in req.text_lines],
+        "text_lines": [{"text": item.text, "scale": item.scale / 100} for item in req.text_lines],
     }
 
     # Размер — два режима
