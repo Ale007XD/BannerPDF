@@ -32,6 +32,7 @@ from ..db import get_db
 from ..routers.order import OrderStatus, transition
 from ..services.payment import verify_yookassa_payment
 from ..services.referral_store import accrue_commission
+from ..services.tg_notify import notify_order_paid
 from ..services.token_store import create_token
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,7 @@ async def payment_callback(request: Request):
     # --- ШАГ 8: реферальная комиссия ---
     with get_db() as conn:
         row = conn.execute(
-            "SELECT ref_code, amount_rub FROM web_orders WHERE id = ?",
+            "SELECT ref_code, amount_rub, tg_message_id FROM web_orders WHERE id = ?",
             (order_id,),
         ).fetchone()
 
@@ -144,6 +145,17 @@ async def payment_callback(request: Request):
         except Exception as e:
             # Некритично — логируем, не прерываем
             logger.error("Ошибка начисления реферала для %s: %s", order_id, e)
+
+    # --- ШАГ 9: обновляем TG-сообщение об оплате ---
+    if row:
+        try:
+            await notify_order_paid(
+                order_id=order_id,
+                amount_rub=row["amount_rub"],
+                tg_message_id=row["tg_message_id"],
+            )
+        except Exception as e:
+            logger.error("Ошибка TG-уведомления об оплате для %s: %s", order_id, e)
 
     logger.info("Webhook обработан успешно: заказ %s → token_issued", order_id)
     return {"ok": True}
