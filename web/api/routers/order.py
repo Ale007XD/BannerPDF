@@ -279,13 +279,20 @@ async def create_order(req: OrderRequest):
     # Уведомляем администратора в Telegram (no-op если TG_NOTIFY_TOKEN не задан)
     size_label = req.size_key or f"{req.width_mm}×{req.height_mm} мм"
     text_lines = [line.text for line in req.text_lines]
-    await notify_new_order(
+    tg_message_id = await notify_new_order(
         order_id=order_id,
         amount_rub=amount_rub,
         size_label=size_label,
         lines=text_lines,
         font=req.font,
     )
+
+    if tg_message_id:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE web_orders SET tg_message_id = ? WHERE id = ?",
+                (tg_message_id, order_id),
+            )
 
     return {
         "order_id":           order_id,
