@@ -506,7 +506,7 @@ function showPreview(base64, widthMm, heightMm) {
 function getTextLines() {
   return state.lines
     .filter((l) => l.text.trim().length > 0)
-    .map((l) => ({ text: l.text.trim(), scale: l.scale }));
+    .map((l) => ({ text: l.text.trim(), scale: Math.round(l.scale * 100) }));
 }
 
 /**
