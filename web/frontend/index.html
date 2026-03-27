@@ -433,8 +433,17 @@
 
 
   </script>
-  <!-- Контейнер для виджета ЮKassa (монтируется через JS, виджет рендерится как оверлей) -->
-  <div id="yookassa-widget-container" style="display:none;"></div>
+
+  <!-- Модалка виджета ЮКасса -->
+  <div class="modal-overlay hidden" id="modal-pay">
+    <div class="modal" style="padding:16px;max-width:480px;width:100%;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div class="modal-title" style="margin:0;">Оплата</div>
+        <button id="pay-close" style="background:none;border:none;font-size:24px;cursor:pointer;line-height:1;color:#666;">×</button>
+      </div>
+      <div id="yookassa-widget-container"></div>
+    </div>
+  </div>
 
   <!-- SDK виджета ЮKassa -->
   <script src="https://yookassa.ru/checkout-widget/v1/checkout-widget.js"></script>

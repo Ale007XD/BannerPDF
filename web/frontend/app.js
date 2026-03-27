@@ -108,6 +108,9 @@ const el = {
   waitText:     $("wait-text"),
   waitBar:      $("wait-bar"),
 
+  modalPay:     $("modal-pay"),
+  payClose:     $("pay-close"),
+
   modalSuccess: $("modal-success"),
   successClose: $("success-close"),
 };
@@ -763,9 +766,12 @@ el.buyBtn.addEventListener("click", async () => {
  * @param {string} orderId           — наш UUID заказа
  */
 function openYooKassaWidget(confirmationToken, orderId) {
+  // Чистим контейнер от предыдущих iframe
+  const container = document.getElementById("yookassa-widget-container");
+  container.innerHTML = "";
+
   const checkout = new window.YooMoneyCheckoutWidget({
     confirmation_token: confirmationToken,
-    // Цвет кнопки виджета — подбираем под акцентный цвет сайта
     customization: {
       colors: {
         control_primary: "#0d0d0d",
@@ -773,24 +779,32 @@ function openYooKassaWidget(confirmationToken, orderId) {
     },
     error_callback: (err) => {
       console.error("ЮKassa widget error:", err);
+      hideModal(el.modalPay);
       showError("Ошибка виджета оплаты", "Попробуйте ещё раз или напишите нам.");
     },
   });
 
   checkout.on("success", () => {
-    // Пользователь оплатил — закрываем виджет и ждём webhook
     checkout.destroy();
+    hideModal(el.modalPay);
     showModal(el.modalWait);
     startPolling();
   });
 
   checkout.on("fail", () => {
-    // Платёж отклонён — виджет сам покажет ошибку, просто логируем
     console.warn("ЮKassa: платёж отклонён для заказа", orderId);
     checkout.destroy();
+    hideModal(el.modalPay);
   });
 
-  // Монтируем в скрытый контейнер — виджет откроется как оверлей сам
+  // Кнопка закрытия модалки
+  el.payClose.onclick = () => {
+    checkout.destroy();
+    hideModal(el.modalPay);
+  };
+
+  // Показываем модалку и рендерим виджет внутрь контейнера
+  showModal(el.modalPay);
   checkout.render("yookassa-widget-container");
 }
 
