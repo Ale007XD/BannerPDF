@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS web_orders (
                                             -- pending | paid | token_issued | expired
     created_at  TEXT    NOT NULL,
     paid_at               TEXT,                       -- NULL пока не оплачен
-    yookassa_payment_id   TEXT                        -- ID платежа в ЮKassa (для верификации webhook)
+    yookassa_payment_id   TEXT,                       -- ID платежа в ЮKassa (для верификации webhook)
+    tg_message_id         INTEGER                     -- ID сообщения в TG для обновления статуса
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_orders_status ON web_orders(status);
