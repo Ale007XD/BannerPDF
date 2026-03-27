@@ -59,14 +59,13 @@ async def notify_new_order(
     size_label: str,
     lines: list[str],
     font: str,
-) -> None:
+) -> Optional[int]:
     """
     Отправляет администратору сообщение о новом заказе.
-
-    Содержит детали заказа и inline-кнопку «✅ Выдать PDF» для force_token.
+    Возвращает message_id отправленного сообщения (для последующего редактирования).
     """
     if not _enabled():
-        return
+        return None
 
     lines_text = "\n".join(f"  • {line}" for line in lines) if lines else "  (нет строк)"
     text = (
@@ -79,7 +78,7 @@ async def notify_new_order(
         f"Ожидание оплаты..."
     )
 
-    await _tg_post("sendMessage", {
+    data = await _tg_post("sendMessage", {
         "chat_id":    TG_ADMIN_CHAT_ID,
         "text":       text,
         "parse_mode": "HTML",
@@ -97,6 +96,10 @@ async def notify_new_order(
         },
     })
 
+    if data and data.get("ok"):
+        return data["result"]["message_id"]
+    return None
+
 
 async def notify_token_issued(order_id: str, chat_id: str, message_id: int) -> None:
     """
@@ -112,6 +115,28 @@ async def notify_token_issued(order_id: str, chat_id: str, message_id: int) -> N
         "chat_id":    TG_ADMIN_CHAT_ID,
         "text":       f"✅ PDF выдан для заказа <code>{order_id}</code>",
         "parse_mode": "HTML",
+    })
+
+
+async def notify_order_paid(order_id: str, amount_rub: int, tg_message_id: Optional[int]) -> None:
+    """
+    Обновляет TG-сообщение о заказе после получения оплаты через webhook ЮКасса.
+    Меняет текст на «💳 Оплачено», PDF выдан автоматически.
+    """
+    if not _enabled() or not tg_message_id:
+        return
+
+    await _tg_post("editMessageText", {
+        "chat_id":      TG_ADMIN_CHAT_ID,
+        "message_id":   tg_message_id,
+        "text": (
+            f"💳 <b>Оплачено (автовебхук)</b>\n\n"
+            f"<b>ID:</b> <code>{order_id}</code>\n"
+            f"<b>Сумма:</b> {amount_rub} ₽\n\n"
+            f"✅ PDF выдан автоматически"
+        ),
+        "parse_mode":   "HTML",
+        "reply_markup": {"inline_keyboard": []},
     })
 
 
