@@ -215,7 +215,7 @@ async def create_order(req: OrderRequest):
         "bg_color":   req.bg_color,
         "text_color": req.text_color,
         "font":       req.font,
-        "text_lines": [{"text": line.text, "scale": line.scale} for line in req.text_lines],
+        "text_lines": [{"text": line.text, "scale": line.scale / 100} for line in req.text_lines],
     }
 
     if req.size_key:
