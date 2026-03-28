@@ -341,6 +341,7 @@
       flex-shrink: 0;
     }
     .key-plan--enterprise { background: #fef3e0; color: #8a5000; }
+        .key-plan--trial      { background: #e8f5e8; color: #1a6e1a; }
     .key-meta { font-size: 12px; color: var(--ink-2); line-height: 1.7; }
     .key-usage { display: inline-block; margin-top: 4px; font-size: 11px; font-weight: 600; color: var(--ink-3); }
     .key-usage--warn { color: var(--accent); }
@@ -489,6 +490,7 @@
           <input class="form-input" type="text" id="key-label" placeholder="Название (клиент / проект)">
           <input class="form-input" type="email" id="key-email" placeholder="Email">
           <select class="form-select" id="key-plan">
+            <option value="trial">Trial — 3 PDF бесплатно</option>
             <option value="starter">Starter — 100 PDF/мес, 10 RPM — 1 900 ₽</option>
             <option value="business">Business — 1 000 PDF/мес, 60 RPM — 9 900 ₽</option>
             <option value="enterprise">Enterprise — безлимит, 300 RPM — договор</option>
@@ -827,9 +829,15 @@ function renderKeys(keys) {
     const usageWarn = k.pdf_limit > 0 && usagePct >= 80;
     const usageText = k.pdf_limit === -1
       ? `${k.pdf_used} PDF (безлимит)`
-      : `${k.pdf_used} / ${k.pdf_limit} PDF (${usagePct}%)`;
+      : k.plan_id === 'trial'
+        ? `${k.pdf_used} / ${k.pdf_limit} PDF (пожизненно)`
+        : `${k.pdf_used} / ${k.pdf_limit} PDF (${usagePct}%)`;
 
-    const planClass = k.plan_name === "enterprise" ? " key-plan--enterprise" : "";
+    const planClass = k.plan_name === "enterprise"
+      ? " key-plan--enterprise"
+      : k.plan_id === "trial"
+        ? " key-plan--trial"
+        : "";
 
     card.innerHTML = `
       <div class="key-head">
