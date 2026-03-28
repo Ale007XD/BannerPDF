@@ -330,6 +330,7 @@ async def create_order(req: OrderRequest):
             size_label=size_label,
             lines=text_lines_list,
             font=req.font,
+            promo_code=applied_promo,
         )
         if tg_message_id:
             with get_db() as conn:
