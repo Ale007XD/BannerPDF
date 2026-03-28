@@ -10,86 +10,63 @@
   <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Onest:wght@400;500;600&family=Golos+Text:wght@400;700&family=Tenor+Sans&family=Fira+Sans+Condensed:wght@800&family=PT+Sans+Narrow:wght@700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=11">
   <style>
-    /* ---- Кастомный размер ---- -->
+    /* ---- Кастомный размер ---- */
     .custom-size-block {
-      margin-top: 10px;
-      padding-top: 12px;
-      border-top: 1px solid var(--border);
+      margin-top: 4px;
     }
 
-    .custom-size-label {
-      font-family: 'Unbounded', sans-serif;
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--ink-3);
-      margin-bottom: 10px;
-    }
-
-    .custom-size-inputs {
+    .custom-size-fields {
       display: flex;
-      align-items: center;
+      flex-direction: column;
       gap: 8px;
     }
 
-    /* .custom-size-field удалён — лейблов нет, инпуты стоят напрямую */
-
-    .custom-size-input {
-      width: 80px; /* фиксированная ширина — не растягивается */
+    .custom-dim-input {
+      width: 100%;
       border: 1.5px solid var(--border);
       border-radius: var(--radius-sm);
-      padding: 10px 10px;
+      padding: 12px 14px;
       font-family: 'Unbounded', sans-serif;
       font-size: 13px;
       font-weight: 700;
+      letter-spacing: 0.04em;
       color: var(--ink);
       background: var(--bg);
       outline: none;
       transition: border-color 0.15s, background 0.15s;
-      text-align: center;
-      /* убираем стрелки браузера */
+      box-sizing: border-box;
       -moz-appearance: textfield;
     }
 
-    .custom-size-input::-webkit-outer-spin-button,
-    .custom-size-input::-webkit-inner-spin-button {
+    .custom-dim-input::-webkit-outer-spin-button,
+    .custom-dim-input::-webkit-inner-spin-button {
       -webkit-appearance: none;
     }
 
-    .custom-size-input:focus {
+    .custom-dim-input::placeholder {
+      color: var(--ink-3);
+      font-weight: 600;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+    }
+
+    .custom-dim-input:focus {
       border-color: var(--accent2);
       background: var(--surface);
     }
 
-    .custom-size-input.active-custom {
+    .custom-dim-input.active-custom {
       border-color: var(--accent);
       background: #fff5f3;
     }
 
-    .custom-size-input.error {
+    .custom-dim-input.error {
       border-color: var(--accent);
-      background: #fff5f3;
-    }
-
-    .custom-size-sep {
-      font-family: 'Unbounded', sans-serif;
-      font-size: 16px;
-      font-weight: 700;
-      color: var(--ink-3);
-      flex-shrink: 0;
-      line-height: 1;
-    }
-
-    .custom-size-unit {
-      font-size: 11px;
-      color: var(--ink-3);
-      flex-shrink: 0;
-      line-height: 1;
+      background: #fff0ee;
     }
 
     .custom-size-hint {
-      margin-top: 6px;
+      margin-top: 8px;
       font-size: 11px;
       color: var(--ink-3);
       min-height: 16px;
@@ -224,16 +201,14 @@
 
         <!-- Кастомный размер — рендерится JS-ом после кнопок -->
         <div class="custom-size-block" id="custom-size-block">
-          <div class="custom-size-label">Свой размер</div>
-          <div class="custom-size-inputs">
-            <input class="custom-size-input" id="custom-w"
+          <div class="card-label" style="margin-top:14px;">Свой размер</div>
+          <div class="custom-size-fields">
+            <input class="custom-dim-input" id="custom-w"
                    type="number" min="100" max="3000" step="1"
-                   placeholder="2000">
-            <span class="custom-size-sep">×</span>
-            <input class="custom-size-input" id="custom-h"
+                   placeholder="ШИРИНА, мм">
+            <input class="custom-dim-input" id="custom-h"
                    type="number" min="100" max="3000" step="1"
-                   placeholder="1000">
-            <span class="custom-size-unit">мм</span>
+                   placeholder="ВЫСОТА, мм">
           </div>
           <div class="custom-size-hint" id="custom-size-hint">100–3000 мм по каждой стороне</div>
         </div>
