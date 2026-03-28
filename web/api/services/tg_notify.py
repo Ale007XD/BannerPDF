@@ -59,6 +59,7 @@ async def notify_new_order(
     size_label: str,
     lines: list[str],
     font: str,
+    promo_code: Optional[str] = None,
 ) -> Optional[int]:
     """
     Отправляет администратору сообщение о новом заказе.
@@ -74,8 +75,9 @@ async def notify_new_order(
         f"<b>Размер:</b> {size_label}\n"
         f"<b>Шрифт:</b> {font}\n"
         # f"<b>Текст:</b>\n{lines_text}\n\n"
-        f"<b>Сумма:</b> {amount_rub} ₽\n\n"
-        f"Ожидание оплаты..."
+        f"<b>Сумма:</b> {amount_rub} ₽\n"
+        + (f"<b>Промокод:</b> <code>{promo_code}</code>\n" if promo_code else "")
+        + ("\n✅ PDF выдан автоматически по промокоду" if promo_code else "\nОжидание оплаты...")
     )
 
     data = await _tg_post("sendMessage", {
