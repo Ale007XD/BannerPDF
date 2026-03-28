@@ -3,15 +3,15 @@ corp_api.py
 ~~~~~~~~~~~
 Корпоративный API.
 
-POST /api/v1/render          — одиночный рендер PDF
-GET  /api/v1/usage           — лимиты и статистика за период
+POST /api/v1/render  — одиночный рендер PDF
+GET  /api/v1/usage   — лимиты и статистика за период
 """
 
 import asyncio
 import logging
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/v1")
 
 # ---------------------------------------------------------------------------
 # RPM-бакеты (in-memory, некритично при рестарте)
-# {key_id: [timestamp, ...]}  — храним ts последних запросов в окне 60 сек
+# {key_id: [timestamp, ...]} — храним ts последних запросов в окне 60 сек
 # ---------------------------------------------------------------------------
 _rpm_buckets: dict[int, list[float]] = defaultdict(list)
 
@@ -39,7 +39,6 @@ def _check_rpm(key_id: int, rpm_limit: int) -> None:
     window = 60.0
     bucket = _rpm_buckets[key_id]
 
-    # Удаляем записи старше окна
     _rpm_buckets[key_id] = [t for t in bucket if now - t < window]
 
     if len(_rpm_buckets[key_id]) >= rpm_limit:
@@ -79,6 +78,15 @@ async def require_api_key(request: Request) -> dict:
 
     # PDF-лимит (-1 = безлимитный, enterprise)
     if api_key["pdf_limit"] != -1 and api_key["pdf_used"] >= api_key["pdf_limit"]:
+        if api_key["plan_id"] == "trial":
+            raise HTTPException(
+                status_code=402,
+                detail=(
+                    f"Пробный период исчерпан: использовано {api_key['pdf_used']}"
+                    f" из {api_key['pdf_limit']} бесплатных генераций. "
+                    "Перейдите на платный тариф."
+                ),
+            )
         raise HTTPException(
             status_code=429,
             detail=(
@@ -122,18 +130,15 @@ async def corp_render(
 ) -> StreamingResponse:
     """
     Рендерит PDF-баннер и возвращает файл.
-    Уменьшает счётчик pdf_used после успешного рендера.
+    Увеличивает счётчик pdf_used после успешного рендера.
     """
-    # Собираем конфиг в формат, понятный validate_banner_config / build_render_data
     config = body.model_dump()
     config["text_lines"] = [line.model_dump() for line in body.text_lines]
 
-    # Валидация (size_key vs width_mm/height_mm, цвета, шрифт)
     errors = validate_banner_config(config)
     if errors:
         raise HTTPException(status_code=422, detail="; ".join(errors))
 
-    # Рендер PDF через ProcessPoolExecutor (GS CPU-bound)
     t0 = time.monotonic()
     loop = asyncio.get_event_loop()
     executor = get_executor()
@@ -148,7 +153,6 @@ async def corp_render(
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
 
-    # Увеличиваем счётчик только после успешного рендера
     increment_pdf_usage(api_key["id"])
 
     logger.info(
@@ -156,11 +160,13 @@ async def corp_render(
         api_key["key_prefix"], api_key["plan_name"], elapsed_ms,
     )
 
-    # Имя файла из size_key или кастомных размеров
     if body.size_key:
         filename = f"banner_{body.size_key}.pdf"
     else:
         filename = f"banner_{body.width_mm}x{body.height_mm}mm.pdf"
+
+    pdf_used_after = api_key["pdf_used"] + 1
+    pdf_limit = api_key["pdf_limit"]
 
     return StreamingResponse(
         BytesIO(pdf_bytes),
@@ -168,8 +174,8 @@ async def corp_render(
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Render-Time-Ms": str(elapsed_ms),
-            "X-PDF-Used": str(api_key["pdf_used"] + 1),
-            "X-PDF-Limit": str(api_key["pdf_limit"]),
+            "X-PDF-Used": str(pdf_used_after),
+            "X-PDF-Limit": str(pdf_limit) if pdf_limit != -1 else "unlimited",
         },
     )
 
@@ -182,31 +188,34 @@ async def corp_render(
 async def corp_usage(api_key: dict = Depends(require_api_key)) -> dict:
     """
     Возвращает текущее использование и лимиты ключа.
+    Trial: пожизненный лимит без period_end.
     """
-    period_start = api_key.get("period_start")
+    pdf_limit = api_key["pdf_limit"]
+    pdf_used = api_key["pdf_used"]
+    is_trial = api_key["plan_id"] == "trial"
+
+    period_start: str | None = None
     period_end: str | None = None
 
-    if period_start:
-        try:
-            ps = datetime.fromisoformat(period_start)
-            from datetime import timedelta
-            pe = ps + timedelta(days=30)
-            period_end = pe.date().isoformat()
-            period_start = ps.date().isoformat()
-        except (ValueError, TypeError):
-            pass
-
-    pdf_limit = api_key["pdf_limit"]
-    pdf_used  = api_key["pdf_used"]
+    if not is_trial:
+        raw_period_start = api_key.get("period_start")
+        if raw_period_start:
+            try:
+                ps = datetime.fromisoformat(raw_period_start)
+                period_start = ps.date().isoformat()
+                period_end = (ps + timedelta(days=30)).date().isoformat()
+            except (ValueError, TypeError):
+                pass
 
     return {
-        "plan":          api_key["plan_name"],
-        "pdf_used":      pdf_used,
-        "pdf_limit":     pdf_limit,                    # -1 = безлимит
+        "plan": api_key["plan_name"],
+        "is_trial": is_trial,
+        "pdf_used": pdf_used,
+        "pdf_limit": pdf_limit,
         "pdf_remaining": max(0, pdf_limit - pdf_used) if pdf_limit != -1 else None,
-        "rpm_limit":     api_key["rpm_limit"],
-        "period_start":  period_start,
-        "period_end":    period_end,
-        "key_prefix":    api_key["key_prefix"],
-        "label":         api_key.get("label"),
+        "rpm_limit": api_key["rpm_limit"],
+        "period_start": period_start,
+        "period_end": period_end,
+        "key_prefix": api_key["key_prefix"],
+        "label": api_key.get("label"),
     }
