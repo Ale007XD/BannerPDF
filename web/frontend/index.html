@@ -76,6 +76,33 @@
       color: var(--accent);
     }
 
+    /* ---- Промокод ---- */
+    .promo-row { margin: 8px 0 4px; }
+    .promo-input {
+      width: 100%; box-sizing: border-box;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      font-family: Unbounded, sans-serif;
+      font-size: 12px; font-weight: 700;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--ink); background: var(--bg);
+      outline: none;
+      transition: border-color 0.15s, background 0.15s;
+      -moz-appearance: textfield;
+    }
+    .promo-input::placeholder {
+      color: var(--ink-3); font-weight: 600;
+      font-size: 10px; letter-spacing: 0.07em;
+      text-transform: none;
+    }
+    .promo-input:focus { border-color: var(--accent2); background: var(--surface); }
+    .promo-status {
+      min-height: 14px; margin-top: 4px;
+      font-size: 11px; color: var(--ink-3);
+    }
+    .promo-status--ok    { color: #2a9d5c; }
+    .promo-status--error { color: var(--accent); }
     /* ---- Футер ---- */
     .site-footer {
       background: var(--ink);
@@ -262,6 +289,12 @@
           <span class="buy-price">299 ₽</span>
         </div>
         <div class="buy-desc">CMYK · Шрифты в кривых · ICC-профиль ISOcoated_v2_300</div>
+        <div class="promo-row">
+          <input class="promo-input" type="text" id="promo-input"
+                 placeholder="Промокод (необязательно)"
+                 maxlength="20" autocomplete="off" spellcheck="false">
+          <div class="promo-status" id="promo-status"></div>
+        </div>
         <button class="buy-btn" id="buy-btn">Получить PDF</button>
       </div>
 
@@ -422,6 +455,6 @@
 
   <!-- SDK виджета ЮKassa -->
   <script src="https://yookassa.ru/checkout-widget/v1/checkout-widget.js"></script>
-  <script src="app.js?v=12"></script>
+  <script src="app.js?v=13"></script>
 </body>
 </html>

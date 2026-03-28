@@ -49,6 +49,7 @@ const state = {
   lines:     [{ text: "", scale: 1.0 }, { text: "", scale: 1.0 }],   // до max_lines строк
   maxLines:  6,          // обновляется из шаблонов
   refCode:   "",
+  promoCode: "",        // промокод (сбрасывается после использования)
 
   // Кастомный размер (мм, null = не задан)
   customW:   null,
@@ -81,6 +82,8 @@ const el = {
   fontList:    $("font-list"),
   refInput:    $("ref-input"),
   refStatus:   $("ref-status"),
+  promoInput:  $("promo-input"),
+  promoStatus: $("promo-status"),
   buyBtn:      $("buy-btn"),
 
   // Кастомный размер
@@ -523,7 +526,8 @@ function buildConfig() {
     text_color: state.textColor,
     font:       state.font,
     text_lines: getTextLines(),
-    ref_code:   state.refCode || undefined,
+    ref_code:   state.refCode   || undefined,
+    promo_code: state.promoCode || undefined,
   };
 
   if (state.sizeKey === "custom") {
@@ -705,6 +709,35 @@ async function validateRefCode() {
 }
 
 /* =====================================================================
+   ПРОМОКОД
+   ===================================================================== */
+if (el.promoInput) {
+  el.promoInput.addEventListener("input", () => {
+    const val = el.promoInput.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    el.promoInput.value = val;
+    state.promoCode = val;
+
+    if (!val) {
+      if (el.promoStatus) {
+        el.promoStatus.textContent = "";
+        el.promoStatus.className = "promo-status";
+      }
+      el.buyBtn.textContent = BUY_BTN_TEXT;
+      syncBuyButtons();
+      return;
+    }
+    if (val.length < 2) return;
+
+    if (el.promoStatus) {
+      el.promoStatus.textContent = "Промокод будет применён при оформлении";
+      el.promoStatus.className = "promo-status promo-status--ok";
+    }
+    el.buyBtn.textContent = "Получить PDF бесплатно";
+    syncBuyButtons();
+  });
+}
+
+/* =====================================================================
    ПОКУПКА — создание заказа
    ===================================================================== */
 el.buyBtn.addEventListener("click", async () => {
@@ -740,6 +773,16 @@ el.buyBtn.addEventListener("click", async () => {
 
     const data = await resp.json();
     state.orderId = data.order_id;
+
+    // Бесплатный заказ (промокод 100% скидки) — пропускаем ЮКасса
+    if (data.free && data.download_token) {
+      state.promoCode = "";
+      if (el.promoInput)  { el.promoInput.value  = ""; }
+      if (el.promoStatus) { el.promoStatus.textContent = ""; el.promoStatus.className = "promo-status"; }
+      showModal(el.modalSuccess);
+      setTimeout(() => downloadPdf(data.download_token), 300);
+      return;
+    }
 
     // Инициализируем виджет ЮKassa с полученным confirmation_token
     openYooKassaWidget(data.confirmation_token, data.order_id);
