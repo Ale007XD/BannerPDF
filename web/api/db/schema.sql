@@ -10,16 +10,15 @@ PRAGMA foreign_keys = ON;
 -- Корпоративные API-планы (предзаполняются при инициализации)
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS api_plans (
-    id         TEXT    PRIMARY KEY,
-    name       TEXT    NOT NULL,
-    pdf_limit  INTEGER NOT NULL, -- -1 = безлимит
-    rpm_limit  INTEGER NOT NULL,
-    price_rub  INTEGER NOT NULL
+    id          TEXT    PRIMARY KEY,
+    name        TEXT    NOT NULL,
+    pdf_limit   INTEGER NOT NULL, -- -1 = безлимит
+    rpm_limit   INTEGER NOT NULL,
+    price_rub   INTEGER NOT NULL
 );
 
 -- Предзаполнение планов (INSERT OR IGNORE — идемпотентно)
-INSERT OR IGNORE INTO api_plans (id, name, pdf_limit, rpm_limit, price_rub)
-VALUES
+INSERT OR IGNORE INTO api_plans (id, name, pdf_limit, rpm_limit, price_rub) VALUES
     ('trial',      'Trial',      3,    5,   0),
     ('starter',    'Starter',    100,  10,  1900),
     ('business',   'Business',   1000, 60,  9900),
@@ -46,17 +45,18 @@ CREATE TABLE IF NOT EXISTS api_keys (
 -- Заказы (статус управляется FSM)
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS web_orders (
-    id                   TEXT    PRIMARY KEY,   -- UUID4 = order_id
-    amount_rub           INTEGER NOT NULL,
-    size_key             TEXT    NOT NULL,
-    ref_code             TEXT,                  -- реферальный код, может быть NULL
-    config_json          TEXT    NOT NULL,      -- JSON конфига баннера (постоянное хранение)
-    status               TEXT    NOT NULL DEFAULT 'pending',
+    id                  TEXT    PRIMARY KEY,  -- UUID4 = order_id
+    amount_rub          INTEGER NOT NULL,
+    size_key            TEXT    NOT NULL,
+    ref_code            TEXT,                 -- реферальный код, может быть NULL
+    promo_code          TEXT,                 -- применённый промокод, может быть NULL
+    config_json         TEXT    NOT NULL,     -- JSON конфига баннера (постоянное хранение)
+    status              TEXT    NOT NULL DEFAULT 'pending',
     -- pending | paid | token_issued | expired
-    created_at           TEXT    NOT NULL,
-    paid_at              TEXT,                  -- NULL пока не оплачен
-    yookassa_payment_id  TEXT,                  -- ID платежа в ЮKassa (для верификации webhook)
-    tg_message_id        INTEGER                -- ID сообщения в TG для обновления статуса
+    created_at          TEXT    NOT NULL,
+    paid_at             TEXT,                 -- NULL пока не оплачен
+    yookassa_payment_id TEXT,                 -- ID платежа в ЮКасса (для верификации webhook)
+    tg_message_id       INTEGER               -- ID сообщения в TG для обновления статуса
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_orders_status  ON web_orders(status);
@@ -66,7 +66,7 @@ CREATE INDEX IF NOT EXISTS idx_web_orders_created ON web_orders(created_at);
 -- Download-токены (одноразовые, TTL 15 мин)
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS download_tokens (
-    token      TEXT    PRIMARY KEY,   -- 32 bytes hex (64 символа)
+    token      TEXT    PRIMARY KEY,  -- 32 bytes hex (64 символа)
     order_id   TEXT    NOT NULL REFERENCES web_orders(id),
     expires_at TEXT    NOT NULL,
     used       BOOLEAN NOT NULL DEFAULT FALSE
@@ -85,6 +85,16 @@ CREATE TABLE IF NOT EXISTS pending_orders (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_orders(expires_at);
+
+-- ------------------------------------------------------------
+-- Промокоды
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS promo_codes (
+    code       TEXT    PRIMARY KEY,         -- напр. "AVITO26"
+    uses_left  INTEGER NOT NULL DEFAULT 0,  -- убывает при каждом применении
+    expires_at TEXT,                        -- NULL = бессрочно
+    discount   INTEGER NOT NULL DEFAULT 100 -- % скидки; 100 = бесплатно, 50 = половина
+);
 
 -- ------------------------------------------------------------
 -- Batch-задачи
@@ -108,15 +118,15 @@ CREATE INDEX IF NOT EXISTS idx_batch_status ON batch_jobs(status);
 -- Рефераллы (без персональных данных, 152-ФЗ)
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS referrers (
-    ref_code   TEXT    PRIMARY KEY,   -- 8 символов A-Z0-9
+    ref_code    TEXT    PRIMARY KEY,  -- 8 символов A-Z0-9
     balance_rub INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT    NOT NULL
+    created_at  TEXT    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS referrals (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     referrer_id  TEXT    NOT NULL REFERENCES referrers(ref_code),
-    order_id     TEXT    NOT NULL UNIQUE,   -- UNIQUE = идемпотентность начислений
+    order_id     TEXT    NOT NULL UNIQUE,  -- UNIQUE = идемпотентность начислений
     order_amount INTEGER NOT NULL,
     commission   INTEGER NOT NULL,
     created_at   TEXT    NOT NULL,
