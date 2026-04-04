@@ -473,6 +473,7 @@ async function fetchPreview() {
 
     const data = await resp.json();
     showPreview(data.preview_base64, data.width_mm, data.height_mm);
+    if (typeof ym !== 'undefined') ym(108388194, 'reachGoal', 'preview_generated');
   } catch (e) {
     hideLoader();
     el.previewMeta.textContent = "Не удалось загрузить превью";
@@ -758,6 +759,7 @@ el.buyBtn.addEventListener("click", async () => {
   el.buyBtn.disabled = true;
   el.buyBtn.textContent = "Создаём заказ...";
   syncBuyButtons();
+  if (typeof ym !== 'undefined') ym(108388194, 'reachGoal', 'start_order');
 
   try {
     const resp = await fetch(API.order, {
@@ -849,6 +851,7 @@ function openYooKassaWidget(confirmationToken, orderId) {
   // Показываем модалку и рендерим виджет внутрь контейнера
   showModal(el.modalPay);
   checkout.render("yookassa-widget-container");
+  if (typeof ym !== 'undefined') ym(108388194, 'reachGoal', 'payment_started');
 }
 
 // Если пользователь вернулся на страницу с ?order_id= в URL (после redirect),
@@ -936,6 +939,7 @@ async function downloadPdf(token) {
       : state.sizeKey}_${Date.now()}.pdf`;
     document.body.appendChild(a);
     a.click();
+    if (typeof ym !== 'undefined') ym(108388194, 'reachGoal', 'download_success');
     setTimeout(() => {
       URL.revokeObjectURL(url);
       a.remove();
