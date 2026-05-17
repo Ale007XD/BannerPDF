@@ -37,6 +37,7 @@ from ..services.order_store import save_pending
 from ..services.payment import create_payment
 from ..services.sanitizer import sanitize_text_lines, validate_banner_config
 from ..services.tg_notify import notify_new_order
+from ..services.fsm_conductor import conductor_vm, payment_conductor
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -387,6 +388,14 @@ async def create_order(req: OrderRequest):
                 "UPDATE web_orders SET tg_message_id = ? WHERE id = ?",
                 (tg_message_id, order_id),
             )
+
+    # Запускаем кондуктор. Он мгновенно остановится на шаге "wait_for_payment"
+    # и сохранит своё состояние (TraceStatus.SUSPENDED) в SQLite.
+    trace = await conductor_vm.run(
+        payment_conductor,
+        context={"order_id": order_id, "amount_rub": amount_rub}
+    )
+    logger.info("FSM-кондуктор запущен и приостановлен для %s, trace_id: %s", order_id, trace.trace_id)
 
     return {
         "order_id":           order_id,
