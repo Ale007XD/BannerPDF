@@ -3,16 +3,22 @@ fsm_conductor.py
 ~~~~~~~~~~~~~~~~
 Декларативное описание графа и инициализация VM.
 """
-from nano_vm import Program, ExecutionVM
+from nano_vm import ExecutionVM, Program
 from nano_vm.adapters import MockLLMAdapter
+
 from .fsm_repository import SqliteCursorRepository
 from .fsm_tools import (
-    initiate_payment_wait, verify_webhook_data, fsm_transition_to_paid,
-    create_download_token_tool, pay_referral_tool, send_tg_notification_tool, log_fraud_attempt
+    create_download_token_tool,
+    fsm_transition_to_paid,
+    initiate_payment_wait,
+    log_fraud_attempt,
+    pay_referral_tool,
+    send_tg_notification_tool,
+    verify_webhook_data,
 )
 
 # Декларативный граф кондуктора
-payment_conductor = Program.from```_dict({
+payment_conductor = Program(**{
     "name": "payment_webhook_pipeline",
     "steps": [
         {
@@ -41,7 +47,7 @@ payment_conductor = Program.from```_dict({
         {
             "id": "post_payment_actions",
             "type": "parallel",
-            "on_error": "skip",  # Падение уведомления не валит весь заказ
+            "on_error": "skip",
             "parallel_steps": [
                 {"id": "issue_token", "type": "tool", "tool": "create_download_token_tool"},
                 {"id": "pay_referral", "type": "tool", "tool": "pay_referral_tool"},
@@ -60,7 +66,7 @@ fsm_repo = SqliteCursorRepository()
 
 # Глобальный инстанс виртуальной машины кондуктора
 conductor_vm = ExecutionVM(
-    llm=MockLLMAdapter("NO_LLM_IN_THIS_PROGRAM"), # Отключаем LLM
+    llm=MockLLMAdapter("NO_LLM_IN_THIS_PROGRAM"),
     tools={
         "initiate_payment_wait": initiate_payment_wait,
         "verify_webhook_data": verify_webhook_data,
