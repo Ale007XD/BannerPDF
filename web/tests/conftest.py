@@ -78,6 +78,7 @@ async def client(set_env, init_test_db):
     mock_payment = AsyncMock(return_value={
         "yookassa_payment_id": "test_yookassa_payment_id",
         "confirmation_token":  "test_confirmation_token",
+        "payment_id": "test_payment_id"
     })
 
     # Заглушка превью — base64 однопиксельного JPEG
@@ -115,7 +116,7 @@ def make_yookassa_succeeded_payment(order_id: str,
                                      amount_rub: int = 299) -> dict:
     """
     Возвращает словарь, имитирующий успешный ответ GET /v3/payments/{id} от ЮKassa.
-    Используется для мока verify_yookassa_webhook в тестах.
+    Используется для мока verify_yookassa_payment в тестах.
     """
     return {
         "id":     yookassa_payment_id,
