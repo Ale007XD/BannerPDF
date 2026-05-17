@@ -76,5 +76,5 @@ conductor_vm = ExecutionVM(
         "send_tg_notification_tool": send_tg_notification_tool,
         "log_fraud_attempt": log_fraud_attempt,
     },
-    cursor_repo=fsm_repo
+    cursor_repository=fsm_repo
 )

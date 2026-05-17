@@ -16,8 +16,6 @@ logger = logging.getLogger(__name__)
 class SqliteCursorRepository:
     async def save(self, cursor: Any) -> None:
         """Сохраняет слепок состояния (курсор) в БД."""
-        # Используем pickle + base64, чтобы обойтись без прямого импорта 
-        # внутренних классов из nano_vm (избегаем ImportError).
         try:
             cursor_b64 = base64.b64encode(pickle.dumps(cursor)).decode('utf-8')
         except Exception as e:
@@ -26,10 +24,20 @@ class SqliteCursorRepository:
             
         now = datetime.now(timezone.utc).isoformat()
         
-        # Безопасное извлечение атрибутов (через getattr, на случай если API изменится)
-        trace_id = getattr(cursor, "trace_id", "unknown")
-        context = getattr(cursor, "context", {})
-        order_id = context.get("order_id", "unknown") if isinstance(context, dict) else "unknown"
+        # Безопасное извлечение trace_id и order_id, поддерживающее формат tuple
+        trace_id = "unknown"
+        order_id = "unknown"
+        
+        if isinstance(cursor, tuple) and len(cursor) == 3:
+            trace_obj = cursor[2]
+            trace_id = getattr(trace_obj, "trace_id", "unknown")
+            state_ctx = cursor[1]
+            if hasattr(state_ctx, "env") and isinstance(state_ctx.env, dict):
+                order_id = state_ctx.env.get("order_id", "unknown")
+        else:
+            trace_id = getattr(cursor, "trace_id", "unknown")
+            context = getattr(cursor, "context", {})
+            order_id = context.get("order_id", "unknown") if isinstance(context, dict) else "unknown"
         
         with get_db() as conn:
             conn.execute(
