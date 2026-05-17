@@ -1,0 +1,40 @@
+name: Ruff Auto-Fix
+
+on:
+  workflow_dispatch:  # Позволяет запускать вручную из вкладки Actions
+  push:
+    branches: [ main, dev ]
+    paths:
+      - 'web/api/**'
+      - 'web/tests/**'
+
+jobs:
+  fix-code:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Обязательно: даем права на пуш коммита
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Ruff
+        run: pip install ruff==0.4.4
+
+      - name: Run Ruff with auto-fix
+        # Выполняем фикс. Добавляем || true, чтобы CI не падал, 
+        # если останутся ошибки, которые Ruff не может исправить сам
+        run: ruff check --fix web/api/ web/tests/ || true
+
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: auto-fix imports and formatting by Ruff"
+          file_pattern: 'web/api/** web/tests/**'
