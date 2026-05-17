@@ -5,10 +5,11 @@ payment.py
 Вся бизнес-логика (FSM, верификация, выдача токенов) вынесена в payment_conductor.
 """
 import logging
-from fastapi import APIRouter, HTTPException, Request
 
-from ..services.fsm_conductor import conductor_vm, payment_conductor, fsm_repo
+from fastapi import APIRouter, HTTPException, Request
 from nano_vm.vm import TraceStatus
+
+from ..services.fsm_conductor import conductor_vm, fsm_repo, payment_conductor
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

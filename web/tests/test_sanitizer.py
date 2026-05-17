@@ -1,4 +1,9 @@
-from web.api.services.sanitizer import sanitize_line, sanitize_text_lines, validate_banner_config
+from web.api.services.sanitizer import (
+    sanitize_line,
+    sanitize_text_lines,
+    validate_banner_config,
+)
+
 
 class TestSanitizeLine:
     def test_removes_control_chars(self):

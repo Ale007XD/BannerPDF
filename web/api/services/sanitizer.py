@@ -68,7 +68,7 @@ def validate_banner_config(data: dict) -> list[str]:
     - Типовой:   {"size_key": "3x2", ...}
     - Кастомный: {"width_mm": 1200, "height_mm": 800, ...}
     """
-    from .config import BANNER_SIZES, COLORS, FONTS, MIN_DIMENSION, MAX_DIMENSION
+    from .config import BANNER_SIZES, COLORS, FONTS, MAX_DIMENSION, MIN_DIMENSION
 
     errors: list[str] = []
 

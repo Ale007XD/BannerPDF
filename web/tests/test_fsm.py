@@ -1,7 +1,10 @@
 import sqlite3
 from datetime import datetime, timezone
+
 import pytest
+
 from web.api.routers.order import OrderStatus, transition
+
 
 def _insert_order(db_path: str, order_id: str, status: str) -> None:
     conn = sqlite3.connect(db_path)

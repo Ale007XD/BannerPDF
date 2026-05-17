@@ -25,10 +25,9 @@ import os
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-
-from fastapi import APIRouter, HTTPException
 from typing import Optional
 
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..db import get_db

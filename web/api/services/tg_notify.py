@@ -15,7 +15,6 @@ Telegram-уведомления о новых заказах для админи
 Если переменные не заданы — все функции работают как no-op (не падают).
 """
 
-import hashlib
 import hmac
 import logging
 import os

@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from unittest.mock import AsyncMock, patch
+
 import pytest
 from conftest import VALID_ORDER_PAYLOAD, make_yookassa_succeeded_payment
 

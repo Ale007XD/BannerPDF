@@ -1,6 +1,8 @@
 import sqlite3
 from datetime import datetime, timezone
-from web.api.services.token_store import create_token, consume_token
+
+from web.api.services.token_store import consume_token, create_token
+
 
 def _insert_order(db_path: str, order_id: str) -> None:
     conn = sqlite3.connect(db_path)

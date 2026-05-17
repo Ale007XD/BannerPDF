@@ -3,10 +3,13 @@ fsm_repository.py
 ~~~~~~~~~~~~~~~~~
 SQLite реализация CursorRepository для llm-nano-vm.
 """
-from typing import Optional
 from datetime import datetime, timezone
+from typing import Optional
+
 from nano_vm.vm import Cursor
+
 from ..db import get_db
+
 
 class SqliteCursorRepository:
     async def save(self, cursor: Cursor) -> None:

@@ -1,6 +1,7 @@
 import pytest
 from conftest import VALID_ORDER_PAYLOAD
 
+
 class TestCreateOrder:
     @pytest.mark.asyncio
     async def test_valid_order_returns_yookassa_payment_data(self, client):
