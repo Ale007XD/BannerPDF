@@ -3,22 +3,33 @@ fsm_repository.py
 ~~~~~~~~~~~~~~~~~
 SQLite реализация CursorRepository для llm-nano-vm.
 """
+import base64
+import logging
+import pickle
 from datetime import datetime, timezone
-from typing import Optional
-
-from nano_vm.vm import Cursor
+from typing import Any, Optional
 
 from ..db import get_db
 
+logger = logging.getLogger(__name__)
 
 class SqliteCursorRepository:
-    async def save(self, cursor: Cursor) -> None:
+    async def save(self, cursor: Any) -> None:
         """Сохраняет слепок состояния (курсор) в БД."""
-        cursor_json = cursor.model_dump_json()
+        # Используем pickle + base64, чтобы обойтись без прямого импорта 
+        # внутренних классов из nano_vm (избегаем ImportError).
+        try:
+            cursor_b64 = base64.b64encode(pickle.dumps(cursor)).decode('utf-8')
+        except Exception as e:
+            logger.error(f"Failed to serialize cursor: {e}")
+            raise
+            
         now = datetime.now(timezone.utc).isoformat()
         
-        # Извлекаем order_id из контекста (сохранен при старте)
-        order_id = cursor.context.get("order_id", "unknown")
+        # Безопасное извлечение атрибутов (через getattr, на случай если API изменится)
+        trace_id = getattr(cursor, "trace_id", "unknown")
+        context = getattr(cursor, "context", {})
+        order_id = context.get("order_id", "unknown") if isinstance(context, dict) else "unknown"
         
         with get_db() as conn:
             conn.execute(
@@ -29,16 +40,21 @@ class SqliteCursorRepository:
                     cursor_json = excluded.cursor_json,
                     updated_at = excluded.updated_at
                 """,
-                (cursor.trace_id, order_id, cursor_json, now, now)
+                (trace_id, order_id, cursor_b64, now, now)
             )
 
-    async def load(self, trace_id: str) -> Optional[Cursor]:
+    async def load(self, trace_id: str) -> Optional[Any]:
         """Загружает курсор для resume."""
         with get_db() as conn:
             row = conn.execute("SELECT cursor_json FROM fsm_cursors WHERE trace_id = ?", (trace_id,)).fetchone()
             
-        if row:
-            return Cursor.model_validate_json(row["cursor_json"])
+        if row and row["cursor_json"]:
+            try:
+                cursor_bytes = base64.b64decode(row["cursor_json"])
+                return pickle.loads(cursor_bytes)
+            except Exception as e:
+                logger.error(f"Failed to deserialize cursor {trace_id}: {e}")
+                return None
         return None
 
     async def get_trace_id_by_order(self, order_id: str) -> Optional[str]:
