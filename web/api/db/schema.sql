@@ -134,3 +134,17 @@ CREATE TABLE IF NOT EXISTS referrals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id);
+
+-- ------------------------------------------------------------
+-- FSM Cursors (llm-nano-vm)
+-- Хранение состояния кондуктора для suspend / resume
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS fsm_cursors (
+    trace_id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL,
+    cursor_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fsm_cursors_order ON fsm_cursors(order_id);
