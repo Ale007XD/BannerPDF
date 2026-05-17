@@ -68,7 +68,7 @@ async def notify_new_order(
     if not _enabled():
         return None
 
-    lines_text = "\n".join(f"  • {line}" for line in lines) if lines else "  (нет строк)"
+    # lines_text = "\n".join(f"  • {line}" for line in lines) if lines else "  (нет строк)"
     text = (
         f"🆕 <b>Новый заказ</b>\n\n"
         f"<b>ID:</b> <code>{order_id}</code>\n"
