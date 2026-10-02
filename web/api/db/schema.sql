@@ -56,20 +56,27 @@ CREATE TABLE IF NOT EXISTS web_orders (
     created_at          TEXT    NOT NULL,
     paid_at             TEXT,                 -- NULL пока не оплачен
     yookassa_payment_id TEXT,                 -- ID платежа в ЮКасса (для верификации webhook)
-    tg_message_id       INTEGER               -- ID сообщения в TG для обновления статуса
+    tg_message_id       INTEGER,              -- ID сообщения в TG для обновления статуса
+    -- Акцепт условий на экране проверки макета (NULL у заказов до введения экрана)
+    offer_version       TEXT,                 -- редакция соглашения (OFFER_VERSION в routers/order.py)
+    accepted_at         TEXT,                 -- UTC, ISO 8601
+    accepted_ip         TEXT,                 -- IP клиента (X-Real-IP от nginx)
+    accepted_ua         TEXT                  -- User-Agent, обрезан до 300 символов
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_orders_status  ON web_orders(status);
 CREATE INDEX IF NOT EXISTS idx_web_orders_created ON web_orders(created_at);
 
 -- ------------------------------------------------------------
--- Download-токены (одноразовые, TTL 15 мин)
+-- Download-токены (TTL 15 мин, до MAX_DOWNLOADS успешных выдач PDF)
+-- used = TRUE, когда лимит выдач исчерпан (см. services/token_store.py)
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS download_tokens (
     token      TEXT    PRIMARY KEY,  -- 32 bytes hex (64 символа)
     order_id   TEXT    NOT NULL REFERENCES web_orders(id),
     expires_at TEXT    NOT NULL,
-    used       BOOLEAN NOT NULL DEFAULT FALSE
+    used       BOOLEAN NOT NULL DEFAULT FALSE,
+    downloads  INTEGER NOT NULL DEFAULT 0  -- число успешных выдач PDF
 );
 
 CREATE INDEX IF NOT EXISTS idx_tokens_order   ON download_tokens(order_id);

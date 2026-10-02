@@ -106,10 +106,19 @@ const el = {
   errorTitle:   $("error-title"),
   errorText:    $("error-text"),
   errorClose:   $("error-close"),
+  errorRetry:   $("error-retry"),
 
   modalWait:    $("modal-wait"),
   waitText:     $("wait-text"),
   waitBar:      $("wait-bar"),
+
+  modalConfirm:     $("modal-confirm"),
+  confirmLines:     $("confirm-lines"),
+  confirmMeta:      $("confirm-meta"),
+  confirmCheck:     $("confirm-check"),
+  confirmPay:       $("confirm-pay"),
+  confirmBack:      $("confirm-back"),
+  confirmOpenTerms: $("confirm-open-terms"),
 
   modalPay:     $("modal-pay"),
   payClose:     $("pay-close"),
@@ -739,9 +748,14 @@ if (el.promoInput) {
 }
 
 /* =====================================================================
-   ПОКУПКА — создание заказа
+   ПОКУПКА — экран проверки макета → создание заказа
    ===================================================================== */
-el.buyBtn.addEventListener("click", async () => {
+
+// Снимок конфига, показанный на экране проверки. Заказ создаётся именно по нему:
+// то, что пользователь подтвердил, и то, что оплачено, не могут разойтись.
+let pendingConfig = null;
+
+el.buyBtn.addEventListener("click", () => {
   if (getTextLines().length === 0) {
     showError("Введите текст", "Добавьте хотя бы одну строку текста для баннера.");
     return;
@@ -756,6 +770,66 @@ el.buyBtn.addEventListener("click", async () => {
     }
   }
 
+  openConfirm();
+});
+
+/** Добавляет строку «название — значение» в блок параметров экрана проверки. */
+function addConfirmMeta(label, value) {
+  const dt = document.createElement("dt");
+  dt.textContent = label;
+  const dd = document.createElement("dd");
+  dd.textContent = value;
+  el.confirmMeta.append(dt, dd);
+}
+
+/** Показывает итоговый текст и параметры макета; оплата доступна только после отметки. */
+function openConfirm() {
+  pendingConfig = buildConfig();
+
+  // Текст — только через textContent (ввод пользователя, не HTML)
+  el.confirmLines.replaceChildren(
+    ...pendingConfig.text_lines.map((line) => {
+      const div = document.createElement("div");
+      div.className = "confirm-line";
+      div.textContent = line.text;
+      return div;
+    })
+  );
+
+  const activeSize = el.sizeGrid.querySelector(".size-btn.active");
+  const sizeLabel = state.sizeKey === "custom"
+    ? `${state.customW}×${state.customH} мм`
+    : (activeSize
+        ? activeSize.querySelector(".size-desc").textContent   // «3×2 м», считается из размеров
+        : String(state.sizeKey));
+
+  el.confirmMeta.replaceChildren();
+  addConfirmMeta("Размер", sizeLabel);
+  addConfirmMeta("Шрифт", state.font);
+  addConfirmMeta("Фон", state.bgColor);
+  addConfirmMeta("Цвет текста", state.textColor);
+
+  el.confirmCheck.checked = false;
+  el.confirmPay.disabled = true;
+  showModal(el.modalConfirm);
+}
+
+el.confirmCheck.addEventListener("change", () => {
+  el.confirmPay.disabled = !el.confirmCheck.checked;
+});
+
+el.confirmBack.addEventListener("click", () => hideModal(el.modalConfirm));
+
+// Соглашение открывается поверх экрана проверки (оно позже в DOM)
+el.confirmOpenTerms.addEventListener("click", () => openModal("modal-terms"));
+
+el.confirmPay.addEventListener("click", () => {
+  if (!el.confirmCheck.checked || !pendingConfig) return;
+  hideModal(el.modalConfirm);
+  createOrder({ ...pendingConfig, accept_terms: true });
+});
+
+async function createOrder(payload) {
   el.buyBtn.disabled = true;
   el.buyBtn.textContent = "Создаём заказ...";
   syncBuyButtons();
@@ -765,7 +839,7 @@ el.buyBtn.addEventListener("click", async () => {
     const resp = await fetch(API.order, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildConfig()),
+      body: JSON.stringify(payload),
     });
 
     if (!resp.ok) {
@@ -781,7 +855,11 @@ el.buyBtn.addEventListener("click", async () => {
       state.promoCode = "";
       if (el.promoInput)  { el.promoInput.value  = ""; }
       if (el.promoStatus) { el.promoStatus.textContent = ""; el.promoStatus.className = "promo-status"; }
-      showModal(el.modalSuccess);
+      // «Готово!» показывает downloadPdf только после успешной выдачи файла;
+      // раньше окно успеха перекрывало ошибку скачивания.
+      showModal(el.modalWait);
+      el.waitText.textContent = "Формируем PDF...";
+      el.waitBar.style.width = "100%";
       setTimeout(() => downloadPdf(data.download_token), 300);
       return;
     }
@@ -795,7 +873,7 @@ el.buyBtn.addEventListener("click", async () => {
     el.buyBtn.textContent = BUY_BTN_TEXT;
     syncBuyButtons();
   }
-});
+}
 
 /* =====================================================================
    ОПЛАТА — виджет ЮKassa
@@ -928,7 +1006,11 @@ function startPolling(silent = false) {
 async function downloadPdf(token) {
   try {
     const resp = await fetch(API.download(token));
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) {
+      const err = new Error(`HTTP ${resp.status}`);
+      err.status = resp.status;
+      throw err;
+    }
 
     const blob = await resp.blob();
     const url  = URL.createObjectURL(blob);
@@ -949,7 +1031,29 @@ async function downloadPdf(token) {
     showModal(el.modalSuccess);
   } catch (e) {
     hideModal(el.modalWait);
-    showError("Ошибка скачивания", `Не удалось скачать файл: ${e.message}`);
+
+    // 404: ссылка истекла или лимит скачиваний исчерпан — повторять бесполезно
+    if (e.status === 404) {
+      showError(
+        "Ссылка больше не действует",
+        "Время действия ссылки (15 минут) или лимит скачиваний исчерпаны. " +
+        "Если заказ оплачен — напишите нам (контакты на странице «Реквизиты и оплата»), " +
+        "мы повторно выдадим файл."
+      );
+      return;
+    }
+
+    // Сбой генерации или сети: сервер не расходует ссылку — можно повторить
+    showError(
+      "Не удалось скачать файл",
+      `${e.message}. Оплата не потеряна: ссылка действует 15 минут, нажмите «Скачать ещё раз».`,
+      () => {
+        hideModal(el.modalError);
+        showModal(el.modalWait);
+        el.waitText.textContent = "Формируем PDF...";
+        downloadPdf(token);
+      }
+    );
   }
 }
 
@@ -972,9 +1076,16 @@ function hideModal(overlay) {
   document.body.style.overflow = "";
 }
 
-function showError(title, text) {
+/**
+ * @param {string}   title
+ * @param {string}   text
+ * @param {Function} [onRetry] — если передан, показывает кнопку «Скачать ещё раз»
+ */
+function showError(title, text, onRetry) {
   el.errorTitle.textContent = title;
   el.errorText.textContent  = text;
+  el.errorRetry.classList.toggle("hidden", !onRetry);
+  el.errorRetry.onclick = onRetry || null;
   showModal(el.modalError);
 }
 

@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Реквизиты исполнителя, контакты, стоимость услуги, порядок оплаты, получения PDF и возврата — BannerPrint.">
+  <title>Реквизиты, оплата и возврат — BannerPrint</title>
+  <link rel="canonical" href="https://bannerbot.ru/requisites.html" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=12">
+  <style>
+    a.logo { text-decoration: none; }
+
+    .header-back {
+      font-family: 'Onest', sans-serif;
+      font-size: 12px;
+      color: rgba(255,255,255,0.55);
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+    .header-back:hover { color: #fff; }
+
+    /* ---- Контент ---- */
+    .legal-main {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 28px 20px 8px;
+    }
+
+    .legal-title {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.2;
+      margin-bottom: 20px;
+    }
+
+    .legal-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 8px 24px;
+      max-width: 640px;
+    }
+
+    .legal-row {
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 16px;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .legal-row:last-child { border-bottom: none; }
+
+    .legal-row dt {
+      font-size: 13px;
+      color: var(--ink-3);
+    }
+
+    .legal-row dd {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--ink);
+      word-break: break-word;
+    }
+
+    .legal-row dd a {
+      color: var(--accent2);
+      text-decoration: none;
+    }
+    .legal-row dd a:hover { text-decoration: underline; }
+
+    .legal-h2 {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin: 28px 0 12px;
+      scroll-margin-top: 72px;
+    }
+    .legal-h2:first-of-type { margin-top: 0; }
+
+    .legal-row dd.text { font-weight: 400; line-height: 1.6; }
+    .legal-row dd.text p + p { margin-top: 8px; }
+    .legal-row { scroll-margin-top: 72px; }
+
+    .legal-note {
+      max-width: 640px;
+      margin-top: 14px;
+      font-size: 12px;
+      color: var(--ink-3);
+      line-height: 1.6;
+    }
+
+    @media (max-width: 560px) {
+      .legal-main { padding-top: 20px; }
+      .legal-title { font-size: 18px; }
+      .legal-card { padding: 4px 16px; }
+      .legal-row { grid-template-columns: 1fr; gap: 2px; padding: 12px 0; }
+    }
+
+    /* ---- Футер (как на главной) ---- */
+    .site-footer {
+      background: var(--ink);
+      margin-top: 32px;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 14px 20px;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    .footer-copy {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.4);
+    }
+    .footer-links {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px 16px;
+    }
+    .footer-link {
+      font-family: 'Onest', sans-serif;
+      font-size: 12px;
+      color: rgba(255,255,255,0.55);
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+    .footer-link:hover { color: #fff; }
+    .footer-legal {
+      flex: 0 0 100%;
+      margin-top: 4px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      font-family: 'Onest', sans-serif;
+      font-size: 11px;
+      line-height: 1.6;
+      color: rgba(255,255,255,0.35);
+    }
+    .footer-legal a { color: inherit; text-decoration: none; }
+    .footer-legal a:hover { color: rgba(255,255,255,0.7); }
+  </style>
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="logo" href="/">Banner<span class="logo-accent">Print</span></a>
+      <a class="header-back" href="/">← К конструктору</a>
+    </div>
+  </header>
+
+  <main class="legal-main">
+    <h1 class="legal-title">Реквизиты, оплата и возврат</h1>
+
+    <h2 class="legal-h2">Исполнитель и контакты</h2>
+    <dl class="legal-card">
+      <div class="legal-row">
+        <dt>Исполнитель</dt>
+        <dd>Деловеров Алексей Тагирович</dd>
+      </div>
+      <div class="legal-row">
+        <dt>Статус</dt>
+        <dd>Самозанятый (плательщик налога на профессиональный доход)</dd>
+      </div>
+      <div class="legal-row">
+        <dt>ИНН</dt>
+        <dd>381256259645</dd>
+      </div>
+      <div class="legal-row">
+        <dt>Телефон</dt>
+        <dd><a href="tel:+79140022777">+7 (914) 002-27-77</a></dd>
+      </div>
+      <div class="legal-row">
+        <dt>Электронная почта</dt>
+        <dd><a href="mailto:alex.deloverov@gmail.com">alex.deloverov@gmail.com</a></dd>
+      </div>
+      <div class="legal-row">
+        <dt>Сайт</dt>
+        <dd><a href="https://bannerbot.ru/">bannerbot.ru</a></dd>
+      </div>
+    </dl>
+
+    <h2 class="legal-h2" id="service">Услуга и оплата</h2>
+    <dl class="legal-card">
+      <div class="legal-row">
+        <dt>Услуга</dt>
+        <dd class="text">
+          <p>Онлайн-конструктор печатных баннеров. Вы выбираете размер (стандартный или произвольный от 100 до 3000 мм по каждой стороне), вводите текст, подбираете шрифт и цвета, проверяете превью и получаете готовый PDF-макет для передачи в типографию (цвета в CMYK).</p>
+          <p>Перед оплатой на экране проверки показывается итоговый текст и размер: PDF формируется строго по подтверждённым вами данным.</p>
+        </dd>
+      </div>
+      <div class="legal-row">
+        <dt>Стоимость</dt>
+        <dd class="text">
+          <p><strong>299 ₽</strong> за один PDF-макет, независимо от размера. НДС не облагается (самозанятый). При наличии действующего промокода цена снижается; сумма к оплате показывается в платёжной форме.</p>
+        </dd>
+      </div>
+      <div class="legal-row">
+        <dt>Оплата</dt>
+        <dd class="text">
+          <p>Онлайн через платёжный сервис ЮKassa — банковской картой и другими способами, доступными в платёжной форме. Реквизиты карты вводятся на стороне ЮKassa и на сайт не передаются.</p>
+        </dd>
+      </div>
+      <div class="legal-row">
+        <dt>Получение</dt>
+        <dd class="text">
+          <p>Автоматически, сразу после подтверждения оплаты: PDF скачивается в браузере. Ссылка на файл действует 15 минут и допускает до 3 скачиваний, поэтому при сбое можно повторить по той же ссылке. Услуга считается оказанной, когда файл выдан. Если ссылка истекла, а файл не получен — напишите нам (см. ниже).</p>
+        </dd>
+      </div>
+      <div class="legal-row" id="refund">
+        <dt>Возврат</dt>
+        <dd class="text">
+          <p>Услуга цифровая и оказывается сразу после оплаты. Перед оплатой проверьте текст, размер и цвета в превью: за корректно оказанную услугу, в том числе при ошибке в тексте, допущенной пользователем, возврат не производится.</p>
+          <p>Если после оплаты файл не получен, не открывается или повреждён, напишите на <a href="mailto:alex.deloverov@gmail.com">alex.deloverov@gmail.com</a> с указанием даты, времени и суммы платежа. Мы повторно предоставим файл либо вернём деньги тем же способом, которым была оплата. Обращение рассматривается в течение 10 календарных дней.</p>
+        </dd>
+      </div>
+    </dl>
+
+    <p class="legal-note">По вопросам оплаты и работы сервиса пишите на электронную почту или звоните по телефону.</p>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <span class="footer-copy">© 2026 BannerPrint</span>
+      <nav class="footer-links">
+        <a class="footer-link" href="/">Главная</a>
+        <a class="footer-link" href="/requisites.html">Реквизиты и оплата</a>
+        <a class="footer-link" href="https://t.me/ale007xd" target="_blank" rel="noopener">Связаться</a>
+        <a class="footer-link" href="/api/docs" target="_blank" rel="noopener">API</a>
+      </nav>
+      <div class="footer-legal">
+        Деловеров Алексей Тагирович · самозанятый · ИНН 381256259645 ·
+        <a href="mailto:alex.deloverov@gmail.com">alex.deloverov@gmail.com</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

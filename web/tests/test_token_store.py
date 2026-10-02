@@ -10,15 +10,19 @@ test_token_store.py
   - consume_token: истёкший токен → None
   - consume_token: несуществующий токен → None
   - cleanup_expired: удаляет просроченные и использованные
+  - peek_token / record_download: проверка без списания, лимит MAX_DOWNLOADS
 """
 
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from web.api.services.token_store import (
+    MAX_DOWNLOADS,
     cleanup_expired,
     consume_token,
     create_token,
+    peek_token,
+    record_download,
 )
 
 
@@ -150,3 +154,72 @@ class TestCleanupExpired:
         ).fetchone()[0]
         conn.close()
         assert remaining == 1
+
+
+def _token_row(db_path: str, token: str) -> sqlite3.Row:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT used, downloads FROM download_tokens WHERE token = ?", (token,)
+    ).fetchone()
+    conn.close()
+    return row
+
+
+class TestPeekToken:
+
+    def test_valid_token_returns_order_id_without_side_effects(self, init_test_db):
+        """peek_token не меняет состояние токена."""
+        _insert_order(init_test_db, "order-tk-030")
+        token = create_token("order-tk-030")
+        assert peek_token(token) == "order-tk-030"
+        assert peek_token(token) == "order-tk-030"
+        row = _token_row(init_test_db, token)
+        assert row["used"] == 0
+        assert row["downloads"] == 0
+
+    def test_expired_token_returns_none(self, init_test_db):
+        _insert_order(init_test_db, "order-tk-031")
+        token = _insert_expired_token(init_test_db, "order-tk-031")
+        assert peek_token(token) is None
+
+    def test_nonexistent_token_returns_none(self, init_test_db):
+        assert peek_token("b" * 64) is None
+
+
+class TestRecordDownload:
+
+    def test_first_download_counts_and_keeps_token_valid(self, init_test_db):
+        _insert_order(init_test_db, "order-tk-040")
+        token = create_token("order-tk-040")
+        assert record_download(token) is True
+        row = _token_row(init_test_db, token)
+        assert row["downloads"] == 1
+        assert row["used"] == 0
+        assert peek_token(token) == "order-tk-040"
+
+    def test_token_exhausted_after_max_downloads(self, init_test_db):
+        _insert_order(init_test_db, "order-tk-041")
+        token = create_token("order-tk-041")
+        for _ in range(MAX_DOWNLOADS):
+            assert record_download(token) is True
+        row = _token_row(init_test_db, token)
+        assert row["downloads"] == MAX_DOWNLOADS
+        assert row["used"] == 1
+        assert peek_token(token) is None
+
+    def test_download_over_limit_is_refused_and_not_counted(self, init_test_db):
+        _insert_order(init_test_db, "order-tk-042")
+        token = create_token("order-tk-042")
+        for _ in range(MAX_DOWNLOADS):
+            record_download(token)
+        assert record_download(token) is False
+        assert _token_row(init_test_db, token)["downloads"] == MAX_DOWNLOADS
+
+    def test_exhausted_token_is_cleaned_up(self, init_test_db):
+        _insert_order(init_test_db, "order-tk-043")
+        token = create_token("order-tk-043")
+        for _ in range(MAX_DOWNLOADS):
+            record_download(token)
+        assert cleanup_expired() >= 1
+        assert _token_row(init_test_db, token) is None

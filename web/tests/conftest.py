@@ -144,4 +144,5 @@ VALID_ORDER_PAYLOAD = {
     "text_color": "Черный",
     "font":       "Golos Text",
     "text_lines": [{"text": "Тест баннер", "scale": 1.0}],
+    "accept_terms": True,
 }

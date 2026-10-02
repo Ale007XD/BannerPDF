@@ -4,7 +4,9 @@ download.py
 GET /api/download/{token} — выдача PDF по одноразовому токену.
 
 Ограничение Nginx: 10 req/min/IP, burst=3 (защита от брутфорса токенов).
-Токен одноразовый, TTL 15 мин.
+Токен действует 15 мин и допускает до MAX_DOWNLOADS успешных выдач.
+Выдача фиксируется только после успешного рендера: сбой генерации или
+обрыв соединения не расходуют оплаченную ссылку.
 PDF рендерится в BytesIO — никаких файлов на диске.
 GS вызывается через ProcessPoolExecutor (CPU-bound).
 """
@@ -17,29 +19,30 @@ from fastapi.responses import Response
 
 from ..db import get_db
 from ..services.renderer import get_executor, render_pdf_sync
-from ..services.token_store import consume_token
+from ..services.token_store import peek_token, record_download
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+_TOKEN_INVALID_DETAIL = "Ссылка недействительна, истекла или исчерпан лимит скачиваний"
+
+
 @router.get("/download/{token}")
 async def download_pdf(token: str):
     """
-    Выдаёт PDF по одноразовому download-токену.
+    Выдаёт PDF по download-токену.
 
-    1. Валидирует и сжигает токен
+    1. Проверяет токен (peek_token) — без изменения состояния
     2. Достаёт config_json из web_orders (постоянное хранилище)
     3. Рендерит PDF через ProcessPoolExecutor (Ghostscript)
-    4. Отдаёт как attachment
+    4. Фиксирует выдачу (record_download) и отдаёт как attachment
+
+    Если шаг 3 упал — токен остаётся действительным, клиент может повторить.
     """
-    # Проверяем и сжигаем токен
-    order_id = consume_token(token)
+    order_id = peek_token(token)
     if order_id is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Токен недействителен, истёк или уже использован",
-        )
+        raise HTTPException(status_code=404, detail=_TOKEN_INVALID_DETAIL)
 
     # Читаем конфиг из web_orders (постоянное хранение)
     with get_db() as conn:
@@ -71,8 +74,16 @@ async def download_pdf(token: str):
         logger.error("download: ошибка рендеринга PDF для заказа %s: %s", order_id, e)
         raise HTTPException(
             status_code=500,
-            detail="Ошибка генерации PDF. Пожалуйста, обратитесь в поддержку.",
+            detail=(
+                "Ошибка генерации PDF. Ссылка осталась действительной — "
+                "попробуйте ещё раз или обратитесь в поддержку."
+            ),
         )
+
+    # Фиксируем выдачу только теперь, когда файл готов. False — лимит
+    # исчерпан параллельными запросами, пока шёл рендер.
+    if not record_download(token):
+        raise HTTPException(status_code=404, detail=_TOKEN_INVALID_DETAIL)
 
     size_key = row["size_key"].replace(".", "_")
     filename = f"banner_{size_key}_{order_id[:8]}.pdf"

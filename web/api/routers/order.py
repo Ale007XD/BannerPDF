@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..db import get_db
@@ -42,6 +42,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 SITE_PDF_PRICE = int(os.getenv("SITE_PDF_PRICE", "299"))
+
+# Редакция пользовательского соглашения (текст в frontend/index.html, #modal-terms).
+# Менять ВМЕСТЕ с текстом соглашения: версия сохраняется в заказе при акцепте.
+OFFER_VERSION = "2026-10-02"
+
+_MAX_UA_LEN = 300
 
 # Путь к templates.json (монтируется в /app/templates.json)
 TEMPLATES_PATH = os.getenv("TEMPLATES_PATH", "/app/templates.json")
@@ -146,6 +152,8 @@ class OrderRequest(BaseModel):
     height_mm:  Optional[int] = Field(None, ge=100, le=3000)
     ref_code:   Optional[str] = None
     promo_code: Optional[str] = None
+    # Явный акцепт на экране проверки макета (чекбокс «проверил(а), принимаю условия»)
+    accept_terms: bool = False
 
     @model_validator(mode="after")
     def check_size_xor(self):
@@ -173,6 +181,18 @@ class OrderRequest(BaseModel):
         if not re.match(r"^[A-Z0-9]{2,20}$", cleaned):
             raise ValueError("Некорректный формат промокода")
         return cleaned
+
+
+def _client_ip(request: Request) -> str:
+    """
+    IP клиента. API доступен только через nginx (порт 8000 не публикуется),
+    а nginx перезаписывает X-Real-IP значением $remote_addr, поэтому заголовку
+    можно доверять; request.client.host за прокси — адрес контейнера nginx.
+    """
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    if real_ip:
+        return real_ip[:64]
+    return request.client.host if request.client else "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +226,13 @@ async def get_templates():
 # POST /api/order
 # ---------------------------------------------------------------------------
 @router.post("/order")
-async def create_order(req: OrderRequest):
+async def create_order(req: OrderRequest, request: Request):
     """
     Создаёт заказ и возвращает данные для оплаты.
+
+    Требует accept_terms=true: пользователь на экране проверки макета подтвердил
+    текст/размер и принял соглашение. Время, IP, User-Agent и редакция
+    соглашения сохраняются в web_orders как доказательство акцепта.
 
     Платный флоу:
       1. Валидирует конфиг баннера
@@ -224,6 +248,12 @@ async def create_order(req: OrderRequest):
       6. Создаёт download_token (TTL 15 мин)
       7. Возвращает {order_id, amount_rub: 0, free: true, download_token}
     """
+    if not req.accept_terms:
+        raise HTTPException(
+            status_code=422,
+            detail="Подтвердите, что проверили макет, и примите условия соглашения",
+        )
+
     config = {
         "bg_color":   req.bg_color,
         "text_color": req.text_color,
@@ -273,13 +303,15 @@ async def create_order(req: OrderRequest):
     size_label = req.size_key or f"{req.width_mm}×{req.height_mm} мм"
     text_lines_list = [line.text for line in req.text_lines]
 
-    # Сохраняем заказ
+    # Сохраняем заказ вместе с фиксацией акцепта
+    now_iso = datetime.now(timezone.utc).isoformat()
     with get_db() as conn:
         conn.execute(
             """
             INSERT INTO web_orders
-              (id, amount_rub, size_key, ref_code, promo_code, config_json, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+              (id, amount_rub, size_key, ref_code, promo_code, config_json, status, created_at,
+               offer_version, accepted_at, accepted_ip, accepted_ua)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
             """,
             (
                 order_id,
@@ -288,7 +320,11 @@ async def create_order(req: OrderRequest):
                 req.ref_code,
                 applied_promo,
                 config_str,
-                datetime.now(timezone.utc).isoformat(),
+                now_iso,
+                OFFER_VERSION,
+                now_iso,
+                _client_ip(request),
+                request.headers.get("user-agent", "")[:_MAX_UA_LEN],
             ),
         )
 

@@ -41,7 +41,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Onest:wght@400;500;600&family=Golos+Text:wght@400;700&family=Tenor+Sans&family=Fira+Sans+Condensed:wght@800&family=PT+Sans+Narrow:wght@700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=12">
+  <link rel="stylesheet" href="style.css?v=13">
   <style>
     /* ---- Кастомный размер ---- */
     .custom-size-block {
@@ -164,7 +164,8 @@
     .footer-links {
       display: flex;
       align-items: center;
-      gap: 16px;
+      flex-wrap: wrap;
+      gap: 6px 16px;
     }
 
     .footer-link {
@@ -182,6 +183,26 @@
 
     .footer-link:hover {
       color: #fff;
+    }
+
+    .footer-legal {
+      flex: 0 0 100%;
+      margin-top: 4px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      font-family: 'Onest', sans-serif;
+      font-size: 11px;
+      line-height: 1.6;
+      color: rgba(255,255,255,0.35);
+    }
+
+    .footer-legal a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .footer-legal a:hover {
+      color: rgba(255,255,255,0.7);
     }
 
     /* ---- Модалка-документ ---- */
@@ -345,9 +366,14 @@
       <nav class="footer-links">
         <button class="footer-link" id="open-terms">Соглашение</button>
         <button class="footer-link" id="open-privacy">Конфиденциальность</button>
+        <a class="footer-link" href="/requisites.html">Реквизиты и оплата</a>
         <a class="footer-link" href="https://t.me/ale007xd" target="_blank" rel="noopener">Связаться</a>
         <a class="footer-link" href="/api/docs" target="_blank" rel="noopener">API</a>
       </nav>
+      <div class="footer-legal">
+        Деловеров Алексей Тагирович · самозанятый · ИНН 381256259645 ·
+        <a href="mailto:alex.deloverov@gmail.com">alex.deloverov@gmail.com</a>
+      </div>
     </div>
   </footer>
 
@@ -359,6 +385,7 @@
       <div class="modal-icon modal-icon--error">!</div>
       <div class="modal-title" id="error-title">Ошибка</div>
       <div class="modal-text" id="error-text"></div>
+      <button class="modal-btn modal-btn--accent hidden" id="error-retry">Скачать ещё раз</button>
       <button class="modal-btn" id="error-close">Закрыть</button>
     </div>
   </div>
@@ -386,18 +413,37 @@
     </div>
   </div>
 
+  <!-- Проверка макета перед оплатой (акцепт условий) -->
+  <div class="modal-overlay hidden" id="modal-confirm">
+    <div class="modal modal--confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div class="modal-title" id="confirm-title">Проверьте макет перед оплатой</div>
+      <div class="confirm-warn">PDF будет создан точно по этому тексту. Проверьте телефон, адрес и орфографию: после оплаты изменить текст нельзя.</div>
+      <div class="confirm-body">
+        <div class="confirm-lines" id="confirm-lines"></div>
+        <dl class="confirm-meta" id="confirm-meta"></dl>
+      </div>
+      <label class="confirm-check">
+        <input type="checkbox" id="confirm-check">
+        <span>Я проверил(а) текст и размер и принимаю условия
+          <button type="button" class="confirm-link" id="confirm-open-terms">пользовательского соглашения</button></span>
+      </label>
+      <button class="modal-btn modal-btn--accent" id="confirm-pay" disabled>Перейти к оплате</button>
+      <button class="modal-btn modal-btn--ghost" id="confirm-back">Вернуться к редактированию</button>
+    </div>
+  </div>
 
   <!-- Пользовательское соглашение -->
   <div class="modal-overlay hidden" id="modal-terms">
     <div class="modal modal--doc">
       <div class="modal-title">Пользовательское соглашение</div>
       <div class="modal-doc-body">
-        <p><strong>1.</strong> Сервис предоставляет инструмент для создания текстовых макетов баннеров.</p>
-        <p><strong>2.</strong> Пользователь самостоятельно вводит текст и несёт ответственность за его содержание.</p>
-        <p><strong>3.</strong> Сервис не гарантирует коммерческий результат (продажи, отклики и т.д.).</p>
-        <p><strong>4.</strong> Возврат средств не осуществляется — услуга является цифровой и выполняется мгновенно после оплаты.</p>
-        <p><strong>5.</strong> Сервис не собирает и не обрабатывает персональные данные пользователей. Работа осуществляется без регистрации и передачи личной информации.</p>
-        <p><strong>6.</strong> Используя сервис, пользователь соглашается с условиями данного соглашения.</p>
+        <p><strong>1.</strong> Сервис предоставляет инструмент для создания текстовых макетов баннеров в формате PDF. Редакция соглашения: 02.10.2026.</p>
+        <p><strong>2.</strong> Пользователь самостоятельно вводит текст и размеры и отвечает за их содержание и достоверность (телефоны, адреса, сайты, отсутствие опечаток), а также за соблюдение законодательства о рекламе и прав третьих лиц на используемые обозначения. Сервис не проверяет орфографию и смысл введённого текста; макет, созданный по введённым данным, считается созданным надлежащим образом.</p>
+        <p><strong>3.</strong> Перед оплатой Пользователь проверяет итоговый текст и размер на экране проверки и подтверждает их. PDF формируется строго по подтверждённым данным. Перед отправкой в печать Пользователь проверяет готовый PDF.</p>
+        <p><strong>4.</strong> Сервис не гарантирует коммерческий результат (продажи, отклики и т.д.).</p>
+        <p><strong>5.</strong> Услуга является цифровой и считается оказанной, когда PDF выдан Пользователю. Ссылка на файл действует 15 минут и допускает до 3 скачиваний. За корректно оказанную услугу, в том числе при ошибке во введённом тексте, возврат не производится. Если файл не получен или повреждён, Сервис повторно предоставит его либо вернёт деньги — <a href="/requisites.html#refund">условия возврата</a>.</p>
+        <p><strong>6.</strong> При оформлении заказа фиксируются время принятия условий, IP-адрес и данные браузера (User-Agent) — подробнее в разделе «Конфиденциальность».</p>
+        <p><strong>7.</strong> Ставя отметку на экране проверки и переходя к оплате, Пользователь принимает условия данного соглашения.</p>
       </div>
       <button class="modal-btn" id="terms-close">Понятно</button>
     </div>
@@ -408,10 +454,11 @@
     <div class="modal modal--doc">
       <div class="modal-title">Конфиденциальность</div>
       <div class="modal-doc-body">
-        <p>Сервис не собирает и не обрабатывает персональные данные пользователей.</p>
-        <p>Все действия выполняются без регистрации и без передачи личной информации. Для работы используются только технические данные, не позволяющие идентифицировать пользователя.</p>
-        <p>Что сохраняется при оформлении заказа: уникальный номер заказа, выбранный размер баннера, сумма оплаты. Эти данные не являются персональными и не позволяют установить личность пользователя.</p>
-        <p>Сервис не использует сторонние трекеры, рекламные системы и не передаёт какие-либо данные третьим лицам.</p>
+        <p>Оператор: Деловеров Алексей Тагирович (самозанятый), контакты — на странице <a href="/requisites.html">«Реквизиты и оплата»</a>. Регистрация на сайте не требуется, имя, телефон и адрес пользователя не запрашиваются.</p>
+        <p>При оформлении заказа сохраняются: номер заказа, размер, сумма, введённый текст макета, а также время принятия условий соглашения, IP-адрес и User-Agent браузера. Они нужны для выполнения заказа и подтверждения того, что условия были приняты, и хранятся вместе с данными заказа.</p>
+        <p>Оплата проводится через ЮKassa: платёжные данные вводятся на стороне платёжного сервиса и на сайт не передаются.</p>
+        <p>На сайте работает Яндекс.Метрика (в том числе Вебвизор): она использует cookie и собирает данные о посещениях и действиях на странице. Данные обрабатываются ООО «Яндекс» на условиях сервиса.</p>
+        <p>Запросить сведения об обработке своих данных или их удаление можно письмом на электронную почту из раздела «Реквизиты и оплата».</p>
       </div>
       <button class="modal-btn" id="privacy-close">Понятно</button>
     </div>
@@ -491,6 +538,6 @@
 
   <!-- SDK виджета ЮKassa -->
   <script src="https://yookassa.ru/checkout-widget/v1/checkout-widget.js"></script>
-  <script src="app.js?v=14"></script>
+  <script src="app.js?v=15"></script>
 </body>
 </html>

@@ -44,9 +44,29 @@ def get_db():
         conn.close()
 
 
+# Колонки, добавленные после первого релиза схемы: (таблица, колонка, DDL).
+# CREATE TABLE IF NOT EXISTS не меняет уже существующие таблицы, поэтому на
+# развёрнутой БД такие колонки добавляются через ALTER TABLE при старте.
+# Список только растёт, применение идемпотентно. Значения — константы кода.
+_COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("download_tokens", "downloads", "INTEGER NOT NULL DEFAULT 0"),
+    ("web_orders", "offer_version", "TEXT"),
+    ("web_orders", "accepted_at", "TEXT"),
+    ("web_orders", "accepted_ip", "TEXT"),
+    ("web_orders", "accepted_ua", "TEXT"),
+)
+
+
+def _apply_column_migrations(conn: sqlite3.Connection) -> None:
+    for table, column, ddl in _COLUMN_MIGRATIONS:
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
 def init_db() -> None:
     """
-    Инициализирует схему БД из schema.sql.
+    Инициализирует схему БД из schema.sql и донакатывает недостающие колонки.
     Вызывается из lifespan FastAPI при старте.
     Идемпотентна — безопасно вызывать при каждом запуске.
     """
@@ -57,6 +77,7 @@ def init_db() -> None:
     try:
         # Выполняем скрипт целиком (может содержать несколько операторов)
         conn.executescript(sql)
+        _apply_column_migrations(conn)
         conn.commit()
     finally:
         conn.close()
