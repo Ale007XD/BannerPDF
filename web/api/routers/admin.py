@@ -18,7 +18,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from ..db import get_db
-from ..routers.order import transition, OrderStatus
+from ..routers.order import OrderStatus, transition
 from ..services.api_key_store import create_api_key, deactivate_key, list_keys
 
 logger = logging.getLogger(__name__)

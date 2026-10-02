@@ -13,9 +13,8 @@ import io
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
 
 from ..services.api_key_store import increment_pdf_usage
 from ..services.batch_worker import get_job_status, get_job_zip_path, submit_job
