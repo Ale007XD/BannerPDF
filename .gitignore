@@ -1,0 +1,93 @@
+# --- Python ---
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+*.egg
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# PyCharm / IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environments
+.env
+.env.local
+.env.*.local
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
+.coverage.*.*
+coverage.xml
+*.cover
+*.py,cover
+
+# mypy / type checking
+.mypy_cache/
+.pytype/
+
+# pytest
+.pytest_cache/
+.cache
+
+# --- Docker ---
+# Docker volumes (если монтируете локально)
+data/
+volumes/
+
+# Docker build artifacts
+*.tar
+
+# Docker logs
+*.log
+
+# Docker Compose override (локальные настройки)
+docker-compose.override.yml
+
+# --- Общие ---
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Secrets / keys (явные файлы с секретами)
+*.pem
+*.key
+secrets/
