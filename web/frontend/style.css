@@ -1091,3 +1091,29 @@ body {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+
+/* =====================================================================
+   БЕСПЛАТНАЯ ПРАВКА ТЕКСТА
+   ===================================================================== */
+.amend-fields { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+
+.amend-fields input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 12px;
+  font: inherit;
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.amend-fields input:focus { outline: none; border-color: var(--accent); }
+
+.amend-error {
+  font-size: 13px;
+  color: #b3261e;
+  margin-bottom: 8px;
+}

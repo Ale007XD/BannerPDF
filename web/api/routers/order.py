@@ -26,7 +26,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -37,6 +37,7 @@ from ..services.order_store import save_pending
 from ..services.payment import create_payment
 from ..services.sanitizer import sanitize_text_lines, validate_banner_config
 from ..services.tg_notify import notify_new_order
+from ..services.token_store import create_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -45,9 +46,12 @@ SITE_PDF_PRICE = int(os.getenv("SITE_PDF_PRICE", "299"))
 
 # Редакция пользовательского соглашения (текст в frontend/index.html, #modal-terms).
 # Менять ВМЕСТЕ с текстом соглашения: версия сохраняется в заказе при акцепте.
-OFFER_VERSION = "2026-10-02"
+OFFER_VERSION = "2026-10-03"
 
 _MAX_UA_LEN = 300
+
+# Одна бесплатная правка текста оплаченного макета: окно от paid_at
+AMEND_WINDOW_HOURS = 24
 
 # Путь к templates.json (монтируется в /app/templates.json)
 TEMPLATES_PATH = os.getenv("TEMPLATES_PATH", "/app/templates.json")
@@ -470,3 +474,135 @@ async def payment_status(order_id: str):
             result["download_token"] = token_row["token"]
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Одна бесплатная правка текста: GET/POST /api/order/{order_id}/amend
+# ---------------------------------------------------------------------------
+# Идентификатор заказа (UUID4) — тот же секрет, по которому /payment/status
+# отдаёт download-токен, поэтому отдельной авторизации правка не вводит.
+# Правится ТОЛЬКО текст существующих строк: размер, шрифт, цвета, число строк
+# и масштаб остаются из оплаченного заказа, иначе «одна оплата» превратилась бы
+# в бесконечный генератор макетов.
+
+class AmendRequest(BaseModel):
+    # Те же границы длины строки, что у TextLine в POST /api/order
+    text_lines: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        ..., min_length=1, max_length=6
+    )
+
+
+def _load_amendable_order(order_id: str):
+    """
+    Возвращает строку заказа или кидает HTTPException с причиной отказа.
+    404 — нет заказа; 409 — не оплачен / правка уже использована; 410 — окно истекло.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status, paid_at, config_json, amended_at FROM web_orders WHERE id = ?",
+            (order_id,),
+        ).fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Заказ не найден")
+    if row["status"] not in (OrderStatus.PAID, OrderStatus.TOKEN_ISSUED) or not row["paid_at"]:
+        raise HTTPException(status_code=409, detail="Заказ не оплачен")
+    if row["amended_at"]:
+        raise HTTPException(status_code=409, detail="Бесплатная правка уже использована")
+
+    paid_at = datetime.fromisoformat(row["paid_at"])
+    if paid_at.tzinfo is None:
+        paid_at = paid_at.replace(tzinfo=timezone.utc)
+    deadline = paid_at + timedelta(hours=AMEND_WINDOW_HOURS)
+    if datetime.now(timezone.utc) > deadline:
+        raise HTTPException(
+            status_code=410,
+            detail=f"Срок бесплатной правки ({AMEND_WINDOW_HOURS} ч после оплаты) истёк",
+        )
+    return row, deadline
+
+
+@router.get("/order/{order_id}/amend")
+async def get_amend_info(order_id: str):
+    """Доступна ли правка и какой текст сейчас в макете (для предзаполнения формы)."""
+    row, deadline = _load_amendable_order(order_id)
+    config = json.loads(row["config_json"])
+    return {
+        "can_amend":  True,
+        "deadline":   deadline.isoformat(),
+        "text_lines": [line["text"] for line in config["text_lines"]],
+    }
+
+
+@router.post("/order/{order_id}/amend")
+async def amend_order(order_id: str, req: AmendRequest):
+    """
+    Заменяет текст строк оплаченного заказа (один раз, в течение 24 ч после оплаты)
+    и выдаёт новый download-токен.
+
+    Ответ: {"download_token": "...", "deadline": "..."}
+    """
+    row, deadline = _load_amendable_order(order_id)
+    original_json = row["config_json"]
+    config = json.loads(original_json)
+
+    old_lines = config["text_lines"]
+    if len(req.text_lines) != len(old_lines):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Число строк менять нельзя: в заказе их {len(old_lines)}",
+        )
+
+    new_lines = [
+        {"text": text, "scale": old["scale"]}
+        for text, old in zip(req.text_lines, old_lines, strict=True)
+    ]
+    new_config = {**config, "text_lines": new_lines}
+
+    errors = validate_banner_config(new_config)
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
+
+    sanitized = sanitize_text_lines(new_lines)
+    if len(sanitized) != len(old_lines):
+        raise HTTPException(status_code=422, detail="Строка не может быть пустой")
+    new_config["text_lines"] = sanitized
+
+    if [ln["text"] for ln in sanitized] == [ln["text"] for ln in old_lines]:
+        # Правка не расходуется, пока текст реально не изменён
+        raise HTTPException(status_code=422, detail="Текст не изменён")
+
+    new_json = json.dumps(new_config, ensure_ascii=False)
+
+    # Атомарно «занимаем» единственную правку: параллельный второй запрос получит rowcount=0
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE web_orders
+               SET amended_at = ?, original_config_json = ?, config_json = ?
+             WHERE id = ? AND amended_at IS NULL
+            """,
+            (datetime.now(timezone.utc).isoformat(), original_json, new_json, order_id),
+        )
+        claimed = cursor.rowcount == 1
+    if not claimed:
+        raise HTTPException(status_code=409, detail="Бесплатная правка уже использована")
+
+    try:
+        token = create_token(order_id)
+    except Exception:
+        # Токен не выдан — возвращаем правку, чтобы пользователь не потерял её зря
+        with get_db() as conn:
+            conn.execute(
+                """
+                UPDATE web_orders
+                   SET amended_at = NULL, original_config_json = NULL, config_json = ?
+                 WHERE id = ?
+                """,
+                (original_json, order_id),
+            )
+        logger.exception("Правка %s: не удалось выдать токен, правка отменена", order_id)
+        raise HTTPException(status_code=500, detail="Не удалось сформировать ссылку, попробуйте ещё раз")
+
+    logger.info("Правка текста применена: заказ %s", order_id)
+    return {"download_token": token, "deadline": deadline.isoformat()}

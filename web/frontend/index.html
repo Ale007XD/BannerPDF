@@ -41,7 +41,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Onest:wght@400;500;600&family=Golos+Text:wght@400;700&family=Tenor+Sans&family=Fira+Sans+Condensed:wght@800&family=PT+Sans+Narrow:wght@700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=13">
+  <link rel="stylesheet" href="style.css?v=14">
   <style>
     /* ---- Кастомный размер ---- */
     .custom-size-block {
@@ -366,6 +366,7 @@
       <nav class="footer-links">
         <button class="footer-link" id="open-terms">Соглашение</button>
         <button class="footer-link" id="open-privacy">Конфиденциальность</button>
+        <button class="footer-link hidden" id="open-amend">Исправить текст в заказе</button>
         <a class="footer-link" href="/requisites.html">Реквизиты и оплата</a>
         <a class="footer-link" href="https://t.me/ale007xd" target="_blank" rel="noopener">Связаться</a>
         <a class="footer-link" href="/api/docs" target="_blank" rel="noopener">API</a>
@@ -409,6 +410,7 @@
       <div class="modal-icon modal-icon--ok">✓</div>
       <div class="modal-title">Готово!</div>
       <div class="modal-text">PDF-файл скачивается.<br>Откройте его и передайте в типографию.</div>
+      <button class="modal-btn modal-btn--ghost hidden" id="amend-open">Нашли опечатку? Исправить текст (1 раз бесплатно)</button>
       <button class="modal-btn modal-btn--accent" id="success-close">Создать ещё</button>
     </div>
   </div>
@@ -417,7 +419,7 @@
   <div class="modal-overlay hidden" id="modal-confirm">
     <div class="modal modal--confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <div class="modal-title" id="confirm-title">Проверьте макет перед оплатой</div>
-      <div class="confirm-warn">PDF будет создан точно по этому тексту. Проверьте телефон, адрес и орфографию: после оплаты изменить текст нельзя.</div>
+      <div class="confirm-warn">PDF будет создан точно по этому тексту. Проверьте телефон, адрес и орфографию. После оплаты текст можно исправить один раз бесплатно в течение 24 часов, размер и цвета не меняются.</div>
       <div class="confirm-body">
         <div class="confirm-lines" id="confirm-lines"></div>
         <dl class="confirm-meta" id="confirm-meta"></dl>
@@ -432,16 +434,28 @@
     </div>
   </div>
 
+  <!-- Бесплатная правка текста оплаченного заказа -->
+  <div class="modal-overlay hidden" id="modal-amend">
+    <div class="modal modal--confirm" role="dialog" aria-modal="true" aria-labelledby="amend-title">
+      <div class="modal-title" id="amend-title">Исправить текст</div>
+      <div class="confirm-warn">Одна бесплатная правка в течение 24 часов после оплаты. Размер, шрифт, цвета и число строк не меняются. Исправленный PDF заменит прежний.</div>
+      <div class="confirm-body"><div class="amend-fields" id="amend-fields"></div></div>
+      <div class="amend-error hidden" id="amend-error"></div>
+      <button class="modal-btn modal-btn--accent" id="amend-submit">Сформировать исправленный PDF</button>
+      <button class="modal-btn modal-btn--ghost" id="amend-cancel">Отмена</button>
+    </div>
+  </div>
+
   <!-- Пользовательское соглашение -->
   <div class="modal-overlay hidden" id="modal-terms">
     <div class="modal modal--doc">
       <div class="modal-title">Пользовательское соглашение</div>
       <div class="modal-doc-body">
-        <p><strong>1.</strong> Сервис предоставляет инструмент для создания текстовых макетов баннеров в формате PDF. Редакция соглашения: 02.10.2026.</p>
+        <p><strong>1.</strong> Сервис предоставляет инструмент для создания текстовых макетов баннеров в формате PDF. Редакция соглашения: 03.10.2026.</p>
         <p><strong>2.</strong> Пользователь самостоятельно вводит текст и размеры и отвечает за их содержание и достоверность (телефоны, адреса, сайты, отсутствие опечаток), а также за соблюдение законодательства о рекламе и прав третьих лиц на используемые обозначения. Сервис не проверяет орфографию и смысл введённого текста; макет, созданный по введённым данным, считается созданным надлежащим образом.</p>
         <p><strong>3.</strong> Перед оплатой Пользователь проверяет итоговый текст и размер на экране проверки и подтверждает их. PDF формируется строго по подтверждённым данным. Перед отправкой в печать Пользователь проверяет готовый PDF.</p>
         <p><strong>4.</strong> Сервис не гарантирует коммерческий результат (продажи, отклики и т.д.).</p>
-        <p><strong>5.</strong> Услуга является цифровой и считается оказанной, когда PDF выдан Пользователю. Ссылка на файл действует 15 минут и допускает до 3 скачиваний. За корректно оказанную услугу, в том числе при ошибке во введённом тексте, возврат не производится. Если файл не получен или повреждён, Сервис повторно предоставит его либо вернёт деньги — <a href="/requisites.html#refund">условия возврата</a>.</p>
+        <p><strong>5.</strong> Услуга является цифровой и считается оказанной, когда PDF выдан Пользователю. Ссылка на файл действует 15 минут и допускает до 3 скачиваний. В течение 24 часов после оплаты Пользователь может один раз бесплатно изменить текст строк макета (размер, шрифт, цвета и число строк не меняются); исправленный файл выдаётся на тех же условиях. За корректно оказанную услугу, в том числе при ошибке во введённом тексте, возврат не производится. Если файл не получен или повреждён, Сервис повторно предоставит его либо вернёт деньги — <a href="/requisites.html#refund">условия возврата</a>.</p>
         <p><strong>6.</strong> При оформлении заказа фиксируются время принятия условий, IP-адрес и данные браузера (User-Agent) — подробнее в разделе «Конфиденциальность».</p>
         <p><strong>7.</strong> Ставя отметку на экране проверки и переходя к оплате, Пользователь принимает условия данного соглашения.</p>
       </div>
@@ -538,6 +552,6 @@
 
   <!-- SDK виджета ЮKassa -->
   <script src="https://yookassa.ru/checkout-widget/v1/checkout-widget.js"></script>
-  <script src="app.js?v=15"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>

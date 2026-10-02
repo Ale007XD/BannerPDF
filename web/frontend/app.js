@@ -17,6 +17,7 @@ const API = {
   templates: "/api/templates",
   preview:   "/api/preview",
   order:     "/api/order",
+  amend:     (id) => `/api/order/${id}/amend`,
   status:    (id) => `/api/payment/status/${id}`,
   download:  (token) => `/api/download/${token}`,
   refStats:  (code) => `/api/referral/stats/${code}`,
@@ -57,6 +58,7 @@ const state = {
 
   // Оплата
   orderId:   null,
+  amendUsed: false,   // бесплатная правка уже использована в этой сессии
   payUrl:    null,
 
   // Список имён цветов из шаблона (для защиты от совпадения)
@@ -107,6 +109,14 @@ const el = {
   errorText:    $("error-text"),
   errorClose:   $("error-close"),
   errorRetry:   $("error-retry"),
+
+  amendOpen:    $("amend-open"),
+  openAmend:    $("open-amend"),
+  modalAmend:   $("modal-amend"),
+  amendFields:  $("amend-fields"),
+  amendError:   $("amend-error"),
+  amendSubmit:  $("amend-submit"),
+  amendCancel:  $("amend-cancel"),
 
   modalWait:    $("modal-wait"),
   waitText:     $("wait-text"),
@@ -1028,6 +1038,8 @@ async function downloadPdf(token) {
     }, 1000);
 
     hideModal(el.modalWait);
+    rememberPaidOrder();
+    el.amendOpen.classList.toggle("hidden", !state.orderId || state.amendUsed);
     showModal(el.modalSuccess);
   } catch (e) {
     hideModal(el.modalWait);
@@ -1056,6 +1068,137 @@ async function downloadPdf(token) {
     );
   }
 }
+
+/* =====================================================================
+   БЕСПЛАТНАЯ ПРАВКА ТЕКСТА (1 раз, 24 ч после оплаты; лимиты проверяет сервер)
+   ===================================================================== */
+const AMEND_STORAGE_KEY = "bp_last_order";
+const AMEND_WINDOW_MS   = 24 * 60 * 60 * 1000;
+
+let amendOrderId = null;
+
+function readPaidOrder() {
+  try {
+    const raw = localStorage.getItem(AMEND_STORAGE_KEY);
+    if (!raw) return null;
+    const rec = JSON.parse(raw);
+    if (!rec.id || Date.now() - rec.ts > AMEND_WINDOW_MS) {
+      localStorage.removeItem(AMEND_STORAGE_KEY);
+      return null;
+    }
+    return rec;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Запоминает оплаченный заказ, чтобы ссылка «Исправить текст» жила в футере 24 ч. */
+function rememberPaidOrder() {
+  if (!state.orderId || state.amendUsed) return;
+  try {
+    localStorage.setItem(AMEND_STORAGE_KEY, JSON.stringify({ id: state.orderId, ts: Date.now() }));
+  } catch (_) { /* приватный режим — не критично */ }
+  syncAmendLink();
+}
+
+function forgetPaidOrder() {
+  try { localStorage.removeItem(AMEND_STORAGE_KEY); } catch (_) { /* noop */ }
+  syncAmendLink();
+}
+
+function syncAmendLink() {
+  el.openAmend.classList.toggle("hidden", !readPaidOrder());
+}
+
+function showAmendError(text) {
+  el.amendError.textContent = text || "";
+  el.amendError.classList.toggle("hidden", !text);
+}
+
+async function openAmend(orderId) {
+  try {
+    const resp = await fetch(API.amend(orderId));
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      // 404/409/410 — правка недоступна насовсем: убираем ссылку из футера
+      if ([404, 409, 410].includes(resp.status)) forgetPaidOrder();
+      showError("Исправить текст нельзя", body.detail || `Ошибка сервера ${resp.status}`);
+      return;
+    }
+
+    amendOrderId = orderId;
+    el.amendFields.replaceChildren(
+      ...body.text_lines.map((text, i) => {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.maxLength = 200;
+        input.value = text;                       // value, не innerHTML: ввод не интерпретируется как HTML
+        input.setAttribute("aria-label", `Строка ${i + 1}`);
+        return input;
+      })
+    );
+    showAmendError("");
+    el.amendSubmit.disabled = false;
+    hideModal(el.modalSuccess);
+    showModal(el.modalAmend);
+  } catch (e) {
+    showError("Не удалось открыть правку", e.message);
+  }
+}
+
+el.amendOpen.addEventListener("click", () => openAmend(state.orderId));
+el.openAmend.addEventListener("click", () => {
+  const rec = readPaidOrder();
+  if (rec) openAmend(rec.id);
+});
+el.amendCancel.addEventListener("click", () => hideModal(el.modalAmend));
+
+el.amendSubmit.addEventListener("click", async () => {
+  const lines = [...el.amendFields.querySelectorAll("input")].map((i) => i.value.trim());
+  if (lines.some((t) => !t)) {
+    showAmendError("Строка не может быть пустой.");
+    return;
+  }
+
+  el.amendSubmit.disabled = true;
+  showAmendError("");
+  try {
+    const resp = await fetch(API.amend(amendOrderId), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text_lines: lines }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      showAmendError(body.detail || `Ошибка сервера ${resp.status}`);
+      if ([404, 409, 410].includes(resp.status)) forgetPaidOrder();
+      el.amendSubmit.disabled = false;
+      return;
+    }
+
+    state.amendUsed = true;
+    state.orderId   = amendOrderId;
+    forgetPaidOrder();
+    hideModal(el.modalAmend);
+    showModal(el.modalWait);
+    el.waitText.textContent = "Формируем исправленный PDF...";
+    el.waitBar.style.width = "100%";
+    downloadPdf(body.download_token);
+  } catch (e) {
+    showAmendError(`Не удалось отправить: ${e.message}`);
+    el.amendSubmit.disabled = false;
+  }
+});
+
+syncAmendLink();
+
+// Ссылка вида /?amend=<order_id> (например, из ответа поддержки)
+(function checkAmendDeepLink() {
+  const id = new URLSearchParams(window.location.search).get("amend");
+  if (!id) return;
+  window.history.replaceState({}, "", window.location.pathname);
+  openAmend(id);
+})();
 
 el.successClose.addEventListener("click", () => {
   hideModal(el.modalSuccess);

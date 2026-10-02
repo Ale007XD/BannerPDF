@@ -4,6 +4,7 @@ test_db_migration.py
 init_db() донакатывает колонки на уже развёрнутой БД (старая схема).
 """
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -27,14 +28,12 @@ def _make_legacy_db(db_path: str) -> None:
         "    downloads  INTEGER NOT NULL DEFAULT 0  -- число успешных выдач PDF\n",
         "used       BOOLEAN NOT NULL DEFAULT FALSE\n",
     )
-    legacy_orders = legacy.replace(
-        "tg_message_id       INTEGER,              -- ID сообщения в TG для обновления статуса\n"
-        "    -- Акцепт условий на экране проверки макета (NULL у заказов до введения экрана)\n"
-        "    offer_version       TEXT,                 -- редакция соглашения (OFFER_VERSION в routers/order.py)\n"
-        "    accepted_at         TEXT,                 -- UTC, ISO 8601\n"
-        "    accepted_ip         TEXT,                 -- IP клиента (X-Real-IP от nginx)\n"
-        "    accepted_ua         TEXT                  -- User-Agent, обрезан до 300 символов\n",
-        "tg_message_id       INTEGER               -- ID сообщения в TG для обновления статуса\n",
+    legacy_orders = re.sub(
+        r"tg_message_id\s+INTEGER,\s+--[^\n]*\n.*?\n\);",
+        "tg_message_id       INTEGER               -- ID сообщения в TG для обновления статуса\n);",
+        legacy,
+        count=1,
+        flags=re.S,
     )
     assert legacy_orders != legacy, "шаблон legacy-схемы web_orders устарел"
     legacy = legacy_orders
@@ -71,13 +70,15 @@ def test_init_db_adds_missing_columns_and_keeps_data(tmp_db_path):
 def test_init_db_adds_acceptance_columns_to_web_orders(tmp_db_path):
     _make_legacy_db(tmp_db_path)
     before = _columns(tmp_db_path, "web_orders")
-    assert not {"offer_version", "accepted_at", "accepted_ip", "accepted_ua"} & before
+    assert not {"offer_version", "accepted_at", "accepted_ip", "accepted_ua",
+                "amended_at", "original_config_json"} & before
 
     init_db()
 
-    assert {"offer_version", "accepted_at", "accepted_ip", "accepted_ua"} <= _columns(
-        tmp_db_path, "web_orders"
-    )
+    assert {
+        "offer_version", "accepted_at", "accepted_ip", "accepted_ua",
+        "amended_at", "original_config_json",
+    } <= _columns(tmp_db_path, "web_orders")
     conn = sqlite3.connect(tmp_db_path)
     row = conn.execute(
         "SELECT offer_version, accepted_at FROM web_orders WHERE id = 'legacy-1'"

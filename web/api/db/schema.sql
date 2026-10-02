@@ -61,7 +61,10 @@ CREATE TABLE IF NOT EXISTS web_orders (
     offer_version       TEXT,                 -- редакция соглашения (OFFER_VERSION в routers/order.py)
     accepted_at         TEXT,                 -- UTC, ISO 8601
     accepted_ip         TEXT,                 -- IP клиента (X-Real-IP от nginx)
-    accepted_ua         TEXT                  -- User-Agent, обрезан до 300 символов
+    accepted_ua         TEXT,                 -- User-Agent, обрезан до 300 символов
+    -- Единственная бесплатная правка текста в течение AMEND_WINDOW_HOURS после оплаты
+    amended_at          TEXT,                 -- UTC; NOT NULL = правка использована
+    original_config_json TEXT                 -- config_json до правки (для разбора споров)
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_orders_status  ON web_orders(status);
