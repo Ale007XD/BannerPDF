@@ -17,6 +17,7 @@ banner_generator.py
 
 import io
 import logging
+import math
 import os
 import subprocess
 import tempfile
@@ -140,6 +141,77 @@ def _calculate_layout(
 # ---------------------------------------------------------------------------
 # JPEG-превью (Pillow, RGB)
 # ---------------------------------------------------------------------------
+# Диагональная надпись в превью: доля длины диагонали, доля стороны (запас от краёв), прозрачность
+_DIAG_WM_MAX_DIAG_FRACTION = 0.75
+_DIAG_WM_EDGE_FRACTION = 0.90
+_DIAG_WM_ALPHA = 105
+_DIAG_WM_STROKE_ALPHA = 105
+
+
+def _draw_diagonal_watermark(overlay: Image.Image, text: str, make_font) -> None:
+    """
+    Рисует надпись по диагонали баннера: от левого нижнего угла к правому верхнему.
+
+    Угол наклона = угол диагонали (atan2(h, w)), надпись центрирована по баннеру.
+    Размер шрифта подбирается так, чтобы повёрнутый текст целиком помещался
+    в баннер при любых пропорциях (в том числе узких кастомных размерах).
+
+    Белая заливка с тёмной обводкой читается на любом фоне, а alpha оставляет
+    сам макет различимым, чтобы пользователь мог вычитать свой текст.
+
+    overlay   — RGBA-слой размера баннера, рисуется на месте
+    make_font — функция size -> ImageFont (шрифт передаётся снаружи)
+    """
+    w_px, h_px = overlay.size
+    theta = math.atan2(h_px, w_px)
+    cos_t, sin_t = math.cos(theta), math.sin(theta)
+    diag = math.hypot(w_px, h_px)
+
+    # Размеры текста линейны по кегле: меряем на эталонном и масштабируем.
+    ref_size = 100
+    ref_font = make_font(ref_size)
+    probe = ImageDraw.Draw(Image.new("L", (1, 1)))
+    bb = probe.textbbox((0, 0), text, font=ref_font)
+    ref_w, ref_h = bb[2] - bb[0], bb[3] - bb[1]
+    if ref_w <= 0 or ref_h <= 0:
+        return
+
+    # Три ограничения на кегль: длина вдоль диагонали и габариты повёрнутого текста.
+    size = min(
+        _DIAG_WM_MAX_DIAG_FRACTION * diag / ref_w,
+        _DIAG_WM_EDGE_FRACTION * w_px / (ref_w * cos_t + ref_h * sin_t),
+        _DIAG_WM_EDGE_FRACTION * h_px / (ref_w * sin_t + ref_h * cos_t),
+    ) * ref_size
+    size = max(8, int(size))
+
+    fnt = make_font(size)
+    stroke = max(1, size // 18)
+    bb = probe.textbbox((0, 0), text, font=fnt, stroke_width=stroke)
+    tw, th = bb[2] - bb[0], bb[3] - bb[1]
+
+    layer = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
+    ImageDraw.Draw(layer).text(
+        (-bb[0], -bb[1]),
+        text,
+        font=fnt,
+        fill=(255, 255, 255, _DIAG_WM_ALPHA),
+        stroke_width=stroke,
+        stroke_fill=(0, 0, 0, _DIAG_WM_STROKE_ALPHA),
+    )
+
+    # PIL.rotate вращает против часовой: базовая линия текста идёт из левого нижнего в правый верхний.
+    rotated = layer.rotate(math.degrees(theta), expand=True, resample=Image.BICUBIC)
+
+    # Центрируем по реальным пикселям надписи, а не по рамке слоя: у строки с выносными
+    # элементами (б, д, у) рамка шире «чернил», и надпись иначе съезжала бы вниз.
+    ink = rotated.getchannel("A").getbbox()
+    if ink is None:
+        return
+    x = w_px // 2 - (ink[0] + ink[2]) // 2
+    y = h_px // 2 - (ink[1] + ink[3]) // 2
+    overlay.alpha_composite(rotated, (max(0, x), max(0, y)))
+
+
 def create_preview_jpeg(data: dict) -> io.BytesIO:
     """
     Создаёт JPEG-превью баннера для отображения на сайте.
@@ -205,7 +277,8 @@ def create_preview_jpeg(data: dict) -> io.BytesIO:
         y_cursor += d["height"] + padding
 
     # --- Вотермарка ---
-    # Плашка «Сделано за 3 минуты в <сайт>» в правом нижнем углу.
+    # Плашка «Сделано за 3 минуты в <сайт>» в правом нижнем углу
+    # + та же надпись по диагонали (см. _draw_diagonal_watermark).
     # Ширина ≈ 1/4 ширины баннера; шрифт подбирается по ширине плашки.
     # Фон: чёрный полупрозрачный; для чёрного фона — белый полупрозрачный.
     wm_text = f"Сделано за 3 минуты в {SITE_BASE_URL}"
@@ -254,6 +327,10 @@ def create_preview_jpeg(data: dict) -> io.BytesIO:
     tx = plate_x + wm_pad_x - wm_bb[0]
     ty = plate_y + wm_pad_y - wm_bb[1]
     ov_draw.text((tx, ty), wm_text, font=wm_fnt, fill=text_fill)
+
+    # Диагональная надпись поверх макета (защита превью от использования вместо оплаты)
+    _draw_diagonal_watermark(overlay, wm_text, lambda sz: ImageFont.truetype(wm_font_path, sz))
+
     image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
 
     buf = io.BytesIO()
