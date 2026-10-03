@@ -8,6 +8,7 @@ GET  /api/admin/stats  — сводная статистика
 GET  /api/admin/orders — список заказов с пагинацией
 """
 
+import json
 import logging
 import os
 import secrets
@@ -18,7 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from ..db import get_db
-from ..routers.order import OrderStatus, transition
+from ..routers.order import AMEND_WINDOW_HOURS, OrderStatus, transition
 from ..services.api_key_store import create_api_key, deactivate_key, list_keys
 
 logger = logging.getLogger(__name__)
@@ -217,6 +218,131 @@ async def force_token(order_id: str):
     Каждый вызов логируется. Выдача невозможна для expired-заказов.
     """
     return await do_force_token(order_id)
+
+
+# ---------------------------------------------------------------------------
+# Аудит заказа: доказательная база для разбора споров и чарджбэков
+# ---------------------------------------------------------------------------
+
+def _parse_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    dt = datetime.fromisoformat(value)
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _lines_of(config_json: str | None) -> list[str] | None:
+    """Тексты строк из config_json; None, если конфига нет или он битый."""
+    if not config_json:
+        return None
+    try:
+        return [line["text"] for line in json.loads(config_json)["text_lines"]]
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _build_audit(order_id: str) -> dict:
+    """
+    Сводка по заказу: что и когда принял пользователь, какой текст был оплачен и
+    исправлен, сколько раз и по каким ссылкам выдавался файл.
+    Токены целиком не возвращаются (это ключ к PDF) — только префикс.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT id, status, amount_rub, size_key, promo_code, ref_code, created_at, paid_at,
+                   yookassa_payment_id, config_json, offer_version, accepted_at, accepted_ip,
+                   accepted_ua, amended_at, original_config_json
+            FROM web_orders WHERE id = ?
+            """,
+            (order_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Заказ {order_id} не найден")
+
+        tokens = conn.execute(
+            """
+            SELECT token, expires_at, used, downloads
+            FROM download_tokens WHERE order_id = ?
+            ORDER BY expires_at DESC
+            """,
+            (order_id,),
+        ).fetchall()
+
+    now = datetime.now(timezone.utc)
+    paid_at = _parse_utc(row["paid_at"])
+    window_ends = paid_at + timedelta(hours=AMEND_WINDOW_HOURS) if paid_at else None
+    total_downloads = sum(t["downloads"] for t in tokens)
+
+    return {
+        "order": {
+            "id":                  row["id"],
+            "status":              row["status"],
+            "amount_rub":          row["amount_rub"],
+            "size_key":            row["size_key"],
+            "promo_code":          row["promo_code"],
+            "ref_code":            row["ref_code"],
+            "created_at":          row["created_at"],
+            "paid_at":             row["paid_at"],
+            "yookassa_payment_id": row["yookassa_payment_id"],
+        },
+        "acceptance": {
+            # False у заказов до введения экрана проверки макета
+            "recorded":      row["accepted_at"] is not None,
+            "offer_version": row["offer_version"],
+            "accepted_at":   row["accepted_at"],
+            "ip":            row["accepted_ip"],
+            "user_agent":    row["accepted_ua"],
+        },
+        "content": {
+            "text_lines":          _lines_of(row["config_json"]),
+            "original_text_lines": _lines_of(row["original_config_json"]),
+            "amended_at":          row["amended_at"],
+        },
+        "amend": {
+            "used":           row["amended_at"] is not None,
+            "window_ends_at": window_ends.isoformat() if window_ends else None,
+            "available": (
+                row["amended_at"] is None
+                and window_ends is not None
+                and now <= window_ends
+                and row["status"] in (OrderStatus.PAID, OrderStatus.TOKEN_ISSUED)
+            ),
+        },
+        "delivery": {
+            "delivered":       total_downloads > 0,
+            "total_downloads": total_downloads,
+            "tokens": [
+                {
+                    "token_prefix": t["token"][:8] + "…",
+                    "expires_at":   t["expires_at"],
+                    "expired":      _parse_utc(t["expires_at"]) < now,
+                    "downloads":    t["downloads"],
+                    "exhausted":    bool(t["used"]),
+                }
+                for t in tokens
+            ],
+        },
+    }
+
+
+@router.get("/admin/order/{order_id}/audit", dependencies=[Depends(require_admin)])
+async def admin_order_audit(order_id: str):
+    """Аудит заказа по нашему order_id: акцепт, текст до/после правки, история выдач."""
+    return _build_audit(order_id)
+
+
+@router.get("/admin/audit/by-payment/{payment_id}", dependencies=[Depends(require_admin)])
+async def admin_audit_by_payment(payment_id: str):
+    """То же по ID платежа ЮKassa — с ним приходит запрос на документы по диспуту."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM web_orders WHERE yookassa_payment_id = ?",
+            (payment_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Платёж {payment_id} не найден")
+    return _build_audit(row["id"])
 
 
 # ---------------------------------------------------------------------------

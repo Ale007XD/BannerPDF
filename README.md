@@ -147,7 +147,7 @@ BannerPDF/
 │   │   │   ├── payment.py        # POST /api/payment/callback (ЮКасса, активный)
 │   │   │   ├── payment_selfwork.py  # POST /api/payment/callback (Selfwork, запасной)
 │   │   │   ├── download.py       # GET /api/download/{token}
-│   │   │   ├── admin.py          # stats|orders|funnel + force_token
+│   │   │   ├── admin.py          # stats|orders|funnel + force_token + order audit
 │   │   │   ├── referral.py       # Реферальная программа
 │   │   │   ├── corp_api.py       # Корп. API (Trial + платные тарифы)
 │   │   │   ├── batch.py          # Batch-рендер

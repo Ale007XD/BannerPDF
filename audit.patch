@@ -1,0 +1,402 @@
+diff --git a/README.md b/README.md
+index 2ad0880..d42b1f0 100644
+--- a/README.md
++++ b/README.md
+@@ -147,7 +147,7 @@ BannerPDF/
+ │   │   │   ├── payment.py        # POST /api/payment/callback (ЮКасса, активный)
+ │   │   │   ├── payment_selfwork.py  # POST /api/payment/callback (Selfwork, запасной)
+ │   │   │   ├── download.py       # GET /api/download/{token}
+-│   │   │   ├── admin.py          # stats|orders|funnel + force_token
++│   │   │   ├── admin.py          # stats|orders|funnel + force_token + order audit
+ │   │   │   ├── referral.py       # Реферальная программа
+ │   │   │   ├── corp_api.py       # Корп. API (Trial + платные тарифы)
+ │   │   │   ├── batch.py          # Batch-рендер
+diff --git a/web/api/routers/admin.py b/web/api/routers/admin.py
+index 188e393..c0b9c91 100644
+--- a/web/api/routers/admin.py
++++ b/web/api/routers/admin.py
+@@ -8,6 +8,7 @@ GET  /api/admin/stats  — сводная статистика
+ GET  /api/admin/orders — список заказов с пагинацией
+ """
+ 
++import json
+ import logging
+ import os
+ import secrets
+@@ -18,7 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+ from pydantic import BaseModel
+ 
+ from ..db import get_db
+-from ..routers.order import OrderStatus, transition
++from ..routers.order import AMEND_WINDOW_HOURS, OrderStatus, transition
+ from ..services.api_key_store import create_api_key, deactivate_key, list_keys
+ 
+ logger = logging.getLogger(__name__)
+@@ -219,6 +220,131 @@ async def force_token(order_id: str):
+     return await do_force_token(order_id)
+ 
+ 
++# ---------------------------------------------------------------------------
++# Аудит заказа: доказательная база для разбора споров и чарджбэков
++# ---------------------------------------------------------------------------
++
++def _parse_utc(value: str | None) -> datetime | None:
++    if not value:
++        return None
++    dt = datetime.fromisoformat(value)
++    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
++
++
++def _lines_of(config_json: str | None) -> list[str] | None:
++    """Тексты строк из config_json; None, если конфига нет или он битый."""
++    if not config_json:
++        return None
++    try:
++        return [line["text"] for line in json.loads(config_json)["text_lines"]]
++    except (ValueError, KeyError, TypeError):
++        return None
++
++
++def _build_audit(order_id: str) -> dict:
++    """
++    Сводка по заказу: что и когда принял пользователь, какой текст был оплачен и
++    исправлен, сколько раз и по каким ссылкам выдавался файл.
++    Токены целиком не возвращаются (это ключ к PDF) — только префикс.
++    """
++    with get_db() as conn:
++        row = conn.execute(
++            """
++            SELECT id, status, amount_rub, size_key, promo_code, ref_code, created_at, paid_at,
++                   yookassa_payment_id, config_json, offer_version, accepted_at, accepted_ip,
++                   accepted_ua, amended_at, original_config_json
++            FROM web_orders WHERE id = ?
++            """,
++            (order_id,),
++        ).fetchone()
++        if row is None:
++            raise HTTPException(status_code=404, detail=f"Заказ {order_id} не найден")
++
++        tokens = conn.execute(
++            """
++            SELECT token, expires_at, used, downloads
++            FROM download_tokens WHERE order_id = ?
++            ORDER BY expires_at DESC
++            """,
++            (order_id,),
++        ).fetchall()
++
++    now = datetime.now(timezone.utc)
++    paid_at = _parse_utc(row["paid_at"])
++    window_ends = paid_at + timedelta(hours=AMEND_WINDOW_HOURS) if paid_at else None
++    total_downloads = sum(t["downloads"] for t in tokens)
++
++    return {
++        "order": {
++            "id":                  row["id"],
++            "status":              row["status"],
++            "amount_rub":          row["amount_rub"],
++            "size_key":            row["size_key"],
++            "promo_code":          row["promo_code"],
++            "ref_code":            row["ref_code"],
++            "created_at":          row["created_at"],
++            "paid_at":             row["paid_at"],
++            "yookassa_payment_id": row["yookassa_payment_id"],
++        },
++        "acceptance": {
++            # False у заказов до введения экрана проверки макета
++            "recorded":      row["accepted_at"] is not None,
++            "offer_version": row["offer_version"],
++            "accepted_at":   row["accepted_at"],
++            "ip":            row["accepted_ip"],
++            "user_agent":    row["accepted_ua"],
++        },
++        "content": {
++            "text_lines":          _lines_of(row["config_json"]),
++            "original_text_lines": _lines_of(row["original_config_json"]),
++            "amended_at":          row["amended_at"],
++        },
++        "amend": {
++            "used":           row["amended_at"] is not None,
++            "window_ends_at": window_ends.isoformat() if window_ends else None,
++            "available": (
++                row["amended_at"] is None
++                and window_ends is not None
++                and now <= window_ends
++                and row["status"] in (OrderStatus.PAID, OrderStatus.TOKEN_ISSUED)
++            ),
++        },
++        "delivery": {
++            "delivered":       total_downloads > 0,
++            "total_downloads": total_downloads,
++            "tokens": [
++                {
++                    "token_prefix": t["token"][:8] + "…",
++                    "expires_at":   t["expires_at"],
++                    "expired":      _parse_utc(t["expires_at"]) < now,
++                    "downloads":    t["downloads"],
++                    "exhausted":    bool(t["used"]),
++                }
++                for t in tokens
++            ],
++        },
++    }
++
++
++@router.get("/admin/order/{order_id}/audit", dependencies=[Depends(require_admin)])
++async def admin_order_audit(order_id: str):
++    """Аудит заказа по нашему order_id: акцепт, текст до/после правки, история выдач."""
++    return _build_audit(order_id)
++
++
++@router.get("/admin/audit/by-payment/{payment_id}", dependencies=[Depends(require_admin)])
++async def admin_audit_by_payment(payment_id: str):
++    """То же по ID платежа ЮKassa — с ним приходит запрос на документы по диспуту."""
++    with get_db() as conn:
++        row = conn.execute(
++            "SELECT id FROM web_orders WHERE yookassa_payment_id = ?",
++            (payment_id,),
++        ).fetchone()
++    if row is None:
++        raise HTTPException(status_code=404, detail=f"Платёж {payment_id} не найден")
++    return _build_audit(row["id"])
++
++
+ # ---------------------------------------------------------------------------
+ # Управление корп. API-ключами
+ # ---------------------------------------------------------------------------
+diff --git a/web/tests/test_admin_audit.py b/web/tests/test_admin_audit.py
+new file mode 100644
+index 0000000..d41783e
+--- /dev/null
++++ b/web/tests/test_admin_audit.py
+@@ -0,0 +1,230 @@
++"""
++test_admin_audit.py
++~~~~~~~~~~~~~~~~~~~
++GET /api/admin/order/{id}/audit и GET /api/admin/audit/by-payment/{payment_id}.
++
++Покрывает:
++  - авторизация: без токена / с чужим токеном нельзя
++  - полный заказ: акцепт (версия, время, IP, UA), оплата, платёж ЮKassa
++  - правка: текущий и оригинальный текст, окно правки
++  - выдача: счётчики скачиваний, истёкшие/исчерпанные токены, токен не раскрывается целиком
++  - старый заказ без акцепта: recorded=false, без ошибок
++  - поиск по ID платежа ЮKassa
++  - 404 для неизвестного заказа/платежа
++"""
++
++import json
++import sqlite3
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++CONFIG = {
++    "size_key":   "1x0.5",
++    "bg_color":   "Белый",
++    "text_color": "Черный",
++    "font":       "Golos Text",
++    "text_lines": [{"text": "Аренда склада", "scale": 1.0}, {"text": "+7 914 000-00-00", "scale": 0.8}],
++}
++ORIGINAL = {**CONFIG, "text_lines": [{"text": "Аренда склада", "scale": 1.0}, {"text": "+7 914 000-00-0O", "scale": 0.8}]}
++
++FULL_TOKEN_A = "a1b2c3d4" + "0" * 56   # исчерпан (3 скачивания)
++FULL_TOKEN_B = "e5f6a7b8" + "1" * 56   # живой, 1 скачивание
++
++
++def _iso(delta: timedelta = timedelta()) -> str:
++    return (datetime.now(timezone.utc) + delta).isoformat()
++
++
++def _insert_order(db_path: str, order_id: str, **over) -> None:
++    row = {
++        "status": "token_issued",
++        "paid_at": _iso(-timedelta(hours=1)),
++        "yookassa_payment_id": f"yk-{order_id}",
++        "config_json": json.dumps(CONFIG, ensure_ascii=False),
++        "offer_version": "2026-10-03",
++        "accepted_at": _iso(-timedelta(hours=1, minutes=5)),
++        "accepted_ip": "203.0.113.7",
++        "accepted_ua": "TestBrowser/1.0",
++        "amended_at": None,
++        "original_config_json": None,
++        **over,
++    }
++    conn = sqlite3.connect(db_path)
++    conn.execute(
++        """
++        INSERT INTO web_orders
++          (id, amount_rub, size_key, promo_code, ref_code, config_json, status, created_at, paid_at,
++           yookassa_payment_id, offer_version, accepted_at, accepted_ip, accepted_ua,
++           amended_at, original_config_json)
++        VALUES (?, 299, '1x0.5', NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++        """,
++        (order_id, row["config_json"], row["status"], _iso(-timedelta(hours=2)), row["paid_at"],
++         row["yookassa_payment_id"], row["offer_version"], row["accepted_at"], row["accepted_ip"],
++         row["accepted_ua"], row["amended_at"], row["original_config_json"]),
++    )
++    conn.commit()
++    conn.close()
++
++
++def _insert_token(db_path: str, token: str, order_id: str, expires: timedelta, used: bool, downloads: int) -> None:
++    conn = sqlite3.connect(db_path)
++    conn.execute(
++        "INSERT INTO download_tokens (token, order_id, expires_at, used, downloads) VALUES (?, ?, ?, ?, ?)",
++        (token, order_id, _iso(expires), used, downloads),
++    )
++    conn.commit()
++    conn.close()
++
++
++def _auth() -> dict:
++    from web.api.routers import admin
++    return {"Authorization": f"Bearer {admin.ADMIN_TOKEN}"}
++
++
++class TestAuth:
++
++    @pytest.mark.asyncio
++    async def test_no_token_rejected(self, client, init_test_db):
++        _insert_order(init_test_db, "au-001")
++        resp = await client.get("/api/admin/order/au-001/audit")
++        assert resp.status_code in (401, 403)
++
++    @pytest.mark.asyncio
++    async def test_wrong_token_rejected(self, client, init_test_db):
++        _insert_order(init_test_db, "au-002")
++        resp = await client.get(
++            "/api/admin/order/au-002/audit", headers={"Authorization": "Bearer nope"}
++        )
++        assert resp.status_code == 403
++
++    @pytest.mark.asyncio
++    async def test_by_payment_requires_token_too(self, client, init_test_db):
++        _insert_order(init_test_db, "au-003")
++        resp = await client.get("/api/admin/audit/by-payment/yk-au-003")
++        assert resp.status_code in (401, 403)
++
++
++class TestAuditContent:
++
++    @pytest.mark.asyncio
++    async def test_full_order_report(self, client, init_test_db):
++        _insert_order(init_test_db, "au-010")
++        resp = await client.get("/api/admin/order/au-010/audit", headers=_auth())
++        assert resp.status_code == 200
++        body = resp.json()
++
++        assert body["order"]["id"] == "au-010"
++        assert body["order"]["status"] == "token_issued"
++        assert body["order"]["yookassa_payment_id"] == "yk-au-010"
++        assert body["acceptance"] == {
++            "recorded":      True,
++            "offer_version": "2026-10-03",
++            "accepted_at":   body["acceptance"]["accepted_at"],
++            "ip":            "203.0.113.7",
++            "user_agent":    "TestBrowser/1.0",
++        }
++        assert body["content"]["text_lines"] == ["Аренда склада", "+7 914 000-00-00"]
++        assert body["content"]["original_text_lines"] is None
++        assert body["amend"]["used"] is False
++        assert body["amend"]["available"] is True
++
++    @pytest.mark.asyncio
++    async def test_amended_order_shows_both_texts(self, client, init_test_db):
++        _insert_order(
++            init_test_db, "au-011",
++            config_json=json.dumps(CONFIG, ensure_ascii=False),
++            original_config_json=json.dumps(ORIGINAL, ensure_ascii=False),
++            amended_at=_iso(-timedelta(minutes=30)),
++        )
++        body = (await client.get("/api/admin/order/au-011/audit", headers=_auth())).json()
++        assert body["content"]["original_text_lines"] == ["Аренда склада", "+7 914 000-00-0O"]
++        assert body["content"]["text_lines"] == ["Аренда склада", "+7 914 000-00-00"]
++        assert body["content"]["amended_at"] is not None
++        assert body["amend"] == {
++            "used": True,
++            "window_ends_at": body["amend"]["window_ends_at"],
++            "available": False,
++        }
++
++    @pytest.mark.asyncio
++    async def test_amend_window_closed_after_24h(self, client, init_test_db):
++        _insert_order(init_test_db, "au-012", paid_at=_iso(-timedelta(hours=30)))
++        body = (await client.get("/api/admin/order/au-012/audit", headers=_auth())).json()
++        assert body["amend"]["used"] is False
++        assert body["amend"]["available"] is False
++
++    @pytest.mark.asyncio
++    async def test_legacy_order_without_acceptance(self, client, init_test_db):
++        _insert_order(
++            init_test_db, "au-013",
++            offer_version=None, accepted_at=None, accepted_ip=None, accepted_ua=None,
++        )
++        body = (await client.get("/api/admin/order/au-013/audit", headers=_auth())).json()
++        assert body["acceptance"]["recorded"] is False
++        assert body["acceptance"]["ip"] is None
++
++    @pytest.mark.asyncio
++    async def test_unpaid_order_has_no_amend_window(self, client, init_test_db):
++        _insert_order(init_test_db, "au-014", status="pending", paid_at=None)
++        body = (await client.get("/api/admin/order/au-014/audit", headers=_auth())).json()
++        assert body["amend"]["window_ends_at"] is None
++        assert body["amend"]["available"] is False
++        assert body["delivery"] == {"delivered": False, "total_downloads": 0, "tokens": []}
++
++
++class TestAuditDelivery:
++
++    @pytest.mark.asyncio
++    async def test_tokens_counted_and_masked(self, client, init_test_db):
++        _insert_order(init_test_db, "au-020")
++        _insert_token(init_test_db, FULL_TOKEN_A, "au-020", -timedelta(minutes=40), True, 3)
++        _insert_token(init_test_db, FULL_TOKEN_B, "au-020", timedelta(minutes=10), False, 1)
++
++        resp = await client.get("/api/admin/order/au-020/audit", headers=_auth())
++        body = resp.json()
++        delivery = body["delivery"]
++
++        assert delivery["delivered"] is True
++        assert delivery["total_downloads"] == 4
++        by_prefix = {t["token_prefix"]: t for t in delivery["tokens"]}
++        assert by_prefix["a1b2c3d4…"]["exhausted"] is True
++        assert by_prefix["a1b2c3d4…"]["expired"] is True
++        assert by_prefix["a1b2c3d4…"]["downloads"] == 3
++        assert by_prefix["e5f6a7b8…"]["exhausted"] is False
++        assert by_prefix["e5f6a7b8…"]["expired"] is False
++
++        # Полный токен — ключ к PDF — в ответ попадать не должен
++        assert FULL_TOKEN_A not in resp.text
++        assert FULL_TOKEN_B not in resp.text
++
++    @pytest.mark.asyncio
++    async def test_issued_but_never_downloaded(self, client, init_test_db):
++        _insert_order(init_test_db, "au-021")
++        _insert_token(init_test_db, FULL_TOKEN_B, "au-021", timedelta(minutes=10), False, 0)
++        delivery = (await client.get("/api/admin/order/au-021/audit", headers=_auth())).json()["delivery"]
++        assert delivery["delivered"] is False
++        assert delivery["total_downloads"] == 0
++        assert len(delivery["tokens"]) == 1
++
++
++class TestLookup:
++
++    @pytest.mark.asyncio
++    async def test_unknown_order_404(self, client):
++        resp = await client.get("/api/admin/order/nope/audit", headers=_auth())
++        assert resp.status_code == 404
++
++    @pytest.mark.asyncio
++    async def test_by_payment_finds_order(self, client, init_test_db):
++        _insert_order(init_test_db, "au-030", yookassa_payment_id="2f0b1c3e-000f-5000-8000-1d2e3f4a5b6c")
++        resp = await client.get(
++            "/api/admin/audit/by-payment/2f0b1c3e-000f-5000-8000-1d2e3f4a5b6c", headers=_auth()
++        )
++        assert resp.status_code == 200
++        assert resp.json()["order"]["id"] == "au-030"
++
++    @pytest.mark.asyncio
++    async def test_by_payment_unknown_404(self, client):
++        resp = await client.get("/api/admin/audit/by-payment/unknown-payment", headers=_auth())
++        assert resp.status_code == 404
