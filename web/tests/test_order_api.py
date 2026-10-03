@@ -45,28 +45,22 @@ class TestTemplates:
 class TestCreateOrder:
 
     @pytest.mark.asyncio
-    async def test_valid_order_returns_selfwork_payment_data(self, client):
-        """Валидный запрос → 200, order_id UUID, данные для виджета selfwork."""
+    async def test_valid_order_returns_yookassa_widget_data(self, client):
+        """Валидный запрос → 200, order_id UUID, confirmation_token для виджета ЮKassa."""
         resp = await client.post("/api/order", json=VALID_ORDER_PAYLOAD)
         assert resp.status_code == 200
         data = resp.json()
 
         # order_id — UUID4 (36 символов с дефисами)
-        assert "order_id" in data
         assert len(data["order_id"]) == 36
 
-        # Поля для selfwork виджета (вместо pay_url)
-        assert "amount_kopecks" in data
-        assert "signature" in data
-        assert "item_name" in data
-        assert "quantity" in data
+        # Данные для YooMoneyCheckoutWidget (create_payment замокан в conftest)
+        assert data["confirmation_token"] == "test_confirmation_token"
+        assert data["payment_id"] == "test_yookassa_payment_id"
+        assert data["amount_rub"] == 299
 
-        # Нет pay_url — selfwork виджет не требует
+        # Редиректа на страницу оплаты нет — оплата во встроенном виджете
         assert "pay_url" not in data
-
-        # Сумма: 299 руб = 29900 коп
-        assert data["amount_kopecks"] == 29900
-        assert data["quantity"] == 1
 
     @pytest.mark.asyncio
     async def test_invalid_size_key_returns_422(self, client):
@@ -121,7 +115,7 @@ class TestPaymentStatus:
 
     @pytest.mark.asyncio
     async def test_status_of_created_order(self, client):
-        """После создания заказ имеет статус pending, amount_rub=299."""
+        """После создания заказ имеет статус pending (и токена ещё нет)."""
         create_resp = await client.post("/api/order", json=VALID_ORDER_PAYLOAD)
         order_id = create_resp.json()["order_id"]
 
@@ -129,8 +123,7 @@ class TestPaymentStatus:
         assert status_resp.status_code == 200
         data = status_resp.json()
         assert data["status"] == "pending"
-        assert data["order_id"] == order_id
-        assert data["amount_rub"] == 299
+        assert "download_token" not in data
 
     @pytest.mark.asyncio
     async def test_status_not_found(self, client):

@@ -101,19 +101,19 @@ class TestInvalidTransitions:
     def test_cannot_go_paid_to_pending(self, init_test_db):
         """paid --[ttl_expired]--> pending → недопустимо (from=pending)."""
         _insert_order(init_test_db, "order-010", "paid")
-        with pytest.raises(ValueError, match="недопустимый переход"):
+        with pytest.raises(ValueError, match="(?i)недопустимый переход"):
             transition("order-010", "ttl_expired")
 
     def test_cannot_go_token_issued_to_paid(self, init_test_db):
         """token_issued --[webhook_paid]--> paid → недопустимо."""
         _insert_order(init_test_db, "order-011", "token_issued")
-        with pytest.raises(ValueError, match="недопустимый переход"):
+        with pytest.raises(ValueError, match="(?i)недопустимый переход"):
             transition("order-011", "webhook_paid")
 
     def test_cannot_go_expired_to_paid(self, init_test_db):
         """expired --[webhook_paid]--> paid → недопустимо."""
         _insert_order(init_test_db, "order-012", "expired")
-        with pytest.raises(ValueError, match="недопустимый переход"):
+        with pytest.raises(ValueError, match="(?i)недопустимый переход"):
             transition("order-012", "webhook_paid")
 
     def test_unknown_event_raises(self, init_test_db):

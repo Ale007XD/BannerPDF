@@ -23,7 +23,7 @@ VALID_PREVIEW = {
     "bg_color": "Белый",
     "text_color": "Черный",
     "font": "Golos Text",
-    "text_lines": [{"text": "Тест превью", "scale": 1.0}],
+    "text_lines": [{"text": "Тест превью", "scale": 100}],
 }
 
 
@@ -98,14 +98,14 @@ class TestPreviewEndpoint:
     @pytest.mark.asyncio
     async def test_text_too_long_returns_422(self, client):
         """Строка длиннее 120 символов → 422 (Pydantic max_length)."""
-        payload = dict(VALID_PREVIEW, text_lines=[{"text": "а" * 121, "scale": 1.0}])
+        payload = dict(VALID_PREVIEW, text_lines=[{"text": "а" * 121, "scale": 100}])
         resp = await client.post("/api/preview", json=payload)
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
     async def test_scale_out_of_range_returns_422(self, client):
-        """scale вне [0.3, 1.5] → 422."""
-        payload = dict(VALID_PREVIEW, text_lines=[{"text": "Текст", "scale": 0.1}])
+        """scale вне [50, 100] (целые проценты) → 422."""
+        payload = dict(VALID_PREVIEW, text_lines=[{"text": "Текст", "scale": 10}])
         resp = await client.post("/api/preview", json=payload)
         assert resp.status_code == 422
 
