@@ -4,6 +4,8 @@ test_static_site.py
 Статика сайта и конфиг nginx: то, что влияет на индексацию и на заявления в UI.
 
   - robots.txt / sitemap.xml / 404.html существуют и согласованы с nginx
+    (адрес админки в robots.txt не светим; закрыта заголовком X-Robots-Tag;
+    в sitemap нет зашитого lastmod, который устареет)
   - nginx не подменяет несуществующие адреса страницей конструктора (soft-404)
   - /admin/ закрыт от индексации
   - viewport не запрещает масштабирование, на странице ровно один <h1>
@@ -35,14 +37,21 @@ class TestRobotsAndSitemap:
     def test_robots_txt(self):
         text = (FRONTEND / "robots.txt").read_text(encoding="utf-8")
         assert "User-agent: *" in text
-        assert "Disallow: /admin/" in text
+        assert "Disallow: /api/" in text
         assert f"Sitemap: {SITE}/sitemap.xml" in text
+
+    def test_robots_txt_does_not_announce_admin_and_does_not_block_noindex(self):
+        text = (FRONTEND / "robots.txt").read_text(encoding="utf-8")
+        assert "/admin" not in text  # закрыт X-Robots-Tag в nginx; Disallow скрыл бы заголовок от бота
 
     def test_sitemap_is_valid_xml_with_public_pages(self):
         root = ET.fromstring((FRONTEND / "sitemap.xml").read_bytes())
         ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
         locs = [e.text for e in root.findall("s:url/s:loc", ns)]
         assert locs == [f"{SITE}/", f"{SITE}/requisites.html"]
+
+    def test_sitemap_has_no_hardcoded_lastmod(self):
+        assert "lastmod" not in (FRONTEND / "sitemap.xml").read_text(encoding="utf-8")
 
     def test_sitemap_pages_exist_on_disk(self):
         assert (FRONTEND / "index.html").is_file()
@@ -94,7 +103,9 @@ class TestIndexHtml:
         assert f'<link rel="canonical" href="{SITE}/"' in INDEX
 
     def test_preview_images_have_alt(self):
-        for tag in re.findall(r'<img id="(?:bs-)?preview-img"[^>]*>', INDEX):
+        tags = re.findall(r'<img id="(?:bs-)?preview-img"[^>]*>', INDEX)
+        assert len(tags) == 2, "регэксп не нашёл оба превью (разметка изменилась?)"
+        for tag in tags:
             assert re.search(r'alt="[^"]+"', tag)
 
     def test_file_claims_match_what_the_pdf_contains(self):

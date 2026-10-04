@@ -15,6 +15,10 @@ FONTS_DIR = os.getenv("FONTS_DIR", "/app/fonts")
 # Не используется при рендере: печатный PDF — чистый DeviceCMYK без встроенного
 # профиля (см. banner_generator._ghostscript_process). Константа и монтирование
 # /profiles оставлены, чтобы не ломать окружение; можно удалять при следующей уборке.
+# TODO: профиль понадобится снова, как только пользователь сможет загрузить растровый
+# RGB-логотип (Ghostscript без профиля переведёт его в CMYK своим профилем по умолчанию).
+# Тогда — только как конвертирующий, без встраивания и OutputIntent.
+# См. banner_generator._ghostscript_process.
 ICC_PROFILE_PATH = os.getenv(
     "ICC_PROFILE_PATH", "/profiles/ISOcoated_v2_300_eci.icc"
 )

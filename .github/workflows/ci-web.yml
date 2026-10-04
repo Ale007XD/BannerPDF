@@ -58,6 +58,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ghostscript
+          gs --version   # версия в CI может отличаться от прод-образа (тесты проверяют операторы, не байты)
 
       # ------------------------------------------------------------------
       # Pytest: юнит + API тесты; PDF-тесты с реальным Ghostscript

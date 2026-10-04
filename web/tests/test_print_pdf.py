@@ -84,6 +84,37 @@ class TestPalette:
 
 
 # ---------------------------------------------------------------------------
+# Выбор dpi для Ghostscript
+# ---------------------------------------------------------------------------
+class TestOutputDpi:
+    @pytest.mark.parametrize("size,expected", [
+        ((100, 100), 720),      # малые размеры остаются на умолчании Ghostscript
+        ((1000, 500), 720),
+        ((2000, 750), 374),
+        ((3000, 2000), 249),
+        ((3000, 3000), 249),
+    ])
+    def test_known_sizes(self, size, expected):
+        assert bg._output_dpi(*size) == expected
+
+    def test_uses_longest_side(self):
+        assert bg._output_dpi(3000, 100) == bg._output_dpi(100, 3000) == bg._output_dpi(3000, 3000)
+
+    def test_never_above_default_and_non_increasing(self):
+        prev = 10_000
+        for side in range(100, 3001, 50):
+            dpi = bg._output_dpi(side, 100)
+            assert 72 <= dpi <= 720
+            assert dpi <= prev
+            prev = dpi
+
+    def test_numbers_stay_within_budget_for_every_size(self):
+        for side in range(100, 3001, 25):
+            max_number = side * 72 / 25.4 * bg._output_dpi(side, side) / 72
+            assert max_number <= COORD_LIMIT * 0.9 + 1e-6, side
+
+
+# ---------------------------------------------------------------------------
 # pdf_check на синтетических PDF
 # ---------------------------------------------------------------------------
 GOOD_STREAM = b"q 1 0 0 1 0 0 cm\n0 1 1 0 k\n0 0 5669.29 2125.98 re\nf\nQ\n"
@@ -99,6 +130,9 @@ def _mini_pdf(
     title: bytes = b"(Banner 2000x750 mm)",
     font: bool = False,
     device_rgb: bool = False,
+    form_stream: bytes | None = None,
+    image: bool = False,
+    objstm: bool = False,
 ) -> bytes:
     catalog = b"/Type /Catalog /Pages 2 0 R"
     if output_intent:
@@ -131,6 +165,19 @@ def _mini_pdf(
     )
     if font:
         parts.append(b"8 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
+    if form_stream is not None:
+        parts.append(
+            b"6 0 obj\n<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length "
+            + str(len(form_stream)).encode() + b" >>\nstream\n" + form_stream + b"endstream\nendobj\n"
+        )
+    if image:
+        parts.append(
+            b"7 0 obj\n<< /Type /XObject /Subtype /Image /Width 1 /Height 1"
+            b" /ColorSpace /DeviceCMYK /BitsPerComponent 8 /Length 4 >>\nstream\n"
+            b"\x00\x00\x00\x00\nendstream\nendobj\n"
+        )
+    if objstm:
+        parts.append(b"11 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length 4 >>\nstream\n1 0 \nendstream\nendobj\n")
     info = b"5 0 obj\n<< /Title " + title
     if pdfx_id:
         info += b" /GTS_PDFXVersion (PDF/X-3:2002)"
@@ -199,6 +246,28 @@ class TestPdfCheck:
         problems = check_print_pdf(pdf, width_mm=2000, height_mm=750)
         assert any("поток содержимого" in p for p in problems)
 
+    def test_rgb_inside_form_xobject_detected(self):
+        pdf = _mini_pdf(form_stream=b"1 0 0 rg\n0 0 5 5 re\nf\n")
+        problems = check_print_pdf(pdf, width_mm=2000, height_mm=750)
+        assert any("rg/RG" in p for p in problems)
+
+    def test_ink_inside_form_xobject_counted(self):
+        pdf = _mini_pdf(form_stream=b"1 1 1 1 k\n0 0 5 5 re\nf\n")
+        problems = check_print_pdf(pdf, width_mm=2000, height_mm=750, max_total_ink=240)
+        assert any("суммарное покрытие" in p for p in problems)
+
+    def test_clean_form_xobject_is_fine(self):
+        pdf = _mini_pdf(form_stream=b"0 0 0 1 k\n0 0 5 5 re\nf\n")
+        assert check_print_pdf(pdf, width_mm=2000, height_mm=750, max_total_ink=240) == []
+
+    def test_raster_image_is_reported(self):
+        problems = check_print_pdf(_mini_pdf(image=True), width_mm=2000, height_mm=750)
+        assert any("растровое изображение" in p for p in problems)
+
+    def test_object_streams_are_reported_not_silently_blind(self):
+        problems = check_print_pdf(_mini_pdf(objstm=True), width_mm=2000, height_mm=750)
+        assert any("object streams" in p for p in problems)
+
     def test_total_ink_over_limit_detected(self):
         stream = b"0.6 0.4 0.4 1 k\n0 0 10 10 re\nf\n"  # «богатый чёрный», 240%+
         pdf = _mini_pdf(stream=stream)
@@ -237,7 +306,9 @@ class TestFinalPdfWithGhostscript:
             pdf, width_mm=2000, height_mm=750, max_total_ink=MAX_TOTAL_INK_PERCENT
         ) == []
 
-    @pytest.mark.parametrize("size", [(100, 100), (2000, 750), (3000, 3000), (3000, 300)])
+    @pytest.mark.parametrize(
+        "size", [(100, 100), (1000, 500), (2000, 750), (3000, 2000), (3000, 3000), (3000, 300)]
+    )
     def test_scale_1_to_1_and_numbers_within_limit(self, repo_fonts, size):
         w, h = size
         pdf = bg.create_final_pdf(_order(width=w, height=h)).getvalue()

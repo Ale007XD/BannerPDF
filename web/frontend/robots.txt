@@ -1,5 +1,5 @@
 User-agent: *
-Disallow: /admin/
+# Если превью-картинки переедут на URL под /api/, добавить для них Allow.
 Disallow: /api/
 
 Sitemap: https://bannerbot.ru/sitemap.xml

@@ -31,9 +31,9 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
 from .config import COLORS, FONTS, MAX_TOTAL_INK_PERCENT, SAFE_ZONE_MM
-from .pdf_check import check_print_pdf
+from .pdf_check import COORD_LIMIT, check_print_pdf
 
-SITE_BASE_URL: str = os.getenv("SITE_BASE_URL", "bannerprintbot.ru")
+SITE_BASE_URL: str = os.getenv("SITE_BASE_URL", "bannerbot.ru")
 
 logger = logging.getLogger(__name__)
 
@@ -451,15 +451,26 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
 # ---------------------------------------------------------------------------
 # Шаг 2: постобработка через Ghostscript
 # ---------------------------------------------------------------------------
-# Разрешение вывода pdfwrite. По умолчанию 720 dpi: координаты ×10, и для баннера
-# 2000 мм в потоке появляются числа ~56 700 при лимите 32 767 (PDF 1.4, PDF/A,
-# строгие препресс-проверки). 144 dpi даёт ~17 000 даже для 3000 мм; контуры
-# сдвигаются не более чем на 0,3 мм (измерено против 720 dpi). 72 dpi сдвигает
-# контуры до 1,5 мм — не использовать.
-_GS_OUTPUT_DPI = 144
+# Разрешение вывода pdfwrite. Число в потоке страницы = размер в pt × dpi / 72, а по
+# умолчанию (720 dpi) координаты ×10: баннер 2000 мм даёт ~56 700 при лимите 32 767
+# (PDF 1.4, PDF/A, строгие препресс-проверки). Поэтому dpi выбирается по размеру:
+# максимум 720 (как у Ghostscript по умолчанию), но не больше, чем позволяет лимит
+# с запасом _GS_NUMBER_BUDGET. Получается: до ~1040 мм — 720 dpi, 2000 мм — 374,
+# 3000 мм — 249.
+# Не занижать dpi «с запасом»: сдвиг контуров относительно эталона растёт вместе
+# с размером пикселя и не монотонен. Измерено (макс. сдвиг вершин, мм): 3000×3000
+# при 144 dpi — 1,95; при 249 dpi — 0,5; 2000×750 при 144 — 0,25, при 374 — 0,05.
+_GS_MAX_DPI = 720
+_GS_NUMBER_BUDGET = 0.9
 
 
-def _ghostscript_process(input_path: str, output_path: str) -> None:
+def _output_dpi(width_mm: float, height_mm: float) -> int:
+    """Максимальное dpi ≤ 720, при котором числа в потоке остаются ≤ 90% лимита 32767."""
+    side_pt = max(width_mm, height_mm) * 72 / 25.4
+    return int(max(72, min(_GS_MAX_DPI, COORD_LIMIT * _GS_NUMBER_BUDGET * 72 / side_pt)))
+
+
+def _ghostscript_process(input_path: str, output_path: str, dpi: int = _GS_MAX_DPI) -> None:
     """
     Запускает Ghostscript: шрифты → кривые, цвет остаётся чистым DeviceCMYK.
 
@@ -468,13 +479,19 @@ def _ghostscript_process(input_path: str, output_path: str) -> None:
       -dNoOutputFonts          — все шрифты → кривые (outlines)
       -sColorConversionStrategy=CMYK, -dProcessColorModel=/DeviceCMYK
                                — на выходе только CMYK
-      -r144                    — см. _GS_OUTPUT_DPI
+      -r<dpi>                  — см. _output_dpi (числа в потоке ≤ лимита 32767)
 
     ICC-профиль намеренно НЕ подключается: ReportLab уже пишет DeviceCMYK,
     конвертировать нечего, и значения красок проходят без изменений (проверено:
     содержимое страницы байт-в-байт одинаково с профилем и без него для всех
     пар цветов палитры). Встраивание профиля/OutputIntent не добавило бы
     точности, но обещало бы то, что за файлом не стоит.
+
+    TODO: если появится загрузка растровых RGB-логотипов, профиль понадобится
+    снова, но только как конвертирующий (-sDefaultRGBProfile / -sOutputICCProfile
+    без OutputIntent): иначе Ghostscript переведёт RGB в CMYK своим профилем по
+    умолчанию и цвет станет непредсказуемым. До тех пор pdf_check считает
+    растровую картинку в файле проблемой.
 
     ВАЖНО: вызывается только из ProcessPoolExecutor (CPU-bound операция).
     Прямой вызов из asyncio event loop запрещён.
@@ -490,7 +507,7 @@ def _ghostscript_process(input_path: str, output_path: str) -> None:
         "-dNoOutputFonts",             # шрифты в кривые
         "-sColorConversionStrategy=CMYK",
         "-dProcessColorModel=/DeviceCMYK",
-        f"-r{_GS_OUTPUT_DPI}",
+        f"-r{dpi}",
         f"-sOutputFile={output_path}",
         input_path,
     ]
@@ -536,7 +553,7 @@ def create_final_pdf(data: dict) -> io.BytesIO:
         with open(raw_path, "wb") as f:
             f.write(raw_buf.getbuffer())
 
-        _ghostscript_process(raw_path, out_path)
+        _ghostscript_process(raw_path, out_path, _output_dpi(data["width"], data["height"]))
 
         with open(out_path, "rb") as f:
             pdf_bytes = f.read()

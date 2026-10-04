@@ -13,6 +13,8 @@ pdf_check.py
   • числа в потоке страницы не превышают 32767 (лимит PDF 1.4 / PDF/A)
   • суммарное покрытие красками (C+M+Y+K) не выше заданного лимита
   • Title не служебный ("untitled")
+  • нет растровых изображений и object streams: проверка читает только обычные
+    объекты и потоки (PDF ≤ 1.4), и не должна молча «слепнуть»
 
 Если когда-нибудь в файл будет добавлен профиль/OutputIntent, проверка «нет
 профиля» упадёт — это сигнал заодно поправить текст на сайте.
@@ -33,6 +35,8 @@ _FONT = re.compile(rb"/Type\s*/Font(?![A-Za-z])")
 _OBJ = re.compile(rb"\d+\s+\d+\s+obj\b(.*?)\bendobj", re.DOTALL)
 _STREAM_START = re.compile(rb">>\s*stream\r?\n")
 _NUMBER = re.compile(rb"(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])")
+_FORM = re.compile(rb"/Subtype\s*/Form(?![A-Za-z])")
+_IMAGE = re.compile(rb"/Subtype\s*/Image(?![A-Za-z])")
 _RGB_OP = re.compile(rb"(?:^|\s)(?:rg|RG)(?=\s|$)")
 _CMYK_OP = re.compile(
     rb"(?:^|\s)(\d*\.?\d+)\s+(\d*\.?\d+)\s+(\d*\.?\d+)\s+(\d*\.?\d+)\s+[kK](?=\s|$)"
@@ -49,7 +53,11 @@ def _page_content_streams(data: bytes):
         if start is None or end < start.end():
             continue
         header, raw = body[: start.start() + 2], body[start.end():end]
-        if b"/Subtype" in header or b"/Length1" in header or re.search(rb"/N\s+\d", header):
+        # Form XObject — такое же содержимое страницы (RGB/числа внутри формы не прячем);
+        # остальные потоки с /Subtype (XMP, шрифты, картинки) и ICC-профили пропускаем.
+        if not _FORM.search(header) and (
+            b"/Subtype" in header or b"/Length1" in header or re.search(rb"/N\s+\d", header)
+        ):
             continue
         if b"ASCII85Decode" in header or b"LZWDecode" in header or b"DCTDecode" in header:
             continue  # промежуточный PDF ReportLab; проверяем только финальный Flate/без фильтра
@@ -106,6 +114,15 @@ def check_print_pdf(
             max_ink = max(max_ink, (float(c) + float(m) + float(y) + float(k)) * 100)
         for num in _NUMBER.findall(stream):
             max_num = max(max_num, abs(float(num)))
+    if b"/ObjStm" in data:
+        problems.append(
+            "объекты упакованы в object streams (PDF ≥ 1.5): проверка шрифтов, цвета и чисел неполная"
+        )
+    if _IMAGE.search(data):
+        problems.append(
+            "в файле есть растровое изображение: без профиля его цвет не определён "
+            "(см. TODO в config.py про конвертирующий профиль)"
+        )
     if streams == 0:
         problems.append("не найден поток содержимого страницы (проверка цвета и чисел не выполнена)")
     if rgb_ops:
