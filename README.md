@@ -45,7 +45,7 @@
 |---|---|
 | Backend | FastAPI 0.110+ + Uvicorn (строго 1 worker) |
 | Рендер превью | Pillow 10 (JPEG, синхронно через ThreadPoolExecutor) |
-| Рендер PDF | ReportLab → Ghostscript 10 (PDF/X-1a, CMYK, ICC) |
+| Рендер PDF | ReportLab → Ghostscript 10 (чистый DeviceCMYK без профиля, шрифты в кривых, масштаб 1:1) |
 | Executor | `ProcessPoolExecutor(max_workers=2)` — только для GS в batch_worker |
 | Frontend | Vanilla HTML/CSS/JS, без фреймворков и сборки |
 | База данных | SQLite WAL — `banner_web.db` (отдельная от `banner_bot.db`) |
@@ -202,7 +202,6 @@ BannerPDF/
 
 - Docker + Docker Compose
 - Шрифты TTF: `GolosText-Regular.ttf`, `TenorSans-Regular.ttf`, `FiraSansCondensed-ExtraBold.ttf`, `PTSansNarrow-Bold.ttf`
-- ICC-профиль `ISOcoated_v2_300_eci.icc`
 
 > ❌ `FiraSans-Regular.ttf` и `IgraSans-Regular.ttf` на сервере отсутствуют — не использовать.
 
@@ -221,12 +220,12 @@ cp .env.example .env
 # TG_NOTIFY_TOKEN, TG_ADMIN_CHAT_ID, TG_WEBHOOK_SECRET — для TG-уведомлений
 ```
 
-### 3. Подготовка шрифтов и профиля
+### 3. Подготовка шрифтов
 
 ```bash
-mkdir -p fonts profiles
+mkdir -p fonts
 # Скопировать TTF-шрифты в fonts/
-# Скопировать ISOcoated_v2_300_eci.icc в profiles/
+# ICC-профиль не нужен: PDF пишется чистым DeviceCMYK без встроенного профиля
 ```
 
 ### 4. Запуск
@@ -289,9 +288,6 @@ VPS_SSH_KEY   — приватный SSH-ключ
   TenorSans-Regular.ttf
   FiraSansCondensed-ExtraBold.ttf
   PTSansNarrow-Bold.ttf
-
-/home/bannerweb/banner_web/profiles/
-  ISOcoated_v2_300_eci.icc
 
 /home/bannerweb/banner_web/.env   # секреты
 ```

@@ -40,7 +40,7 @@ curl -X POST https://bannerbot.ru/api/v1/render \
 
 ### 3. Готово
 
-`banner.pdf` — PDF/X-1a, CMYK, ICC ISOcoated_v2_300, шрифты в кривых.  
+`banner.pdf` — чистый DeviceCMYK (значения красок заданы напрямую, профиль не встраивается), шрифты в кривых, масштаб 1:1.  
 Передавайте напрямую в типографию.
 
 ---

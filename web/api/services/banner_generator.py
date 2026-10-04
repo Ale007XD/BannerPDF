@@ -4,8 +4,10 @@ banner_generator.py
 Генерация баннеров в двух форматах:
   • JPEG-превью  — через Pillow (RGB, быстро, для сайта)
   • PDF для печати — через ReportLab (промежуточный) + Ghostscript (финальный):
-      - PDF/X-1a совместимый
-      - CMYK с ICC-профилем ISOcoated_v2_300
+      - чистый DeviceCMYK: значения красок из config.COLORS записаны напрямую,
+        без конвертации и без встроенного ICC-профиля / OutputIntent
+        (профиль применяет RIP типографии)
+      - масштаб 1:1, страница ровно размера баннера
       - Все шрифты переведены в кривые (outlines)
 
 Двухшаговая схема:
@@ -28,7 +30,8 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
-from .config import COLORS, FONTS, ICC_PROFILE_PATH, SAFE_ZONE_MM
+from .config import COLORS, FONTS, MAX_TOTAL_INK_PERCENT, SAFE_ZONE_MM
+from .pdf_check import check_print_pdf
 
 SITE_BASE_URL: str = os.getenv("SITE_BASE_URL", "bannerprintbot.ru")
 
@@ -360,6 +363,13 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(w_pt, h_pt))
+    # Метаданные: PDF/X требует осмысленный Title; значения ReportLab по умолчанию
+    # («untitled» / «anonymous») перекрывают Info из def-файла Ghostscript.
+    # Только ASCII — Title попадает ещё и в XMP.
+    c.setTitle(f"Banner {width_mm}x{height_mm} mm")
+    c.setAuthor("BannerPrint")
+    c.setCreator("BannerPrint")
+    c.setSubject("Print-ready banner, CMYK, outlined text")
 
     # --- Фон ---
     bg_cmyk = COLORS[bg_color_name]["cmyk"]
@@ -441,21 +451,34 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
 # ---------------------------------------------------------------------------
 # Шаг 2: постобработка через Ghostscript
 # ---------------------------------------------------------------------------
+# Разрешение вывода pdfwrite. По умолчанию 720 dpi: координаты ×10, и для баннера
+# 2000 мм в потоке появляются числа ~56 700 при лимите 32 767 (PDF 1.4, PDF/A,
+# строгие препресс-проверки). 144 dpi даёт ~17 000 даже для 3000 мм; контуры
+# сдвигаются не более чем на 0,3 мм (измерено против 720 dpi). 72 dpi сдвигает
+# контуры до 1,5 мм — не использовать.
+_GS_OUTPUT_DPI = 144
+
+
 def _ghostscript_process(input_path: str, output_path: str) -> None:
     """
-    Запускает Ghostscript для конвертации в печатный PDF.
+    Запускает Ghostscript: шрифты → кривые, цвет остаётся чистым DeviceCMYK.
 
     Ключевые флаги:
       -dPDFSETTINGS=/prepress  — настройки для допечатной подготовки
       -dNoOutputFonts          — все шрифты → кривые (outlines)
-      -sColorConversionStrategy=CMYK — принудительный CMYK
-      -sOutputICCProfile       — встраивает ICC-профиль
+      -sColorConversionStrategy=CMYK, -dProcessColorModel=/DeviceCMYK
+                               — на выходе только CMYK
+      -r144                    — см. _GS_OUTPUT_DPI
+
+    ICC-профиль намеренно НЕ подключается: ReportLab уже пишет DeviceCMYK,
+    конвертировать нечего, и значения красок проходят без изменений (проверено:
+    содержимое страницы байт-в-байт одинаково с профилем и без него для всех
+    пар цветов палитры). Встраивание профиля/OutputIntent не добавило бы
+    точности, но обещало бы то, что за файлом не стоит.
 
     ВАЖНО: вызывается только из ProcessPoolExecutor (CPU-bound операция).
     Прямой вызов из asyncio event loop запрещён.
     """
-    icc_exists = os.path.exists(ICC_PROFILE_PATH)
-
     cmd = [
         "gs",
         "-dBATCH",
@@ -463,26 +486,11 @@ def _ghostscript_process(input_path: str, output_path: str) -> None:
         "-dNOSAFER",
         "-sDEVICE=pdfwrite",
         "-dPDFSETTINGS=/prepress",
-        "-dCompatibilityLevel=1.4",    # PDF 1.4 — требование PDF/X-1a
+        "-dCompatibilityLevel=1.4",
         "-dNoOutputFonts",             # шрифты в кривые
         "-sColorConversionStrategy=CMYK",
         "-dProcessColorModel=/DeviceCMYK",
-        "-dOverrideICC",
-    ]
-
-    if icc_exists:
-        cmd += [
-            f"-sOutputICCProfile={ICC_PROFILE_PATH}",
-            f"-sDefaultCMYKProfile={ICC_PROFILE_PATH}",
-        ]
-    else:
-        logger.warning(
-            "ICC-профиль не найден по пути %s. "
-            "PDF будет сгенерирован без встроенного профиля.",
-            ICC_PROFILE_PATH,
-        )
-
-    cmd += [
+        f"-r{_GS_OUTPUT_DPI}",
         f"-sOutputFile={output_path}",
         input_path,
     ]
@@ -506,9 +514,13 @@ def _ghostscript_process(input_path: str, output_path: str) -> None:
 def create_final_pdf(data: dict) -> io.BytesIO:
     """
     Возвращает BytesIO с PDF-файлом, готовым для передачи в типографию:
-      - CMYK с ICC-профилем ISOcoated_v2_300
-      - Шрифты переведены в кривые
-      - PDF/X-совместимый формат
+      - чистый DeviceCMYK, значения из config.COLORS записаны напрямую
+      - без встроенного профиля и OutputIntent (профиль применяет RIP)
+      - масштаб 1:1
+      - шрифты переведены в кривые
+
+    Результат самопроверяется (pdf_check): проблемы только логируются,
+    заказ из-за них не падает.
 
     ВАЖНО: эта функция CPU-bound из-за Ghostscript.
     Должна вызываться только через ProcessPoolExecutor.
@@ -527,7 +539,23 @@ def create_final_pdf(data: dict) -> io.BytesIO:
         _ghostscript_process(raw_path, out_path)
 
         with open(out_path, "rb") as f:
-            result_buf = io.BytesIO(f.read())
+            pdf_bytes = f.read()
 
-    result_buf.seek(0)
-    return result_buf
+    _log_pdf_problems(pdf_bytes, data)
+    return io.BytesIO(pdf_bytes)
+
+
+def _log_pdf_problems(pdf_bytes: bytes, data: dict) -> None:
+    """Самопроверка готового PDF. Никогда не бросает исключений."""
+    try:
+        problems = check_print_pdf(
+            pdf_bytes,
+            width_mm=data["width"],
+            height_mm=data["height"],
+            max_total_ink=MAX_TOTAL_INK_PERCENT,
+        )
+    except Exception:  # проверка не должна ломать выдачу файла
+        logger.exception("Самопроверка PDF завершилась ошибкой")
+        return
+    if problems:
+        logger.warning("Печатный PDF %sx%s мм: %s", data["width"], data["height"], "; ".join(problems))

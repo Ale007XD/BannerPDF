@@ -84,6 +84,18 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* ---- Заголовок страницы (H1): компактная строка под шапкой ---- */
+.page-title {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 10px 20px 0;
+  font-family: 'Onest', system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
 /* ---- Основной контент (мобиль — одна колонка) ---- */
 .main-content {
   max-width: 480px;
@@ -1116,4 +1128,16 @@ body {
   font-size: 13px;
   color: #b3261e;
   margin-bottom: 8px;
+}
+
+/* ---- iOS: зум при фокусе в поле ----
+   Safari зумит страницу, если шрифт поля меньше 16px. Раньше это гасил
+   maximum-scale=1.0 в viewport; он убран (запрещал масштабирование и вредил
+   доступности), поэтому на сенсорных устройствах задаём 16px явно. */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
 }
