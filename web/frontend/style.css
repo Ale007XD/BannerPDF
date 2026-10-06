@@ -1130,6 +1130,84 @@ body {
   margin-bottom: 8px;
 }
 
+/* ---- Информационный блок под конструктором (как это работает, FAQ) ---- */
+.seo-info {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 8px 20px 40px;
+}
+
+.seo-inner {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.seo-info h2 {
+  font-family: 'Unbounded', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 28px 0 12px;
+}
+
+.seo-info h2:first-child { margin-top: 12px; }
+
+.seo-steps,
+.seo-list {
+  padding-left: 1.3em;
+  color: var(--ink-2);
+}
+
+.seo-steps li,
+.seo-list li { margin-bottom: 8px; }
+
+.seo-steps strong,
+.seo-list strong { color: var(--ink); font-weight: 600; }
+
+.seo-faq {
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  margin-bottom: 8px;
+}
+
+.seo-faq summary {
+  padding: 14px 44px 14px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  position: relative;
+}
+
+.seo-faq summary::-webkit-details-marker { display: none; }
+
+.seo-faq summary::after {
+  content: "+";
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+.seo-faq[open] summary::after { content: "\2212"; }
+
+.seo-faq summary:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.seo-faq p {
+  padding: 0 16px 14px;
+  color: var(--ink-2);
+}
+
+.seo-faq a,
+.seo-info a { color: var(--accent2); }
+
 /* ---- iOS: зум при фокусе в поле ----
    Safari зумит страницу, если шрифт поля меньше 16px. Раньше это гасил
    maximum-scale=1.0 в viewport; он убран (запрещал масштабирование и вредил
