@@ -23,6 +23,7 @@ import math
 import os
 import subprocess
 import tempfile
+from urllib.parse import urlsplit
 
 from PIL import Image, ImageDraw, ImageFont
 from reportlab.lib.units import mm
@@ -34,6 +35,18 @@ from .config import COLORS, FONTS, MAX_TOTAL_INK_PERCENT, SAFE_ZONE_MM
 from .pdf_check import COORD_LIMIT, check_print_pdf
 
 SITE_BASE_URL: str = os.getenv("SITE_BASE_URL", "bannerbot.ru")
+
+
+def _site_host(base_url: str) -> str:
+    """Имя хоста для надписи на превью.
+
+    SITE_BASE_URL — полный URL (его же используют payment.py и tg_notify.py
+    для ссылок), а на баннер нужен только хост: без схемы, порта и пути.
+    Значение без схемы («bannerbot.ru») тоже принимается.
+    """
+    raw = (base_url or "").strip()
+    host = urlsplit(raw if "//" in raw else f"//{raw}").hostname
+    return host or raw
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +297,7 @@ def create_preview_jpeg(data: dict) -> io.BytesIO:
     # + та же надпись по диагонали (см. _draw_diagonal_watermark).
     # Ширина ≈ 1/4 ширины баннера; шрифт подбирается по ширине плашки.
     # Фон: чёрный полупрозрачный; для чёрного фона — белый полупрозрачный.
-    wm_text = f"Сделано за 3 минуты в {SITE_BASE_URL}"
+    wm_text = f"Сделано за 3 минуты в {_site_host(SITE_BASE_URL)}"
     wm_font_path = FONTS.get("Golos Text") or next(iter(FONTS.values()))
 
     wm_target_w = int(w_px * 0.25)   # целевая ширина плашки = 1/4 баннера

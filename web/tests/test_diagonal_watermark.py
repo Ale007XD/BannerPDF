@@ -123,3 +123,28 @@ class TestIntegration:
         monkeypatch.setattr(bg, "_draw_diagonal_watermark", boom)
         pdf = bg._create_raw_pdf(_data())
         assert pdf.getvalue().startswith(b"%PDF")
+
+
+class TestSiteHost:
+    """SITE_BASE_URL на проде — полный URL; на баннере должен быть только хост."""
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("https://bannerbot.ru", "bannerbot.ru"),
+        ("https://bannerbot.ru/", "bannerbot.ru"),
+        ("http://bannerbot.ru:8444/admin", "bannerbot.ru"),
+        ("bannerbot.ru", "bannerbot.ru"),
+        ("  https://bannerbot.ru  ", "bannerbot.ru"),
+    ])
+    def test_site_host(self, raw, expected):
+        assert bg._site_host(raw) == expected
+
+    def test_empty_value_does_not_raise(self):
+        assert bg._site_host("") == ""
+
+    @pytest.mark.parametrize("env", ["https://bannerbot.ru", "bannerbot.ru"])
+    def test_preview_text_has_host_without_scheme(self, repo_fonts, monkeypatch, env):
+        monkeypatch.setattr(bg, "SITE_BASE_URL", env)
+        seen = []
+        monkeypatch.setattr(bg, "_draw_diagonal_watermark", lambda ov, text, mk: seen.append(text))
+        bg.create_preview_jpeg(_data())
+        assert seen == ["Сделано за 3 минуты в bannerbot.ru"]
