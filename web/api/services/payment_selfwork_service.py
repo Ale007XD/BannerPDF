@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 SELFWORK_SHOP_ID = os.getenv("SELFWORK_SHOP_ID", "")
 SITE_PDF_PRICE   = int(os.getenv("SITE_PDF_PRICE", "299"))
-SITE_BASE_URL    = os.getenv("SITE_BASE_URL", "https://bannerprintbot.ru")
+SITE_BASE_URL    = os.getenv("SITE_BASE_URL", "https://bannerbot.ru")
 
 # Название товара в чеке — одна позиция
 ITEM_NAME = "Печатный баннер (PDF)"

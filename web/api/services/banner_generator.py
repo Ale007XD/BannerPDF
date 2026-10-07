@@ -380,8 +380,8 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
     # («untitled» / «anonymous») перекрывают Info из def-файла Ghostscript.
     # Только ASCII — Title попадает ещё и в XMP.
     c.setTitle(f"Banner {width_mm}x{height_mm} mm")
-    c.setAuthor("BannerPrint")
-    c.setCreator("BannerPrint")
+    c.setAuthor("BannerBot")
+    c.setCreator("BannerBot")
     c.setSubject("Print-ready banner, CMYK, outlined text")
 
     # --- Фон ---

@@ -40,7 +40,7 @@ from .services.token_store import cleanup_expired as cleanup_tokens
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_ORIGINS  = os.getenv("ALLOWED_ORIGINS", "https://bannerprintbot.ru").split(",")
+ALLOWED_ORIGINS  = os.getenv("ALLOWED_ORIGINS", "https://bannerbot.ru").split(",")
 FRONTEND_DIR     = os.getenv("FRONTEND_DIR", "/app/frontend")
 CLEANUP_INTERVAL = 300  # секунд между cleanup-циклами
 
@@ -100,7 +100,7 @@ async def lifespan(app: FastAPI):
 # FastAPI app
 # ---------------------------------------------------------------------------
 app = FastAPI(
-    title="BannerPrint API",
+    title="BannerBot API",
     description="Сайт-конструктор печатных баннеров",
     version="1.0.0",
     lifespan=lifespan,

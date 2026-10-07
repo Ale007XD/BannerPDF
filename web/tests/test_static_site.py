@@ -11,6 +11,9 @@ test_static_site.py
   - viewport не запрещает масштабирование, на странице ровно один <h1>
   - SEO-блок (title/description/OG, JSON-LD, «как это работает», FAQ): цифры в тексте
     сверяются с константами кода и с юр. страницей, чтобы текст не разошёлся с продуктом
+  - каждая локальная ссылка из HTML (href/src/og:image/иконки) ведёт на существующий файл
+    (OG-картинка и favicon раньше отсутствовали, а разметка на них ссылалась)
+  - robots.txt: Clean-param для Яндекса; nginx: http2, gzip, кэш статики без immutable
   - на сайте нет заявлений про ICC/ISO Coated/PDF/X: файл — чистый CMYK без профиля,
     а то, что заявлено («CMYK, шрифты в кривых, масштаб 1:1, значения красок заданы
     напрямую»), проверяет test_print_pdf.py
@@ -21,7 +24,10 @@ import json
 import os
 import re
 import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
 from pathlib import Path
+
+from PIL import Image
 
 from web.api.routers.order import AMEND_WINDOW_HOURS
 from web.api.services.config import MAX_DIMENSION, MIN_DIMENSION, SAFE_ZONE_MM
@@ -35,6 +41,7 @@ NGINX = (WEB / "nginx" / "default.conf").read_text(encoding="utf-8")
 CSS = (FRONTEND / "style.css").read_text(encoding="utf-8")
 
 SITE = "https://bannerbot.ru"
+BRAND = "BannerBot"
 
 
 def _location_block(conf: str, header: str) -> str:
@@ -48,6 +55,12 @@ class TestRobotsAndSitemap:
         assert "User-agent: *" in text
         assert "Disallow: /api/" in text
         assert f"Sitemap: {SITE}/sitemap.xml" in text
+
+    def test_robots_txt_yandex_clean_param(self):
+        text = (FRONTEND / "robots.txt").read_text(encoding="utf-8")
+        assert "Clean-param: order_id&amend /" in text
+        # параметры, с которыми главная открывается из оплаты и из письма
+        assert "order_id" in (FRONTEND / "app.js").read_text(encoding="utf-8")
 
     def test_robots_txt_does_not_announce_admin_and_does_not_block_noindex(self):
         text = (FRONTEND / "robots.txt").read_text(encoding="utf-8")
@@ -89,6 +102,34 @@ class TestNginx:
         block = _location_block(NGINX, "location /api/ {")
         assert "proxy_pass http://api:8000;" in block
         assert "proxy_set_header X-Real-IP $remote_addr;" in block
+
+
+    def test_http2_enabled_on_tls_server(self):
+        tls = NGINX[NGINX.index("listen 443 ssl;"):]
+        assert re.search(r"^\s*http2 on;", tls, flags=re.M)
+
+    def test_gzip_covers_svg_and_xml(self):
+        conf = (WEB / "nginx" / "nginx.conf").read_text(encoding="utf-8")
+        types = re.search(r"gzip_types\s+([^;]+);", conf).group(1).split()
+        for t in ("text/css", "application/javascript", "image/svg+xml", "application/xml", "text/xml"):
+            assert t in types
+
+    def test_static_cache_rules_match_only_static_files(self):
+        patterns = re.findall(r"location ~ (\S+) \{", NGINX)
+        assert len(patterns) == 2
+        css_js, images = (re.compile(p) for p in patterns)
+        for path in ("/style.css", "/app.js"):
+            assert css_js.match(path)
+        for path in ("/favicon.ico", "/favicon.svg", "/apple-touch-icon.png", "/static/og/og-image.jpg"):
+            assert images.match(path)
+        for path in ("/admin/app.js", "/api/style.css", "/api/static/og/x.jpg", "/index.html", "/static/og/../../app.js"):
+            assert not css_js.match(path) and not images.match(path), path
+
+    def test_cache_is_not_immutable(self):
+        # ?v=N правится руками: забытый bump не должен залипнуть на год
+        assert "immutable" not in re.sub(r"#.*", "", NGINX)
+        for max_age in re.findall(r"max-age=(\d+)", NGINX):
+            assert int(max_age) <= 7 * 86400
 
 
 class TestIndexHtml:
@@ -153,10 +194,14 @@ def _visible(fragment: str) -> str:
     return htmllib.unescape(re.sub(r"<[^>]+>", " ", fragment))
 
 
+def _json_ld_all() -> list[dict]:
+    blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', INDEX, flags=re.S)
+    assert blocks, "нет JSON-LD"
+    return [json.loads(b) for b in blocks]
+
+
 def _json_ld() -> dict:
-    m = re.search(r'<script type="application/ld\+json">(.*?)</script>', INDEX, flags=re.S)
-    assert m, "нет JSON-LD"
-    return json.loads(m.group(1))
+    return next(b for b in _json_ld_all() if b["@type"] == "WebApplication")
 
 
 class TestSeoMeta:
@@ -194,6 +239,12 @@ class TestJsonLd:
 
     def test_description_is_the_meta_description(self):
         assert _json_ld()["description"] == _meta("description")
+
+    def test_website_block_gives_site_name_and_domain(self):
+        site = next(b for b in _json_ld_all() if b["@type"] == "WebSite")
+        assert site["name"] == BRAND
+        assert site["alternateName"] == "bannerbot.ru"
+        assert site["url"] == f"{SITE}/"
 
     def test_no_invented_ratings_or_reviews(self):
         raw = json.dumps(_json_ld())
@@ -277,3 +328,162 @@ class TestSeoSection:
         assert section.count('href="/requisites.html"') == 2
         assert 'href="mailto:alex.deloverov@gmail.com"' in section
         assert (FRONTEND / "requisites.html").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Локальные ссылки, иконки, OG-картинка
+# ---------------------------------------------------------------------------
+class _Refs(HTMLParser):
+    """Собирает адреса из href/src и из og:image/twitter:image/og:url."""
+
+    def __init__(self):
+        super().__init__()
+        self.refs: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag in ("link", "a") and a.get("href"):
+            self.refs.append(a["href"])
+        elif tag in ("script", "img", "source") and a.get("src"):
+            self.refs.append(a["src"])
+        elif tag == "meta" and a.get("content") and (
+            a.get("property") in ("og:image", "og:image:secure_url", "og:url")
+            or a.get("name") == "twitter:image"
+        ):
+            self.refs.append(a["content"])
+
+
+def _local_refs(html: str) -> list[str]:
+    """Адреса, которые отдаёт nginx из frontend/ (внешние, mailto, якоря и /api/ пропускаются)."""
+    parser = _Refs()
+    parser.feed(html)
+    out = []
+    for ref in parser.refs:
+        ref = ref.split("#")[0].split("?")[0].strip()
+        if ref.startswith(SITE):
+            ref = ref[len(SITE):] or "/"
+        elif not ref or re.match(r"^[a-z][a-z0-9+.-]*:", ref, flags=re.I) or ref.startswith("//"):
+            continue
+        if ref.startswith("/api/"):
+            continue
+        out.append(ref)
+    return out
+
+
+def _to_file(ref: str) -> Path:
+    path = FRONTEND / ref.lstrip("/")
+    return path / "index.html" if ref.endswith("/") or path.is_dir() else path
+
+
+PAGES = {
+    "index.html": INDEX,
+    "requisites.html": REQUISITES,
+    "404.html": (FRONTEND / "404.html").read_text(encoding="utf-8"),
+}
+
+
+class TestLocalReferences:
+    def test_parser_sees_the_references_it_should(self):
+        refs = _local_refs(INDEX)
+        assert "/static/og/og-image.jpg" in refs
+        assert "style.css" in refs and "app.js" in refs
+        assert len(refs) >= 10, refs
+
+    def test_every_local_reference_exists(self):
+        missing = []
+        for name, html in PAGES.items():
+            for ref in _local_refs(html):
+                if not _to_file(ref).is_file():
+                    missing.append(f"{name}: {ref}")
+        assert not missing, missing
+
+    def test_404_uses_only_root_absolute_paths(self):
+        # 404.html отдаётся на любом адресе (/x/y), относительные пути там сломаются
+        for ref in _local_refs(PAGES["404.html"]):
+            assert ref.startswith("/"), ref
+
+    def test_sitemap_urls_exist_on_disk(self):
+        root = ET.fromstring((FRONTEND / "sitemap.xml").read_bytes())
+        ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+        for loc in (e.text for e in root.findall("s:url/s:loc", ns)):
+            assert _to_file(loc[len(SITE):]).is_file(), loc
+
+    def test_asset_versions_are_the_same_on_all_pages(self):
+        # ?v=N правится руками: страница, забытая на старом N, получает из кэша старый файл
+        for asset in ("style.css", "app.js"):
+            per_page = {
+                name: set(re.findall(rf"{re.escape(asset)}\?v=(\d+)", html))
+                for name, html in PAGES.items()
+            }
+            used = {name: v for name, v in per_page.items() if v}
+            assert "index.html" in used, f"{asset}: нет версии на главной"
+            assert all(len(v) == 1 for v in used.values()), (asset, used)
+            assert len({next(iter(v)) for v in used.values()}) == 1, (asset, used)
+
+
+class TestIconsAndOgImage:
+    def test_icon_links_on_all_pages(self):
+        for name, html in PAGES.items():
+            assert 'rel="icon" href="/favicon.ico"' in html, name
+            assert 'rel="icon" href="/favicon.svg"' in html, name
+            assert 'rel="apple-touch-icon" href="/apple-touch-icon.png"' in html, name
+
+    def test_favicon_ico_has_standard_sizes(self):
+        with Image.open(FRONTEND / "favicon.ico") as ico:
+            assert ico.format == "ICO"
+            assert {(16, 16), (32, 32), (48, 48)} <= set(ico.info["sizes"])
+
+    def test_apple_touch_icon_is_180_png_without_alpha(self):
+        with Image.open(FRONTEND / "apple-touch-icon.png") as im:
+            assert im.format == "PNG" and im.size == (180, 180)
+            assert im.mode in ("RGB", "L"), "iOS закрашивает прозрачность чёрным"
+
+    def test_favicon_svg_is_well_formed(self):
+        root = ET.fromstring((FRONTEND / "favicon.svg").read_bytes())
+        assert root.tag.endswith("svg") and root.get("viewBox")
+
+    def test_og_image_matches_declared_size(self):
+        declared = (int(_meta("og:image:width", "property")), int(_meta("og:image:height", "property")))
+        path = FRONTEND / "static" / "og" / "og-image.jpg"
+        assert path.stat().st_size < 300_000, "тяжёлая картинка режется мессенджерами"
+        with Image.open(path) as im:
+            assert im.format == "JPEG"
+            assert im.size == declared == (1200, 630)
+
+    def test_og_and_twitter_image_are_the_same_file(self):
+        assert _meta("og:image", "property") == _meta("twitter:image") == f"{SITE}/static/og/og-image.jpg"
+
+
+# ---------------------------------------------------------------------------
+# Бренд: везде BannerBot (домен bannerbot.ru), прежнее «BannerPrint» не должно вернуться
+# ---------------------------------------------------------------------------
+class TestBrand:
+    ALL_PAGES = {**PAGES, "admin/index.html": (FRONTEND / "admin" / "index.html").read_text(encoding="utf-8")}
+
+    def test_no_old_brand_in_any_page(self):
+        for name, html in self.ALL_PAGES.items():
+            assert not re.search(r"banner\s*print", html, flags=re.I), name
+            assert "Print</span>" not in html, f"{name}: старый логотип"
+
+    def test_logo_reads_bannerbot_in_every_page_that_has_one(self):
+        for name in ("index.html", "requisites.html", "admin/index.html"):
+            assert 'Banner<span class="logo-accent">Bot</span>' in self.ALL_PAGES[name], name
+
+    def test_footer_copyright(self):
+        for name in ("index.html", "requisites.html"):
+            assert f"© 2026 {BRAND}" in self.ALL_PAGES[name], name
+
+    def test_site_name_is_the_same_everywhere(self):
+        assert _meta("og:site_name", "property") == BRAND
+        assert _json_ld()["name"] == BRAND
+        assert BRAND in _meta("og:image:alt", "property")
+        assert f"— {BRAND}</title>" in REQUISITES
+        assert f"— {BRAND}</title>" in PAGES["404.html"]
+
+    def test_customer_visible_strings_in_backend(self):
+        api = WEB / "api"
+        for rel in ("routers/order.py", "routers/order_router.py"):
+            src = (api / rel).read_text(encoding="utf-8")
+            assert f'" — {BRAND}"' in src, f"{rel}: описание платежа (попадает в чек)"
+        gen = (api / "services" / "banner_generator.py").read_text(encoding="utf-8")
+        assert f'setAuthor("{BRAND}")' in gen and f'setCreator("{BRAND}")' in gen

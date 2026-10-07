@@ -247,7 +247,7 @@ async def create_order(req: OrderRequest):
         payment = await create_payment(
             order_id=order_id,
             amount_rub=amount_rub,
-            description="Баннер " + (req.size_key or f"{req.width_mm}x{req.height_mm}мм") + " — BannerPrint",
+            description="Баннер " + (req.size_key or f"{req.width_mm}x{req.height_mm}мм") + " — BannerBot",
         )
     except Exception as e:
         logger.error("Ошибка создания платежа ЮKassa для заказа %s: %s", order_id, e)

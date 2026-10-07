@@ -1,5 +1,7 @@
 User-agent: *
 # Если превью-картинки переедут на URL под /api/, добавить для них Allow.
 Disallow: /api/
+# Яндекс: страницы с оплатой и правкой — те же, что и главная
+Clean-param: order_id&amend /
 
 Sitemap: https://bannerbot.ru/sitemap.xml

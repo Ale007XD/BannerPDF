@@ -394,7 +394,7 @@ async def create_order(req: OrderRequest, request: Request):
             description=(
                 "Баннер "
                 + (req.size_key or f"{req.width_mm}x{req.height_mm}мм")
-                + " — BannerPrint"
+                + " — BannerBot"
             ),
         )
     except Exception as e:

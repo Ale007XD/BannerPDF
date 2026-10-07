@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 TG_NOTIFY_TOKEN  = os.getenv("TG_NOTIFY_TOKEN", "")
 TG_ADMIN_CHAT_ID = os.getenv("TG_ADMIN_CHAT_ID", "")
-SITE_BASE_URL    = os.getenv("SITE_BASE_URL", "https://bannerbot.ru:8444")
+SITE_BASE_URL    = os.getenv("SITE_BASE_URL", "https://bannerbot.ru")
 
 _TG_API = "https://api.telegram.org/bot{token}/{method}"
 

@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "")
 SITE_PDF_PRICE = int(os.getenv("SITE_PDF_PRICE", "299"))
-SITE_BASE_URL = os.getenv("SITE_BASE_URL", "https://bannerbot.ru:8444")
+SITE_BASE_URL = os.getenv("SITE_BASE_URL", "https://bannerbot.ru")
 
 # Название товара в чеке
 ITEM_NAME = "Печатный баннер (PDF)"

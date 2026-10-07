@@ -339,7 +339,7 @@ class TestFinalPdfWithGhostscript:
     def test_metadata_is_meaningful(self, repo_fonts):
         pdf = bg.create_final_pdf(_order()).getvalue()
         assert re.search(rb"/Title\s*\(Banner 2000x750 mm\)", pdf)
-        assert re.search(rb"/Author\s*\(BannerPrint\)", pdf)
+        assert re.search(rb"/Author\s*\(BannerBot\)", pdf)
         assert b"untitled" not in pdf
         assert b"anonymous" not in pdf
 
