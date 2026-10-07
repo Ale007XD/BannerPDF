@@ -44,6 +44,21 @@ SITE = "https://bannerbot.ru"
 BRAND = "BannerBot"
 
 
+def _server_blocks() -> list[str]:
+    """Верхнеуровневые server { … } из default.conf (вложенные location закрываются своим «}»)."""
+    blocks, depth, start = [], 0, None
+    for i, ch in enumerate(NGINX):
+        if ch == "{":
+            if depth == 0:
+                start = NGINX.rfind("server", 0, i)
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                blocks.append(NGINX[start: i + 1])
+    return blocks
+
+
 def _location_block(conf: str, header: str) -> str:
     start = conf.index(header)
     return conf[start: conf.index("}", start) + 1]
@@ -104,9 +119,28 @@ class TestNginx:
         assert "proxy_set_header X-Real-IP $remote_addr;" in block
 
 
-    def test_http2_enabled_on_tls_server(self):
-        tls = NGINX[NGINX.index("listen 443 ssl;"):]
-        assert re.search(r"^\s*http2 on;", tls, flags=re.M)
+    def test_http2_enabled_on_every_tls_server(self):
+        servers = _server_blocks()
+        tls = [b for b in servers if "listen 443 ssl;" in b]
+        assert len(tls) == 2
+        for block in tls:
+            assert re.search(r"^\s*http2 on;", block, flags=re.M)
+
+    def test_one_canonical_host_plain_http_redirects_in_one_hop(self):
+        http = next(b for b in _server_blocks() if "listen 80;" in b)
+        assert "server_name bannerbot.ru www.bannerbot.ru;" in http
+        assert "return 301 https://bannerbot.ru$request_uri;" in http
+        assert "$host" not in http  # иначе http://www → https://www → ещё один редирект
+
+    def test_www_https_redirects_to_apex_keeping_path_and_query(self):
+        tls = [b for b in _server_blocks() if "listen 443 ssl;" in b]
+        apex, www = tls  # порядок важен: default_server для :443 — основной сайт
+        assert "server_name bannerbot.ru;" in apex and "root /app/frontend;" in apex
+        assert "server_name www.bannerbot.ru;" in www
+        assert "return 301 https://bannerbot.ru$request_uri;" in www
+        assert "root " not in www and "location" not in www
+        # сертификат тот же: www должен быть в его SAN
+        assert re.findall(r"ssl_certificate\s+(\S+);", www) == re.findall(r"ssl_certificate\s+(\S+);", apex)
 
     def test_gzip_covers_svg_and_xml(self):
         conf = (WEB / "nginx" / "nginx.conf").read_text(encoding="utf-8")
