@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Высота шрифта на баннере по расстоянию: таблица и калькулятор</title>
+<meta name="description" content="Какая высота букв нужна баннеру, чтобы читалось с 10, 20, 50 метров. Таблица, калькулятор и расчёт предельной высоты по ширине баннера.">
+<link rel="canonical" href="https://bannerbot.ru/vysota-shrifta/">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:type" content="article"><meta property="og:locale" content="ru_RU"><meta property="og:site_name" content="BannerBot">
+<meta property="og:title" content="Высота шрифта на баннере по расстоянию: таблица и калькулятор"><meta property="og:description" content="Какая высота букв нужна баннеру, чтобы читалось с 10, 20, 50 метров. Таблица, калькулятор и расчёт предельной высоты по ширине баннера."><meta property="og:url" content="https://bannerbot.ru/vysota-shrifta/">
+<meta property="og:image" content="https://bannerbot.ru/static/og/og-image.jpg">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"BannerBot","item":"https://bannerbot.ru/"},{"@type":"ListItem","position":2,"name":"Высота шрифта на баннере по расстоянию","item":"https://bannerbot.ru/vysota-shrifta/"}]}</script>
+<style>body{margin:0;background:#f2f0eb;color:#1a1a1a;font:16px/1.6 system-ui,sans-serif}main{max-width:760px;margin:0 auto;padding:16px 20px 40px}a{color:#ff3c00}h1{font-size:28px;line-height:1.2}h2{margin-top:32px}.tw{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border:1px solid #d8d4cc;padding:6px 10px;text-align:left}.btn{display:inline-block;background:#ff3c00;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600}.calc label{display:block;margin:8px 0}input,select{font-size:16px;padding:4px}.bc{font-size:14px}details{margin:8px 0}</style>
+</head>
+<body><main>
+<p class="bc"><a href="/">BannerBot</a> › Высота шрифта на баннере по расстоянию</p>
+<h1>Высота шрифта на баннере по расстоянию</h1>
+<p>Два эмпирических правила: комфортно читается текст с высотой прописных около 25 мм на каждые 3 м; предел чтения примерно 1 мм на 0,3 м. Это ориентиры, а не стандарт: результат зависит от шрифта, контраста и освещения.</p>
+<h2>Таблица</h2><div class="tw"><table><tr><th>Расстояние, м</th><th>Комфортно: высота прописных, мм</th><th>Предел чтения: мм</th></tr><tr><td>5</td><td>42</td><td>17</td></tr><tr><td>10</td><td>83</td><td>33</td></tr><tr><td>20</td><td>167</td><td>67</td></tr><tr><td>30</td><td>250</td><td>100</td></tr><tr><td>50</td><td>417</td><td>167</td></tr><tr><td>100</td><td>833</td><td>333</td></tr></table></div><h2>Калькулятор</h2><div class="calc"><label>Расстояние до баннера, м <input id="d" type="number" value="20" min="1"></label>
+<p id="o1"></p>
+<label>Ширина баннера, мм <input id="w" type="number" value="2000" min="100" max="3000"></label>
+<label>Знаков в самой длинной строке <input id="n" type="number" value="12" min="1"></label>
+<label>Шрифт <select id="f"><option value="0.6">Golos Text / Tenor Sans</option>
+<option value="0.45">Fira Sans Cond / PT Sans Narrow</option></select></label>
+<p id="o2"></p></div>
+<script>(function(){var $=function(i){return document.getElementById(i)};function r(){
+var d=+$('d').value||1;$('o1').textContent='Высота прописных: комфортно от '+Math.round(d/0.12)+' мм, предел чтения около '+Math.round(d/0.3)+' мм.';
+var u=(+$('w').value||100)-60,n=+$('n').value||1,k=+$('f').value,c=0.7*u/(n*k);
+$('o2').textContent='В строку шириной '+u+' мм помещаются прописные высотой до ~'+Math.round(c)+' мм, это комфортно читается с '+Math.round(c*0.12)+' м.';}
+['d','w','n','f'].forEach(function(i){$(i).addEventListener('input',r)});r();})();</script><p>Второй расчёт оценочный: высота прописных принята равной 0,7 высоты кегля, средняя ширина знака 0,6 кегля у обычных гротесков и 0,45 у узких. Поля по 30 мм с каждой стороны учтены.</p><h2>Для движущегося зрителя</h2><p>У дороги текст нужно прочитать за пару секунд. При 60 км/ч (около 17 м/с) это порядка 35–50 м: комфортная высота букв 300–400 мм, поэтому строк должно быть мало.</p>
+<h2>Частые вопросы</h2><details><summary>Почему длинный телефон получается мелким?</summary><p>Строка ограничена шириной баннера: чем больше знаков, тем меньше кегль. Сократите текст или увеличьте ширину.</p></details>
+<p style="margin-top:32px"><a class="btn" href="/">Собрать макет — 299 ₽</a></p>
+<p class="bc">Читайте также: <a href="/razmery-bannerov/">Размеры баннеров: какой выбрать</a> · <a href="/trebovaniya-k-maketu/">Требования к макету баннера для печати</a></p>
+<p class="bc"><a href="/requisites.html">Реквизиты и оплата</a></p>
+</main></body></html>

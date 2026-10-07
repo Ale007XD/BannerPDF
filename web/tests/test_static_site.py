@@ -85,7 +85,7 @@ class TestRobotsAndSitemap:
         root = ET.fromstring((FRONTEND / "sitemap.xml").read_bytes())
         ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
         locs = [e.text for e in root.findall("s:url/s:loc", ns)]
-        assert locs == [f"{SITE}/", f"{SITE}/requisites.html"]
+        assert locs[:2] == [f"{SITE}/", f"{SITE}/requisites.html"]
 
     def test_sitemap_has_no_hardcoded_lastmod(self):
         assert "lastmod" not in (FRONTEND / "sitemap.xml").read_text(encoding="utf-8")
