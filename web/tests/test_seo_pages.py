@@ -23,7 +23,8 @@ def test_each_page_is_unique_and_well_formed():
         assert len(re.findall(r"<h1>", html)) == 1
         assert f'<link rel="canonical" href="{bp.SITE}/{p["slug"]}/">' in html
         assert p["title"] not in titles and p["desc"] not in descs
-        titles.add(p["title"]); descs.add(p["desc"])
+        titles.add(p["title"])
+        descs.add(p["desc"])
         assert len(p["desc"]) <= 200
         for w in ("ICC", "ISO Coated", "ISOcoated", "PDF/X-1a", "FOGRA", "ГОСТ"):
             assert w not in html, f'{p["slug"]}: «{w}»'
