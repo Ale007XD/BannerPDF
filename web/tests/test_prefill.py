@@ -154,3 +154,25 @@ def test_metrika_goals_on_generated_pages():
     assert html.count("data-ex=") == len(bp.examples())
     assert "example_click" in html and "cta_click" in html
     assert "webvisor" not in html
+
+
+def test_birthday_library_is_consistent():
+    bp = _build_pages()
+    ex = bp.examples(bp.BDAY_GROUPS, bp.BDAY_TARGET_MM)
+    assert len(ex) >= 20
+    all_ids = [e["id"] for e in ex] + [e["id"] for e in bp.examples()]
+    assert len(set(all_ids)) == len(all_ids)
+    for e in ex:
+        assert e["key"] in OPTS["sizeKeys"] and e["cap"] >= bp.BDAY_TARGET_MM, e["id"]
+        assert e["bg"] in OPTS["colorNames"] and e["color"] in OPTS["colorNames"] and e["bg"] != e["color"]
+        assert all(0 < len(line) <= 120 for line in e["lines"])
+    html = (WEB / "frontend" / "baner-na-den-rozhdeniya" / "index.html").read_text(encoding="utf-8")
+    assert html.count("data-ex=") == len(ex)
+
+
+@needs_node
+def test_birthday_links_prefill_exactly():
+    bp = _build_pages()
+    for e in bp.examples(bp.BDAY_GROUPS, bp.BDAY_TARGET_MM):
+        out = prefill("?" + urlsplit(e["href"]).query)
+        assert out["size"] == {"key": e["key"]} and out["lines"] == e["lines"], e["id"]

@@ -222,12 +222,12 @@ EXAMPLE_GROUPS = [
 ]
 
 
-def pick_size(lines):
+def pick_size(lines, target=TARGET_CAP_MM):
     """Наименьший размер, где самая длинная строка даёт прописные >= TARGET_CAP_MM и все строки помещаются по высоте."""
     n, count = max(len(x) for x in lines), len(lines)
     for key, w, h in SIZE_KEYS:
         cap = cap_mm(w, n)
-        if cap >= TARGET_CAP_MM and count * (cap / 0.7) * 1.3 <= h - 2 * SAFE_MM:
+        if cap >= target and count * (cap / 0.7) * 1.3 <= h - 2 * SAFE_MM:
             return key, w, h
     return SIZE_KEYS[-1]
 
@@ -238,19 +238,20 @@ def example_href(bg, color, key, lines):
     return "/?" + urlencode(params, quote_via=quote)
 
 
-def examples():
+def examples(groups=None, target=TARGET_CAP_MM):
     out = []
-    for group, bg, color, items in EXAMPLE_GROUPS:
+    for group, bg, color, items in groups or EXAMPLE_GROUPS:
         for ex_id, lines in items:
-            key, w, h = pick_size(lines)
+            key, w, h = pick_size(lines, target)
             out.append(dict(id=ex_id, group=group, lines=lines, key=key, bg=bg, color=color,
                             cap=cap_mm(w, max(len(x) for x in lines)), href=example_href(bg, color, key, lines)))
     return out
 
 
-def examples_html():
-    ex, html = examples(), ""
-    for group, _bg, _color, _items in EXAMPLE_GROUPS:
+def examples_html(groups=None, target=TARGET_CAP_MM):
+    groups = groups or EXAMPLE_GROUPS
+    ex, html = examples(groups, target), ""
+    for group, _bg, _color, _items in groups:
         html += f"<h3>{group}</h3><ul>"
         for e in (x for x in ex if x["group"] == group):
             text = " · ".join(_html.escape(x) for x in e["lines"])
@@ -264,10 +265,64 @@ def examples_html():
 
 TOK["{{EXAMPLES}}"] = examples_html
 
+BDAY_TARGET_MM = 83  # прописные, читаемые примерно с 10 м: зал, двор
+BDAY_GROUPS = [
+    ("Взрослым", "Синий", "Белый", [
+        ("bd-1", ["С ДНЁМ РОЖДЕНИЯ!"]),
+        ("bd-2", ["С ДНЁМ РОЖДЕНИЯ,", "МАМА!"]),
+        ("bd-3", ["С ДНЁМ РОЖДЕНИЯ,", "ПАПА!"]),
+        ("bd-4", ["С ДНЁМ РОЖДЕНИЯ,", "ЛЮБИМАЯ!"]),
+        ("bd-5", ["С ДНЁМ РОЖДЕНИЯ,", "ДОРОГОЙ!"]),
+        ("bd-6", ["С ДНЁМ РОЖДЕНИЯ,", "БАБУШКА!"]),
+        ("bd-7", ["С ДНЁМ РОЖДЕНИЯ,", "ДЕДУШКА!"])]),
+    ("Детям", "Желтый", "Синий", [
+        ("bd-8", ["С ДНЁМ РОЖДЕНИЯ,", "СЫНОЧЕК!"]),
+        ("bd-9", ["С ДНЁМ РОЖДЕНИЯ,", "ДОЧКА!"]),
+        ("bd-10", ["МНЕ ГОДИК!"]),
+        ("bd-11", ["МНЕ 5 ЛЕТ!"]),
+        ("bd-12", ["МНЕ 10 ЛЕТ!"]),
+        ("bd-13", ["ПРАЗДНИК ПРИШЁЛ!"]),
+        ("bd-14", ["С ДНЁМ РОЖДЕНИЯ,", "ПРИНЦЕССА!"]),
+        ("bd-15", ["С ДНЁМ РОЖДЕНИЯ,", "ГЕРОЙ!"])]),
+    ("Юбилей", "Черный", "Желтый", [
+        ("bd-16", ["С ЮБИЛЕЕМ!"]),
+        ("bd-17", ["С 18-ЛЕТИЕМ!"]),
+        ("bd-18", ["С 30-ЛЕТИЕМ!"]),
+        ("bd-19", ["С 50-ЛЕТИЕМ!"]),
+        ("bd-20", ["60 ЛЕТ,", "А ДУША МОЛОДАЯ!"]),
+        ("bd-21", ["30 ЛЕТ —", "ЭТО ТОЛЬКО НАЧАЛО!"]),
+        ("bd-22", ["С ЮБИЛЕЕМ,", "ДОРОГОЙ!"])]),
+]
+
+
+def bday_sizes_table():
+    n = len("С ДНЁМ РОЖДЕНИЯ!")
+    return table(["Размер", "Прописные для «С ДНЁМ РОЖДЕНИЯ!», мм", "Читается с, м"],
+                 [[LABELS[k], round(cap_mm(w, n)), round(cap_mm(w, n) * 0.12)] for k, w, h in SIZE_KEYS])
+
+
+TOK["{{BDAY}}"] = lambda: examples_html(BDAY_GROUPS, BDAY_TARGET_MM)
+TOK["{{BDAYSIZES}}"] = bday_sizes_table
+
+PAGES.append(dict(
+    slug="baner-na-den-rozhdeniya", title=f"Баннер на день рождения: {sum(len(g[3]) for g in BDAY_GROUPS)} готовых текста, размер и расстояние",
+    desc="Готовые тексты для баннера на день рождения и юбилей: взрослым и детям. К каждому подобран размер, кнопка открывает конструктор. Макет PDF для печати за 299 ₽.",
+    h1="Баннер на день рождения: готовые тексты", related=["chto-napisat-na-bannere", "vysota-shrifta", "razmery-bannerov"],
+    lead="Баннер из крупного текста на ровном цвете: имя, поздравление, возраст. Рисунков, шаров и фотографий в конструкторе нет, так что для декоративного баннера нужен другой редактор; зато макет для печати готов за минуту и стоит 299 ₽.",
+    sections=[("Размер и расстояние", [
+        f"Для зала и двора разумная цель читаемости около 10 м: прописные от {round(BDAY_TARGET_MM)} мм. Подборка ниже рассчитана на неё, для комнаты хватит размера меньше.",
+        "{{BDAYSIZES}}"]),
+        ("Готовые тексты", ["{{BDAY}}"]),
+        ("Что учесть", [
+            f"Имя подставьте в конструкторе, заменив слово в строке. Чем длиннее строка, тем мельче буквы: на ширине 1,5 м имя из 10 знаков даст прописные около {cap_mm(1500, 10):.0f} мм, из 16 около {cap_mm(1500, 16):.0f} мм.",
+            "Печать по готовому PDF делает типография: сроки и стоимость спросите у неё заранее, особенно если праздник скоро. Подгиб и люверсы входят в её работу, в файле их нет."])],
+    faq=[("Можно ли добавить фото или шары?", "Нет, в конструкторе только текст и цвет. Для картинок нужен другой редактор."),
+         ("Какой размер выбрать для дома?", "Для комнаты хватит 1,5×0,5 м; для двора и зала лучше от 2×1 м.")]))
+
 PAGES.append(dict(
     slug="chto-napisat-na-bannere", title="Что написать на баннере: 30 готовых текстов с размером и расстоянием",
     desc="Готовые тексты для баннера: открытие, скидки, аренда, услуги, поиск сотрудников. К каждому подобран размер и расстояние чтения, кнопка открывает конструктор.",
-    h1="Что написать на баннере: готовые тексты", related=["vysota-shrifta", "razmery-bannerov", "trebovaniya-k-maketu"],
+    h1="Что написать на баннере: готовые тексты", related=["baner-na-den-rozhdeniya", "vysota-shrifta", "razmery-bannerov", "trebovaniya-k-maketu"],
     lead="Хороший текст баннера короткий: от двух до трёх строк и без длинных слов. Ниже 30 готовых примеров; к каждому подобран размер, при котором буквы читаются примерно с 20 м, и кнопка, которая открывает конструктор с этим текстом.",
     sections=[("Как писать", [
         f"Читаемость определяет самая длинная строка. На баннере шириной 2 м строка из 10 знаков даёт прописные около {cap_mm(2000, 10):.0f} мм, из 20 знаков около {cap_mm(2000, 20):.0f} мм: каждый лишний знак уменьшает буквы.",
