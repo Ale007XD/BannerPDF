@@ -91,3 +91,5 @@ logs/
 *.pem
 *.key
 secrets/
+*.patch
+*.Identifier
