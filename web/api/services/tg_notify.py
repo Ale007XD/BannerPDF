@@ -11,6 +11,11 @@ Telegram-уведомления о новых заказах для админи
 Переменные окружения:
   TG_NOTIFY_TOKEN    — токен бота из @BotFather
   TG_ADMIN_CHAT_ID   — chat_id администратора (получить через @userinfobot)
+  TG_API_BASE        — (необязательно) адрес Bot API, по умолчанию https://api.telegram.org;
+                       нужен, если с сервера api.telegram.org недоступен и есть свой релей
+  TG_PROXY_URL       — (необязательно) HTTP(S)-прокси для запросов к Telegram,
+                       например http://user:pass@host:3128. Для socks5:// нужен
+                       пакет httpx[socks] (в requirements его нет)
 
 Если переменные не заданы — все функции работают как no-op (не падают).
 """
@@ -28,7 +33,11 @@ TG_NOTIFY_TOKEN  = os.getenv("TG_NOTIFY_TOKEN", "")
 TG_ADMIN_CHAT_ID = os.getenv("TG_ADMIN_CHAT_ID", "")
 SITE_BASE_URL    = os.getenv("SITE_BASE_URL", "https://bannerbot.ru")
 
-_TG_API = "https://api.telegram.org/bot{token}/{method}"
+TG_API_BASE      = os.getenv("TG_API_BASE", "https://api.telegram.org").rstrip("/")
+TG_PROXY_URL     = os.getenv("TG_PROXY_URL", "") or None
+
+# connect короткий: если Telegram недоступен с сервера, не держим запрос по 10 секунд
+_TG_TIMEOUT = httpx.Timeout(10.0, connect=4.0)
 
 
 def _enabled() -> bool:
@@ -39,16 +48,17 @@ async def _tg_post(method: str, payload: dict) -> Optional[dict]:
     """Выполняет POST-запрос к Telegram Bot API. Возвращает None при ошибке."""
     if not _enabled():
         return None
-    url = _TG_API.format(token=TG_NOTIFY_TOKEN, method=method)
+    url = f"{TG_API_BASE}/bot{TG_NOTIFY_TOKEN}/{method}"
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=_TG_TIMEOUT, proxy=TG_PROXY_URL) as client:
             resp = await client.post(url, json=payload)
             data = resp.json()
             if not data.get("ok"):
                 logger.warning("TG API %s: %s", method, data.get("description"))
             return data
     except Exception as e:
-        logger.error("TG notify error (%s): %s", method, e)
+        # у ConnectTimeout/ConnectError текст пустой, поэтому пишем имя класса; адрес с токеном не логируем
+        logger.error("TG notify error (%s): %s %s", method, type(e).__name__, e)
         return None
 
 

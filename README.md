@@ -323,6 +323,8 @@ docker exec bannerprint_nginx nginx -s reload
 | `TG_NOTIFY_TOKEN` | Токен `@BannerBotInfo_bot` (сигнальный бот) | |
 | `TG_ADMIN_CHAT_ID` | chat_id администратора | `195351142` |
 | `TG_WEBHOOK_SECRET` | Секрет TG webhook (только A-Z a-z 0-9 - _) | `token_hex(32)` |
+| `TG_API_BASE` | Адрес Bot API, если `api.telegram.org` недоступен с сервера (свой релей) | `https://api.telegram.org` |
+| `TG_PROXY_URL` | HTTP(S)-прокси для запросов к Telegram (необязательно; для `socks5://` нужен `httpx[socks]`) | `http://user:pass@host:3128` |
 | `ALLOWED_ORIGINS` | CORS origins | `https://bannerbot.ru` |
 | `WEB_DB_PATH` | Путь к SQLite БД | `/app/data/banner_web.db` |
 | `FONTS_DIR` | Директория с TTF-шрифтами | `/app/fonts` |
