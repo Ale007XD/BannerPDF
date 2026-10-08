@@ -1348,9 +1348,56 @@ function escapeHtml(str) {
 /* =====================================================================
    ИНИЦИАЛИЗАЦИЯ
    ===================================================================== */
+/* =====================================================================
+   ПРЕДЗАПОЛНЕНИЕ ИЗ URL (?size=…&text1=…&bg=…&color=…&font=…) — см. prefill.js
+   ===================================================================== */
+function applyUrlPrefill() {
+  if (typeof parsePrefill !== "function" || !window.location.search) return;
+
+  const sizeKeys = [...el.sizeGrid.querySelectorAll(".size-btn")].map((b) => b.dataset.size);
+  const fonts = [...el.fontList.querySelectorAll(".font-btn")].map((b) => b.dataset.font);
+  const pre = parsePrefill(window.location.search, {
+    sizeKeys,
+    fonts,
+    colorNames: state.colorNames,
+    maxLines: state.maxLines,
+    min: CUSTOM_SIZE_MIN,
+    max: CUSTOM_SIZE_MAX,
+  });
+
+  // Нажимаем существующие кнопки: так работают все их обработчики (в т.ч. защита цветов)
+  const clickBy = (container, selector, attr, value) => {
+    for (const b of container.querySelectorAll(selector)) {
+      if (b.dataset[attr] === value) { b.click(); return; }
+    }
+  };
+
+  let applied = false;
+  if (pre.size && pre.size.key) {
+    clickBy(el.sizeGrid, ".size-btn", "size", pre.size.key);
+    applied = true;
+  } else if (pre.size) {
+    el.customW.value = String(pre.size.w);
+    el.customH.value = String(pre.size.h);
+    handleCustomSizeInput();
+    applied = true;
+  }
+  if (pre.font) { clickBy(el.fontList, ".font-btn", "font", pre.font); applied = true; }
+  if (pre.bg) { clickBy(el.bgSwatches, ".swatch", "color", pre.bg); applied = true; }
+  if (pre.color) { clickBy(el.txtSwatches, ".swatch", "color", pre.color); applied = true; }
+  if (pre.lines.length) {
+    state.lines = pre.lines.map((text) => ({ text, scale: 1.0 }));
+    renderTextLines();
+    schedulePreview();
+    applied = true;
+  }
+  if (applied && typeof ym === "function") ym(108388194, "reachGoal", "prefill");
+}
+
 async function init() {
   await loadTemplates();
   renderTextLines(); // после loadTemplates — maxLines уже актуален
+  applyUrlPrefill();  // ссылки с SEO-страниц: размер, текст, цвета
 
   // Реферальный блок — управляется флагом REFERRAL_ENABLED
   const refCard = $("card-ref");

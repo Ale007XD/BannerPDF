@@ -61,7 +61,7 @@ class TestPreviewEndpoint:
     @pytest.mark.asyncio
     async def test_all_size_keys(self, client):
         """Все допустимые size_key возвращают 200."""
-        sizes = ["3x2", "2x1", "1x0.5", "1.5x1", "1.5x0.5"]
+        sizes = ["3x3", "3x2", "2x2", "2x1", "1x1", "1x0.5", "1.5x1", "1.5x0.5"]
         for size in sizes:
             payload = dict(VALID_PREVIEW, size_key=size)
             resp = await client.post("/api/preview", json=payload)
