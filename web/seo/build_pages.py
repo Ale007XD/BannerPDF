@@ -4,6 +4,7 @@
 Цифры в таблицах считаются здесь (размеры, люверсы, высота букв), а не копируются.
 Эмпирические правила (25 мм на 3 м, 1:300) — ориентиры, не стандарт; в тексте так и сказано.
 """
+import html as _html
 import math
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -84,7 +85,7 @@ PAGES = [
          faq=[("Нужен ли PDF/X?", "Требования зависят от типографии. Спросите, какой формат она принимает.")]),
     dict(slug="baner-arenda", title="Баннер «Аренда» с телефоном: размер, высота букв, текст",
          desc="Как сделать читаемый баннер «Аренда» с телефоном: подходящие размеры, высота цифр и расстояние, на котором он читается.",
-         h1="Баннер «Аренда» с телефоном", related=["vysota-shrifta", "razmery-bannerov"],
+         h1="Баннер «Аренда» с телефоном", related=["chto-napisat-na-bannere", "vysota-shrifta", "razmery-bannerov"],
          lead="Две строки: слово «АРЕНДА» и номер телефона. Телефон здесь главный и самый длинный элемент, он и задаёт размер букв.",
          sections=[("Размер и читаемость", ["На баннере 2×1 м номер из 11 цифр с дефисами (около 15 знаков) в обычном гротеске получается с прописными порядка 150 мм. По комфортному ориентиру это читается с 18 м. Для 30 м нужен баннер 3×1 м.",
                                           "Контрастные пары: чёрный на жёлтом, белый на красном, белый на синем. Избегайте близких по яркости сочетаний вроде красного на оранжевом."]),
@@ -99,7 +100,7 @@ PAGES = [
          faq=[("Нужен ли список услуг?", "Для дороги нет: названия и телефона достаточно. Список уместен на баннере у входа."), ("Какие цвета?", "Жёлтый на чёрном или белый на красном.")]),
     dict(slug="baner-mi-otkrylis", title="Баннер «Мы открылись»: размер, текст и сроки",
          desc="Как сделать баннер «Мы открылись» для нового магазина или кафе: размер, три строки текста и расчёт высоты букв.",
-         h1="Баннер «Мы открылись»", related=["vysota-shrifta", "razmery-bannerov"],
+         h1="Баннер «Мы открылись»", related=["chto-napisat-na-bannere", "vysota-shrifta", "razmery-bannerov"],
          lead="Фраза «МЫ ОТКРЫЛИСЬ!» занимает 13 знаков, поэтому для читаемости нужен баннер шире 2 м.",
          sections=[("Размер и текст", ["На 3×1 м прописные получаются порядка 250 мм (с 30 м). На 2×1 м уже около 190 мм (с 22 м).",
                                       "Три строки: «МЫ ОТКРЫЛИСЬ!», что вы продаёте, дата или адрес. Баннер временный, поэтому лишние детали не нужны: через месяц его заменят вывеской."])],
@@ -111,10 +112,18 @@ CHECK = table(["Требование", "В файле конструктора"]
                ["Поля безопасности", "30 мм от края"], ["Припуск под подгиб", "Нет"], ["Встроенный цветовой профиль", "Нет"]])
 TOK["{{CHECK}}"] = lambda: CHECK
 
+METRIKA = ('<script>(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};'
+           'm[i].l=1*new Date();k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,'
+           'a.parentNode.insertBefore(k,a)})(window,document,"script","https://mc.yandex.ru/metrika/tag.js","ym");'
+           'ym(108388194,"init",{clickmap:true,trackLinks:true,accurateTrackBounce:true});</script>')
+GOALS = ('<script>document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest("a[data-ex],a.btn");'
+         'if(!a||typeof ym!=="function")return;var ex=a.getAttribute("data-ex");'
+         'ym(108388194,"reachGoal",ex?"example_click":"cta_click",{example:ex||"",page:location.pathname});});</script>')
+
 CSS = ("body{margin:0;background:#f2f0eb;color:#1a1a1a;font:16px/1.6 system-ui,sans-serif}main{max-width:760px;margin:0 auto;padding:16px 20px 40px}"
        "a{color:#ff3c00}h1{font-size:28px;line-height:1.2}h2{margin-top:32px}.tw{overflow-x:auto}table{border-collapse:collapse;width:100%}"
        "td,th{border:1px solid #d8d4cc;padding:6px 10px;text-align:left}.btn{display:inline-block;background:#ff3c00;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600}"
-       ".calc label{display:block;margin:8px 0}input,select{font-size:16px;padding:4px}.bc{font-size:14px}details{margin:8px 0}")
+       "li{margin:14px 0}small{color:#5a5650}.ex{font-weight:600}.calc label{display:block;margin:8px 0}input,select{font-size:16px;padding:4px}.bc{font-size:14px}details{margin:8px 0}")
 
 
 def cap_mm(width_mm, chars, k=0.6):
@@ -165,6 +174,110 @@ PAGES.extend([
 ])
 
 
+# Размеры по возрастанию площади: (ключ конструктора, ширина, высота).
+SIZE_KEYS = [("1x0.5", 1000, 500), ("1.5x0.5", 1500, 500), ("1x1", 1000, 1000), ("1.5x1", 1500, 1000),
+             ("2x1", 2000, 1000), ("2x2", 2000, 2000), ("3x2", 3000, 2000), ("3x3", 3000, 3000)]
+TARGET_CAP_MM = 167  # прописные, комфортные примерно с 20 м (правило 25 мм на 3 м)
+LABELS = {"1x0.5": "1×0,5 м", "1.5x0.5": "1,5×0,5 м", "1x1": "1×1 м", "1.5x1": "1,5×1 м",
+          "2x1": "2×1 м", "2x2": "2×2 м", "3x2": "3×2 м", "3x3": "3×3 м"}
+
+# (рубрика, цвет фона, цвет текста, [(id, строки)]). Цвета — имена из templates.json.
+EXAMPLE_GROUPS = [
+    ("Открытие", "Красный", "Белый", [
+        ("open-1", ["МЫ ОТКРЫЛИСЬ!", "Кофейня у дома"]),
+        ("open-2", ["СКОРО ОТКРЫТИЕ", "Магазин продуктов"]),
+        ("open-3", ["ОТКРЫТО", "Ежедневно с 9 до 21"]),
+        ("open-4", ["МЫ ПЕРЕЕХАЛИ", "Новый адрес рядом"]),
+        ("open-5", ["ОТКРЫТИЕ", "Подарки всем"])]),
+    ("Акции и скидки", "Желтый", "Черный", [
+        ("sale-1", ["СКИДКА 20%", "До конца месяца"]),
+        ("sale-2", ["РАСПРОДАЖА", "Скидки до 50%"]),
+        ("sale-3", ["АКЦИЯ", "2-й товар в подарок"]),
+        ("sale-4", ["ВСЁ ПО 100 РУБЛЕЙ"]),
+        ("sale-5", ["ЛИКВИДАЦИЯ МАГАЗИНА", "Скидки на весь товар"])]),
+    ("Аренда и продажа", "Синий", "Белый", [
+        ("rent-1", ["АРЕНДА", "Ваш телефон"]),
+        ("rent-2", ["СДАЁТСЯ ПОМЕЩЕНИЕ", "Ваш телефон"]),
+        ("rent-3", ["ПРОДАЁТСЯ УЧАСТОК", "Ваш телефон"]),
+        ("rent-4", ["ПРОДАМ", "Ваш телефон"]),
+        ("rent-5", ["СДАМ В АРЕНДУ", "Ваш телефон"])]),
+    ("Услуги", "Черный", "Желтый", [
+        ("svc-1", ["ШИНОМОНТАЖ", "24 часа"]),
+        ("svc-2", ["АВТОСЕРВИС", "Ремонт и диагностика"]),
+        ("svc-3", ["РЕМОНТ ТЕЛЕФОНОВ", "Быстро и с гарантией"]),
+        ("svc-4", ["ДОСТАВКА ЕДЫ", "Ваш телефон"]),
+        ("svc-5", ["ГРУЗОПЕРЕВОЗКИ", "Ваш телефон"]),
+        ("svc-6", ["САЛОН КРАСОТЫ", "Запись по телефону"]),
+        ("svc-7", ["СТРОИТЕЛЬСТВО ДОМОВ", "Ваш телефон"])]),
+    ("Работа", "Зеленый", "Белый", [
+        ("job-1", ["ТРЕБУЕТСЯ СОТРУДНИК", "Ваш телефон"]),
+        ("job-2", ["НУЖНЫ ПРОДАВЦЫ", "График 2/2"]),
+        ("job-3", ["ПРИГЛАШАЕМ НА РАБОТУ", "Ваш телефон"])]),
+    ("Режим и объявления", "Белый", "Черный", [
+        ("info-1", ["РЕЖИМ РАБОТЫ", "Пн–Пт 9:00–18:00"]),
+        ("info-2", ["ПЕРЕРЫВ", "13:00–14:00"]),
+        ("info-3", ["ВХОД СО ДВОРА"]),
+        ("info-4", ["ПАРКОВКА", "ТОЛЬКО ДЛЯ КЛИЕНТОВ"]),
+        ("info-5", ["ЗАКРЫТО НА УЧЁТ", "Открываемся завтра"])]),
+]
+
+
+def pick_size(lines):
+    """Наименьший размер, где самая длинная строка даёт прописные >= TARGET_CAP_MM и все строки помещаются по высоте."""
+    n, count = max(len(x) for x in lines), len(lines)
+    for key, w, h in SIZE_KEYS:
+        cap = cap_mm(w, n)
+        if cap >= TARGET_CAP_MM and count * (cap / 0.7) * 1.3 <= h - 2 * SAFE_MM:
+            return key, w, h
+    return SIZE_KEYS[-1]
+
+
+def example_href(bg, color, key, lines):
+    params = {"size": key, "bg": bg, "color": color}
+    params.update({f"text{i}": t for i, t in enumerate(lines, 1)})
+    return "/?" + urlencode(params, quote_via=quote)
+
+
+def examples():
+    out = []
+    for group, bg, color, items in EXAMPLE_GROUPS:
+        for ex_id, lines in items:
+            key, w, h = pick_size(lines)
+            out.append(dict(id=ex_id, group=group, lines=lines, key=key, bg=bg, color=color,
+                            cap=cap_mm(w, max(len(x) for x in lines)), href=example_href(bg, color, key, lines)))
+    return out
+
+
+def examples_html():
+    ex, html = examples(), ""
+    for group, _bg, _color, _items in EXAMPLE_GROUPS:
+        html += f"<h3>{group}</h3><ul>"
+        for e in (x for x in ex if x["group"] == group):
+            text = " · ".join(_html.escape(x) for x in e["lines"])
+            meta = (f"{max(len(x) for x in e['lines'])} знаков в длинной строке · {LABELS[e['key']]} · "
+                    f"читается с ~{round(e['cap'] * 0.12)} м")
+            html += (f'<li><strong>{text}</strong><br><small>{meta}</small> '
+                     f'<a class="ex" data-ex="{e["id"]}" href="{e["href"]}">Использовать этот текст →</a></li>')
+        html += "</ul>"
+    return html
+
+
+TOK["{{EXAMPLES}}"] = examples_html
+
+PAGES.append(dict(
+    slug="chto-napisat-na-bannere", title="Что написать на баннере: 30 готовых текстов с размером и расстоянием",
+    desc="Готовые тексты для баннера: открытие, скидки, аренда, услуги, поиск сотрудников. К каждому подобран размер и расстояние чтения, кнопка открывает конструктор.",
+    h1="Что написать на баннере: готовые тексты", related=["vysota-shrifta", "razmery-bannerov", "trebovaniya-k-maketu"],
+    lead="Хороший текст баннера короткий: от двух до трёх строк и без длинных слов. Ниже 30 готовых примеров; к каждому подобран размер, при котором буквы читаются примерно с 20 м, и кнопка, которая открывает конструктор с этим текстом.",
+    sections=[("Как писать", [
+        f"Читаемость определяет самая длинная строка. На баннере шириной 2 м строка из 10 знаков даёт прописные около {cap_mm(2000, 10):.0f} мм, из 20 знаков около {cap_mm(2000, 20):.0f} мм: каждый лишний знак уменьшает буквы.",
+        "Формула из трёх частей: кто вы, что предлагаете, как связаться. Телефон или адрес выносите в отдельную строку. Хороший контраст дают чёрное на жёлтом, белое на красном, синем и зелёном.",
+        "Размеры подобраны по оценке (0,6 кегля на знак, прописные 0,7 кегля) и по цели 20 м; для дороги берите размер больше, для входа меньше. «Ваш телефон» замените своим номером в конструкторе."]),
+        ("Готовые тексты", ["{{EXAMPLES}}"])],
+    faq=[("Сколько строк оптимально?", "Две–три. Четвёртая уменьшает остальные."),
+         ("Можно ли изменить текст после перехода?", "Да, всё открывается в обычном конструкторе: текст, размер, цвета и шрифт редактируются до оплаты.")]))
+
+
 # Ссылки в конструктор с предзаполнением (см. frontend/prefill.js). Слова-заглушки
 # («Ваш телефон») пользователь заменяет сам; цена и PDF от этого не зависят.
 CTA = {
@@ -212,6 +325,7 @@ def render(p):
 <meta property="og:image" content="{SITE}/static/og/og-image.jpg">
 <script type="application/ld+json">{ld}</script>
 <style>{CSS}</style>
+{METRIKA}
 </head>
 <body><main>
 <p class="bc"><a href="/">BannerBot</a> › {p['h1']}</p>
@@ -222,7 +336,9 @@ def render(p):
 <p style="margin-top:32px"><a class="btn" href="{cta_href(p['slug'])}">Собрать макет — 299 ₽</a></p>
 <p class="bc">Читайте также: {rel}</p>
 <p class="bc"><a href="/requisites.html">Реквизиты и оплата</a></p>
-</main></body></html>
+</main>
+{GOALS}
+</body></html>
 """
 
 

@@ -115,3 +115,42 @@ def test_seo_cta_links_prefill_valid():
         html = (WEB / "frontend" / slug / "index.html").read_text(encoding="utf-8")
         assert f'href="{href}"' in html
     assert not re.search(r"\s", bp.cta_href("baner-arenda"))
+
+
+def _build_pages():
+    spec = importlib.util.spec_from_file_location("build_pages", WEB / "seo" / "build_pages.py")
+    bp = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bp)
+    return bp
+
+
+def test_example_library_is_consistent():
+    bp = _build_pages()
+    ex = bp.examples()
+    assert len(ex) >= 30
+    assert len({e["id"] for e in ex}) == len(ex)
+    for e in ex:
+        assert 1 <= len(e["lines"]) <= TEMPLATES["max_lines"], e["id"]
+        assert all(0 < len(line) <= 120 for line in e["lines"]), e["id"]
+        assert e["key"] in OPTS["sizeKeys"], e["id"]
+        assert e["bg"] in OPTS["colorNames"] and e["color"] in OPTS["colorNames"] and e["bg"] != e["color"]
+        assert e["cap"] >= bp.TARGET_CAP_MM, f'{e["id"]}: текст не помещается даже в самый большой размер'
+
+
+@needs_node
+def test_every_example_link_prefills_exactly():
+    bp = _build_pages()
+    for e in bp.examples():
+        out = prefill("?" + urlsplit(e["href"]).query)
+        assert out["size"] == {"key": e["key"]}, e["id"]
+        assert out["lines"] == e["lines"], e["id"]
+        assert (out["bg"], out["color"]) == (e["bg"], e["color"]), e["id"]
+
+
+def test_metrika_goals_on_generated_pages():
+    bp = _build_pages()
+    html = (WEB / "frontend" / "chto-napisat-na-bannere" / "index.html").read_text(encoding="utf-8")
+    assert "ym(108388194,\"init\"" in html
+    assert html.count("data-ex=") == len(bp.examples())
+    assert "example_click" in html and "cta_click" in html
+    assert "webvisor" not in html
