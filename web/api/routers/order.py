@@ -23,12 +23,13 @@ import logging
 import os
 import re
 import secrets
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..db import get_db
@@ -229,8 +230,39 @@ async def get_templates():
 # ---------------------------------------------------------------------------
 # POST /api/order
 # ---------------------------------------------------------------------------
+async def _notify_admin_in_background(order_id: str, **kwargs) -> None:
+    """
+    Telegram-уведомление админу о новом заказе — ПОСЛЕ ответа клиенту.
+
+    Раньше create_order ждал api.telegram.org (новый TLS-коннект, таймаут 10 с)
+    перед ответом, и окно оплаты открывалось на секунды позже, чем нужно.
+    Сбой уведомления не влияет на заказ: только запись в лог.
+    """
+    t0 = time.perf_counter()
+    try:
+        tg_message_id = await notify_new_order(order_id=order_id, **kwargs)
+        if tg_message_id:
+            with get_db() as conn:
+                conn.execute(
+                    "UPDATE web_orders SET tg_message_id = ? WHERE id = ?",
+                    (tg_message_id, order_id),
+                )
+    except Exception:
+        logger.exception("Не удалось отправить TG-уведомление по заказу %s", order_id)
+    logger.info("TG-уведомление по заказу %s: %.0f мс", order_id, (time.perf_counter() - t0) * 1000)
+
+
+def _server_timing(started: float, **parts_ms: float) -> str:
+    """Server-Timing для DevTools (вкладка Network → Timing): где ушло время на создание заказа."""
+    items = [f"{name};dur={ms:.0f}" for name, ms in parts_ms.items()]
+    items.append(f"total;dur={(time.perf_counter() - started) * 1000:.0f}")
+    return ", ".join(items)
+
+
 @router.post("/order")
-async def create_order(req: OrderRequest, request: Request):
+async def create_order(
+    req: OrderRequest, request: Request, background: BackgroundTasks, response: Response,
+):
     """
     Создаёт заказ и возвращает данные для оплаты.
 
@@ -252,6 +284,8 @@ async def create_order(req: OrderRequest, request: Request):
       6. Создаёт download_token (TTL 15 мин)
       7. Возвращает {order_id, amount_rub: 0, free: true, download_token}
     """
+    started = time.perf_counter()
+
     if not req.accept_terms:
         raise HTTPException(
             status_code=422,
@@ -364,20 +398,16 @@ async def create_order(req: OrderRequest, request: Request):
             order_id, applied_promo,
         )
 
-        tg_message_id = await notify_new_order(
-            order_id=order_id,
+        background.add_task(
+            _notify_admin_in_background,
+            order_id,
             amount_rub=0,
             size_label=size_label,
             lines=text_lines_list,
             font=req.font,
             promo_code=applied_promo,
         )
-        if tg_message_id:
-            with get_db() as conn:
-                conn.execute(
-                    "UPDATE web_orders SET tg_message_id = ? WHERE id = ?",
-                    (tg_message_id, order_id),
-                )
+        response.headers["Server-Timing"] = _server_timing(started)
 
         return {
             "order_id":       order_id,
@@ -387,6 +417,7 @@ async def create_order(req: OrderRequest, request: Request):
         }
 
     # --- Платный заказ ---
+    t_yk = time.perf_counter()
     try:
         payment = await create_payment(
             order_id=order_id,
@@ -400,6 +431,7 @@ async def create_order(req: OrderRequest, request: Request):
     except Exception as e:
         logger.error("Ошибка создания платежа для заказа %s: %s", order_id, e)
         raise HTTPException(status_code=500, detail="Ошибка создания платежа. Попробуйте позже.")
+    yk_ms = (time.perf_counter() - t_yk) * 1000
 
     # Сохраняем yookassa_payment_id для сверки в webhook
     with get_db() as conn:
@@ -413,20 +445,20 @@ async def create_order(req: OrderRequest, request: Request):
         order_id, req.size_key or f"{req.width_mm}x{req.height_mm}мм", amount_rub,
     )
 
-    # Уведомляем администратора в Telegram (no-op если TG_NOTIFY_TOKEN не задан)
-    tg_message_id = await notify_new_order(
-        order_id=order_id,
+    # Уведомляем администратора в Telegram после ответа клиенту
+    # (no-op если TG_NOTIFY_TOKEN не задан)
+    background.add_task(
+        _notify_admin_in_background,
+        order_id,
         amount_rub=amount_rub,
         size_label=size_label,
         lines=text_lines_list,
         font=req.font,
     )
-    if tg_message_id:
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE web_orders SET tg_message_id = ? WHERE id = ?",
-                (tg_message_id, order_id),
-            )
+
+    timing = _server_timing(started, yk=yk_ms)
+    response.headers["Server-Timing"] = timing
+    logger.info("Заказ %s: время ответа %s", order_id, timing)
 
     return {
         "order_id":           order_id,

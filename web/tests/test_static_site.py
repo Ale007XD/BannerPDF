@@ -203,7 +203,7 @@ class TestIndexHtml:
                 assert word not in html, f"{name}: заявление «{word}» не подтверждено файлом"
 
     def test_css_version_bumped_for_new_rules(self):
-        assert "style.css?v=16" in INDEX
+        assert "style.css?v=17" in INDEX
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +415,14 @@ PAGES = {
     "404.html": (FRONTEND / "404.html").read_text(encoding="utf-8"),
 }
 
+# Статические SEO-страницы (генерируются web/seo/build_pages.py): те же проверки ссылок, иконок и бренда
+SEO_PAGES = {
+    f"{p.parent.name}/index.html": p.read_text(encoding="utf-8")
+    for p in sorted(FRONTEND.glob("*/index.html"))
+    if p.parent.name != "admin"
+}
+ALL_PUBLIC_PAGES = {**PAGES, **SEO_PAGES}
+
 
 class TestLocalReferences:
     def test_parser_sees_the_references_it_should(self):
@@ -423,9 +431,12 @@ class TestLocalReferences:
         assert "style.css" in refs and "app.js" in refs
         assert len(refs) >= 10, refs
 
+    def test_seo_pages_are_found(self):
+        assert len(SEO_PAGES) >= 7, sorted(SEO_PAGES)  # иначе проверки ниже прошли бы вхолостую
+
     def test_every_local_reference_exists(self):
         missing = []
-        for name, html in PAGES.items():
+        for name, html in ALL_PUBLIC_PAGES.items():
             for ref in _local_refs(html):
                 if not _to_file(ref).is_file():
                     missing.append(f"{name}: {ref}")
@@ -457,7 +468,7 @@ class TestLocalReferences:
 
 class TestIconsAndOgImage:
     def test_icon_links_on_all_pages(self):
-        for name, html in PAGES.items():
+        for name, html in ALL_PUBLIC_PAGES.items():
             assert 'rel="icon" href="/favicon.ico"' in html, name
             assert 'rel="icon" href="/favicon.svg"' in html, name
             assert 'rel="apple-touch-icon" href="/apple-touch-icon.png"' in html, name
@@ -495,7 +506,7 @@ class TestBrand:
     ALL_PAGES = {**PAGES, "admin/index.html": (FRONTEND / "admin" / "index.html").read_text(encoding="utf-8")}
 
     def test_no_old_brand_in_any_page(self):
-        for name, html in self.ALL_PAGES.items():
+        for name, html in {**self.ALL_PAGES, **SEO_PAGES}.items():
             assert not re.search(r"banner\s*print", html, flags=re.I), name
             assert "Print</span>" not in html, f"{name}: старый логотип"
 
@@ -521,3 +532,62 @@ class TestBrand:
             assert f'" — {BRAND}"' in src, f"{rel}: описание платежа (попадает в чек)"
         gen = (api / "services" / "banner_generator.py").read_text(encoding="utf-8")
         assert f'setAuthor("{BRAND}")' in gen and f'setCreator("{BRAND}")' in gen
+
+
+# ---------------------------------------------------------------------------
+# Путь оплаты: SDK ЮKassa не блокирует страницу, окно оплаты открывается сразу
+# ---------------------------------------------------------------------------
+APP_JS = (FRONTEND / "app.js").read_text(encoding="utf-8")
+YK_SDK = "https://yookassa.ru/checkout-widget/v1/checkout-widget.js"
+
+
+def _function_body(src: str, header: str) -> str:
+    start = src.index(header)
+    nxt = re.search(r"\n(?:async )?function |\n/\* ={10,}", src[start + len(header):])
+    return src[start: start + len(header) + (nxt.start() if nxt else len(src))]
+
+
+class TestPaymentPathLatency:
+    def test_sdk_is_not_a_blocking_script_tag(self):
+        # синхронный <script src=yookassa.ru> перед app.js держал весь конструктор
+        assert "checkout-widget.js" not in INDEX
+        assert not re.search(r"<script[^>]+yookassa\.ru", INDEX)
+
+    def test_sdk_loaded_by_app_js_from_the_documented_url(self):
+        assert f'const YK_SDK_URL = "{YK_SDK}";' in APP_JS
+        loader = _function_body(APP_JS, "function loadYooKassaSdk()")
+        assert "script.async = true" in loader
+        assert "ykSdkPromise = null" in loader  # после сбоя следующая попытка грузит заново
+
+    def test_connection_to_yookassa_opened_early(self):
+        assert '<link rel="preconnect" href="https://yookassa.ru">' in INDEX
+
+    def test_sdk_prefetched_on_load_and_on_confirm_screen(self):
+        assert re.search(r'addEventListener\("load",\s*\(\)\s*=>\s*loadYooKassaSdk\(\)', APP_JS)
+        assert "loadYooKassaSdk()" in _function_body(APP_JS, "function openConfirm()")
+
+    def test_pay_window_opens_before_the_server_answers(self):
+        body = _function_body(APP_JS, "async function createOrder(payload)")
+        assert body.index("showPayLoading()") < body.index("await fetch(API.order")
+
+    def test_closing_the_window_cancels_a_late_widget(self):
+        body = _function_body(APP_JS, "async function createOrder(payload)")
+        assert "attempt !== payAttempt" in body
+        assert "payAttempt++" in _function_body(APP_JS, "function showPayLoading(")
+        widget = _function_body(APP_JS, "async function openYooKassaWidget(")
+        assert widget.count("attempt !== payAttempt") >= 1 and "payAttempt++" in widget
+
+    def test_loader_stays_until_the_payment_form_iframe_loads(self):
+        widget = _function_body(APP_JS, "async function openYooKassaWidget(")
+        assert 'form.querySelector("iframe")' in widget
+        assert 'addEventListener("load", hideLoader' in widget
+        assert "setTimeout(" in widget  # страховка, если iframe не появится
+
+    def test_sdk_failure_is_reported_to_the_user(self):
+        widget = _function_body(APP_JS, "async function openYooKassaWidget(")
+        assert "Не удалось открыть форму оплаты" in widget
+        assert "hideModal(el.modalPay)" in widget
+
+    def test_loader_style_exists_and_assets_bumped(self):
+        assert ".pay-loading" in CSS
+        assert "app.js?v=17" in INDEX

@@ -795,6 +795,7 @@ function addConfirmMeta(label, value) {
 /** Показывает итоговый текст и параметры макета; оплата доступна только после отметки. */
 function openConfirm() {
   pendingConfig = buildConfig();
+  loadYooKassaSdk().catch(() => {});   // если при загрузке страницы не вышло — пробуем заранее
 
   // Текст — только через textContent (ввод пользователя, не HTML)
   el.confirmLines.replaceChildren(
@@ -840,10 +841,15 @@ el.confirmPay.addEventListener("click", () => {
 });
 
 async function createOrder(payload) {
+  const attempt = ++payAttempt;
   el.buyBtn.disabled = true;
   el.buyBtn.textContent = "Создаём заказ...";
   syncBuyButtons();
   if (typeof ym !== 'undefined') ym(108388194, 'reachGoal', 'start_order');
+
+  // Окно оплаты с индикатором — сразу: пока сервер создаёт платёж в ЮKassa, пользователь
+  // видит, что процесс идёт (раньше был виден только текст на кнопке под затемнением).
+  showPayLoading();
 
   try {
     const resp = await fetch(API.order, {
@@ -862,6 +868,7 @@ async function createOrder(payload) {
 
     // Бесплатный заказ (промокод 100% скидки) — пропускаем ЮКасса
     if (data.free && data.download_token) {
+      hideModal(el.modalPay);
       state.promoCode = "";
       if (el.promoInput)  { el.promoInput.value  = ""; }
       if (el.promoStatus) { el.promoStatus.textContent = ""; el.promoStatus.className = "promo-status"; }
@@ -874,10 +881,16 @@ async function createOrder(payload) {
       return;
     }
 
+    // Окно закрыли, пока создавался заказ: заказ остаётся неоплаченным, виджет не нужен
+    if (attempt !== payAttempt) return;
+
     // Инициализируем виджет ЮKassa с полученным confirmation_token
-    openYooKassaWidget(data.confirmation_token, data.order_id);
+    await openYooKassaWidget(data.confirmation_token, data.order_id, attempt);
   } catch (e) {
-    showError("Не удалось создать заказ", e.message);
+    if (attempt === payAttempt) {
+      hideModal(el.modalPay);
+      showError("Не удалось создать заказ", e.message);
+    }
   } finally {
     el.buyBtn.disabled = false;
     el.buyBtn.textContent = BUY_BTN_TEXT;
@@ -889,19 +902,103 @@ async function createOrder(payload) {
    ОПЛАТА — виджет ЮKassa
    ===================================================================== */
 
+const YK_SDK_URL = "https://yookassa.ru/checkout-widget/v1/checkout-widget.js";
+let ykSdkPromise = null;
+
+/** Номер попытки оплаты: закрытие окна во время создания заказа отменяет показ виджета. */
+let payAttempt = 0;
+
+/**
+ * Подгружает SDK виджета ЮKassa один раз и не блокирует страницу.
+ * Раньше он стоял синхронным <script> перед app.js: конструктор не оживал,
+ * пока yookassa.ru не отдаст файл. После сбоя следующий вызов пробует заново.
+ */
+function loadYooKassaSdk() {
+  if (window.YooMoneyCheckoutWidget) return Promise.resolve();
+  if (!ykSdkPromise) {
+    ykSdkPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = YK_SDK_URL;
+      script.async = true;
+      const fail = (msg) => { script.remove(); ykSdkPromise = null; reject(new Error(msg)); };
+      script.onload = () => (window.YooMoneyCheckoutWidget
+        ? resolve()
+        : fail("SDK ЮKassa не инициализировался"));
+      script.onerror = () => fail("SDK ЮKassa не загрузился");
+      document.head.appendChild(script);
+    });
+  }
+  return ykSdkPromise;
+}
+
+// Грузим SDK заранее, как только страница готова, и ещё раз при открытии экрана проверки
+window.addEventListener("load", () => loadYooKassaSdk().catch(() => {}));
+
+/** Окно «Оплата» с индикатором: показывается сразу после нажатия «Оплатить». */
+function showPayLoading(text = "Готовим оплату…") {
+  const loader = document.createElement("div");
+  loader.className = "pay-loading";
+  const spinner = document.createElement("div");
+  spinner.className = "wait-spinner";
+  const label = document.createElement("div");
+  label.className = "modal-text";
+  label.textContent = text;
+  loader.append(spinner, label);
+
+  document.getElementById("yookassa-widget-container").replaceChildren(loader);
+  el.payClose.onclick = () => {
+    payAttempt++;
+    hideModal(el.modalPay);
+  };
+  showModal(el.modalPay);
+}
+
 /**
  * Открывает виджет ЮKassa (YooMoneyCheckoutWidget) с переданным токеном.
  * После успешной оплаты виджет вызывает onSuccess → запускаем поллинг.
  * После закрытия без оплаты (onClose) — ничего не делаем, пользователь
  * может нажать «Получить PDF» снова.
+ * Индикатор остаётся, пока не загрузится iframe с формой оплаты.
  *
  * @param {string} confirmationToken — токен из POST /api/order
  * @param {string} orderId           — наш UUID заказа
+ * @param {number} attempt           — номер попытки (см. payAttempt)
  */
-function openYooKassaWidget(confirmationToken, orderId) {
-  // Чистим контейнер от предыдущих iframe
+async function openYooKassaWidget(confirmationToken, orderId, attempt) {
+  try {
+    await loadYooKassaSdk();
+  } catch (e) {
+    console.error(e);
+    if (attempt === payAttempt) {
+      hideModal(el.modalPay);
+      showError(
+        "Не удалось открыть форму оплаты",
+        "Проверьте соединение и отключите блокировщик рекламы для этого сайта, затем попробуйте ещё раз."
+      );
+    }
+    return;
+  }
+  if (attempt !== payAttempt) return;   // окно закрыли, пока грузился SDK
+
   const container = document.getElementById("yookassa-widget-container");
-  container.innerHTML = "";
+  const loader = container.querySelector(".pay-loading");
+  if (loader) loader.querySelector(".modal-text").textContent = "Загружаем форму оплаты…";
+
+  // Чистим контейнер от предыдущих iframe: форма живёт в своём блоке рядом с индикатором
+  const form = document.createElement("div");
+  form.id = "yookassa-widget-form";
+  container.replaceChildren(...(loader ? [loader] : []), form);
+
+  const hideLoader = () => { if (loader) loader.remove(); };
+  const watcher = new MutationObserver(() => {
+    const frame = form.querySelector("iframe");
+    if (frame) {
+      watcher.disconnect();
+      frame.addEventListener("load", hideLoader, { once: true });
+    }
+  });
+  watcher.observe(form, { childList: true, subtree: true });
+  setTimeout(() => { watcher.disconnect(); hideLoader(); }, 10000);   // страховка
 
   const checkout = new window.YooMoneyCheckoutWidget({
     confirmation_token: confirmationToken,
@@ -932,13 +1029,12 @@ function openYooKassaWidget(confirmationToken, orderId) {
 
   // Кнопка закрытия модалки
   el.payClose.onclick = () => {
+    payAttempt++;
     checkout.destroy();
     hideModal(el.modalPay);
   };
 
-  // Показываем модалку и рендерим виджет внутрь контейнера
-  showModal(el.modalPay);
-  checkout.render("yookassa-widget-container");
+  checkout.render("yookassa-widget-form");
   if (typeof ym !== 'undefined') ym(108388194, 'reachGoal', 'payment_started');
 }
 
