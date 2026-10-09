@@ -4,6 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>BannerBot — Админ</title>
+  <link rel="manifest" href="/admin/manifest.json">
+  <meta name="theme-color" content="#1a1a1a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="BB Админ">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
@@ -398,6 +405,12 @@
       white-space: nowrap;
       animation: toast-in 0.2s ease;
     }
+    /* ---- Уведомления на устройстве ---- */
+    .push-status { font-size: 13px; color: var(--ink-2); line-height: 1.45; margin-bottom: 10px; }
+    .push-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .push-actions .btn { width: auto; flex: 1 1 140px; margin-top: 0; }
+    .remember-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--ink-2); }
+    .order-card--focus { outline: 2px solid var(--accent); outline-offset: 2px; }
     .toast--ok  { background: var(--ok); }
     .toast--err { background: var(--accent); }
     @keyframes toast-in {
@@ -424,10 +437,24 @@
            placeholder="Admin token" autocomplete="current-password">
     <button class="btn btn--accent" id="auth-btn">Войти</button>
     <div class="auth-error" id="auth-error"></div>
+    <label class="remember-row">
+      <input type="checkbox" id="remember-token">
+      Запомнить на этом устройстве (для приложения на телефоне)
+    </label>
   </div>
 
   <!-- ---- ОСНОВНОЙ UI ---- -->
   <div id="main-ui">
+
+    <!-- Уведомления на этом устройстве (Web Push) -->
+    <div class="card" id="push-card">
+      <div class="card-label">Уведомления на этом устройстве</div>
+      <div class="push-status" id="push-status">Проверяем…</div>
+      <div class="push-actions">
+        <button class="btn btn--accent" id="push-toggle" style="display:none;"></button>
+        <button class="btn btn--ghost" id="push-test" style="display:none;">Отправить проверку</button>
+      </div>
+    </div>
 
     <!-- Вкладки -->
     <div class="card" style="padding:8px;">
@@ -537,9 +564,28 @@ const STATUS_LABEL = {
 /* =====================================================================
    СОСТОЯНИЕ
    ===================================================================== */
-let _token  = sessionStorage.getItem("bp_admin_token") || "";
-let _filter = "pending";   // "pending" | "all"
+const TOKEN_KEY = "bp_admin_token";
+// «Запомнить на этом устройстве» (localStorage) нужно для приложения на телефоне: иначе после
+// закрытия токен придётся вводить заново. По умолчанию токен живёт только в sessionStorage.
+function loadSavedToken() {
+  try { return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
+}
+function saveToken(token, remember) {
+  try {
+    sessionStorage.setItem(TOKEN_KEY, token);
+    if (remember) localStorage.setItem(TOKEN_KEY, token); else localStorage.removeItem(TOKEN_KEY);
+  } catch { /* приватный режим: токен останется только в памяти страницы */ }
+}
+function forgetToken() {
+  try { sessionStorage.removeItem(TOKEN_KEY); localStorage.removeItem(TOKEN_KEY); } catch { /* нечего чистить */ }
+}
+
+let _token  = loadSavedToken();
+const _params = new URLSearchParams(location.search);
+let _highlight = _params.get("order");   // ?order=<id> из уведомления: подсветить заказ
+let _filter = _highlight ? "all" : "pending";   // "pending" | "all"; из уведомления сразу все заказы
 let _timer  = null;
+let _highlightScrolled = false;
 
 /* =====================================================================
    DOM
@@ -614,7 +660,7 @@ async function tryLogin() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
     _token = token;
-    sessionStorage.setItem("bp_admin_token", token);
+    saveToken(token, $("remember-token").checked);
     showMainUi();
   } catch (e) {
     el.authError.textContent = "Ошибка соединения";
@@ -627,13 +673,14 @@ function showMainUi() {
   el.authCard.style.display = "none";
   el.mainUi.style.display   = "block";
   startAutoRefresh();
+  pushInit();
 }
 
 el.authBtn.addEventListener("click", tryLogin);
 el.tokenInput.addEventListener("keydown", (e) => { if (e.key === "Enter") tryLogin(); });
 
 el.logoutBtn.addEventListener("click", () => {
-  sessionStorage.removeItem("bp_admin_token");
+  forgetToken();
   _token = "";
   clearInterval(_timer);
   el.mainUi.style.display   = "none";
@@ -644,6 +691,10 @@ el.logoutBtn.addEventListener("click", () => {
 /* =====================================================================
    ФИЛЬТРЫ
    ===================================================================== */
+if (_highlight) {
+  document.querySelectorAll(".filter-btn").forEach((b) => b.classList.toggle("active", b.dataset.filter === "all"));
+}
+
 document.querySelectorAll(".filter-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".filter-btn").forEach((b) => b.classList.remove("active"));
@@ -712,6 +763,7 @@ function renderOrders(orders) {
   orders.forEach((o) => {
     const card = document.createElement("div");
     card.className = `order-card order-card--${o.status}`;
+    card.dataset.orderId = o.id;
 
     const shortId    = o.id.slice(0, 6).toUpperCase();
     const statusText = STATUS_LABEL[o.status] || o.status;
@@ -746,6 +798,14 @@ function renderOrders(orders) {
 
     el.ordersList.appendChild(card);
   });
+
+  if (_highlight) {
+    const target = [...el.ordersList.children].find((c) => c.dataset.orderId === _highlight);
+    if (target) {
+      target.classList.add("order-card--focus");
+      if (!_highlightScrolled) { target.scrollIntoView({ block: "center" }); _highlightScrolled = true; }
+    }
+  }
 }
 
 /* =====================================================================
@@ -954,6 +1014,151 @@ async function deactivateKey(keyId) {
 }
 
 /* =====================================================================
+   УВЕДОМЛЕНИЯ НА УСТРОЙСТВЕ (Web Push, service worker /admin/sw.js)
+   ===================================================================== */
+let _swReg   = null;
+let _pushKey = null;
+
+function pushSupported() {
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+function isIos() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+         (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+function isStandalone() {
+  return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+}
+
+function urlBase64ToUint8Array(b64) {
+  const raw = atob((b64 + "=".repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+function sameKey(buffer, b64) {
+  if (!buffer) return false;
+  const a = new Uint8Array(buffer), b = urlBase64ToUint8Array(b64);
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+function setPushUi(status, { toggle = null, test = false } = {}) {
+  $("push-status").textContent = status;
+  const btn = $("push-toggle");
+  btn.style.display = toggle ? "" : "none";
+  btn.textContent   = toggle || "";
+  btn.disabled      = false;
+  $("push-test").style.display = test ? "" : "none";
+}
+
+async function pushSendSubscription(sub) {
+  const resp = await fetch(`${API_BASE}/admin/push/subscribe`, {
+    method:  "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body:    JSON.stringify(sub.toJSON()),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${resp.status}`);
+  }
+}
+
+async function pushRefreshState() {
+  if (Notification.permission === "denied") {
+    setPushUi("Уведомления запрещены в настройках браузера для этого сайта.");
+    return;
+  }
+  let sub = await _swReg.pushManager.getSubscription();
+  if (sub && !sameKey(sub.options && sub.options.applicationServerKey, _pushKey)) {
+    await sub.unsubscribe();   // сервер сменил ключ VAPID: старая подписка ему не подходит
+    sub = null;
+  }
+  if (sub) {
+    // На сервере подписка могла пропасть (очистка, лимит устройств): повторная отправка идемпотентна
+    await pushSendSubscription(sub).catch(() => {});
+    setPushUi("Включены: новые заказы и оплаты придут на это устройство.", { toggle: "Выключить", test: true });
+  } else {
+    setPushUi("Выключены.", { toggle: "Включить уведомления" });
+  }
+}
+
+async function pushInit() {
+  if (!pushSupported()) {
+    setPushUi(isIos() && !isStandalone()
+      ? "На iPhone уведомления работают только в приложении: «Поделиться» → «На экран Домой», затем откройте иконку."
+      : "Этот браузер не поддерживает push-уведомления.");
+    return;
+  }
+  try {
+    _swReg = await navigator.serviceWorker.register("/admin/sw.js", { scope: "/admin/" });
+    await navigator.serviceWorker.ready;
+  } catch {
+    setPushUi("Не удалось запустить service worker.");
+    return;
+  }
+  try {
+    const resp = await fetch(`${API_BASE}/admin/push/config`, { headers: authHeaders() });
+    const cfg  = await resp.json();
+    if (!cfg.enabled) {
+      setPushUi("Web Push не настроен на сервере (нужен VAPID_PRIVATE_KEY).");
+      return;
+    }
+    _pushKey = cfg.public_key;
+    await pushRefreshState();
+  } catch {
+    setPushUi("Нет связи с сервером.");
+  }
+}
+
+async function pushToggle() {
+  const btn = $("push-toggle");
+  btn.disabled = true;
+  try {
+    const existing = await _swReg.pushManager.getSubscription();
+    if (existing) {
+      await existing.unsubscribe();
+      await fetch(`${API_BASE}/admin/push/unsubscribe`, {
+        method:  "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body:    JSON.stringify({ endpoint: existing.endpoint }),
+      }).catch(() => {});
+      showToast("Уведомления выключены", "ok");
+    } else {
+      if ((await Notification.requestPermission()) !== "granted") {
+        await pushRefreshState();
+        return;
+      }
+      const sub = await _swReg.pushManager.subscribe({
+        userVisibleOnly:      true,
+        applicationServerKey: urlBase64ToUint8Array(_pushKey),
+      });
+      await pushSendSubscription(sub);
+      showToast("✓ Уведомления включены", "ok");
+    }
+  } catch (e) {
+    showToast(`Ошибка: ${e.message}`, "err");
+  }
+  await pushRefreshState();
+}
+
+async function pushTest() {
+  const btn = $("push-test");
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`${API_BASE}/admin/push/test`, { method: "POST", headers: authHeaders() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const r = await resp.json();
+    showToast(r.sent ? `Отправлено устройств: ${r.sent}` : "Не доставлено: включите уведомления заново", r.sent ? "ok" : "err");
+  } catch (e) {
+    showToast(`Ошибка: ${e.message}`, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("push-toggle").addEventListener("click", pushToggle);
+$("push-test").addEventListener("click", pushTest);
+
+/* =====================================================================
    ИНИЦИАЛИЗАЦИЯ
    ===================================================================== */
 // Если токен уже сохранён — пробуем сразу войти
@@ -964,7 +1169,7 @@ if (_token) {
       if (resp.ok) {
         showMainUi();
       } else {
-        sessionStorage.removeItem("bp_admin_token");
+        forgetToken();
         _token = "";
       }
     } catch {

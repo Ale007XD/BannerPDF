@@ -7,3 +7,4 @@ pydantic==2.7.1
 pydantic-settings==2.2.1
 python-multipart==0.0.9
 email-validator==2.1.1
+pywebpush==2.0.3          # Web Push админке (PWA): шифрование RFC 8291 + VAPID

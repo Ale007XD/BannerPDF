@@ -36,6 +36,7 @@ from ..db import get_db
 from ..services.config import BANNER_SIZES
 from ..services.order_store import save_pending
 from ..services.payment import create_payment
+from ..services.push_notify import push_new_order
 from ..services.sanitizer import sanitize_text_lines, validate_banner_config
 from ..services.tg_notify import notify_new_order
 from ..services.token_store import create_token
@@ -239,6 +240,13 @@ async def _notify_admin_in_background(order_id: str, **kwargs) -> None:
     Сбой уведомления не влияет на заказ: только запись в лог.
     """
     t0 = time.perf_counter()
+    # Web Push (PWA админки) — первым: он быстрый и не зависит от доступности Telegram
+    try:
+        await push_new_order(
+            order_id, kwargs.get("amount_rub", 0), kwargs.get("size_label", ""), kwargs.get("promo_code"),
+        )
+    except Exception:
+        logger.exception("Не удалось отправить Web Push по заказу %s", order_id)
     try:
         tg_message_id = await notify_new_order(order_id=order_id, **kwargs)
         if tg_message_id:

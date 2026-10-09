@@ -144,3 +144,18 @@ CREATE TABLE IF NOT EXISTS referrals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id);
+
+-- ------------------------------------------------------------
+-- Подписки Web Push: устройства админа, на которые уходят уведомления о заказах
+-- (PWA админки, services/push_notify.py). Один endpoint = одно устройство/браузер.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    endpoint    TEXT    NOT NULL UNIQUE,   -- адрес в push-сервисе браузера (FCM, Mozilla, Apple, WNS)
+    p256dh      TEXT    NOT NULL,          -- публичный ключ устройства, base64url
+    auth        TEXT    NOT NULL,          -- секрет аутентификации, base64url
+    user_agent  TEXT,                      -- для списка устройств, обрезан до 200 символов
+    fail_count  INTEGER NOT NULL DEFAULT 0,-- подряд неудачных отправок; сбрасывается при успехе
+    created_at  TEXT    NOT NULL,
+    last_ok_at  TEXT
+);

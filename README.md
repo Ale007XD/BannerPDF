@@ -23,6 +23,7 @@
 - [Корп. API тарифы](#корп-api-тарифы)
 - [Тесты](#тесты)
 - [Nginx и rate limits](#nginx-и-rate-limits)
+- [Web Push и PWA админки](#web-push-и-pwa-админки)
 - [152-ФЗ](#152-фз)
 - [Pending tasks](#pending-tasks)
 
@@ -148,6 +149,7 @@ BannerPDF/
 │   │   │   ├── payment_selfwork.py  # POST /api/payment/callback (Selfwork, запасной)
 │   │   │   ├── download.py       # GET /api/download/{token}
 │   │   │   ├── admin.py          # stats|orders|funnel + force_token + order audit
+│   │   │   ├── push.py           # /api/admin/push/* — подписка устройств админа (Web Push)
 │   │   │   ├── referral.py       # Реферальная программа
 │   │   │   ├── corp_api.py       # Корп. API (Trial + платные тарифы)
 │   │   │   ├── batch.py          # Batch-рендер
@@ -162,6 +164,7 @@ BannerPDF/
 │   │       ├── payment_selfwork.py  # Selfwork: compute_init_signature(), verify_selfwork_callback()
 │   │       ├── token_store.py       # create_token(), consume_token() — SQLite
 │   │       ├── order_store.py       # save_pending(), get_pending() — SQLite
+│   │       ├── push_notify.py       # Web Push (VAPID) админу: push_new_order(), push_order_paid()
 │   │       ├── referral_store.py    # accrue_commission() 15%
 │   │       ├── api_key_store.py     # generate_key(), verify_key()
 │   │       ├── batch_worker.py      # asyncio.Queue + ProcessPoolExecutor
@@ -172,7 +175,10 @@ BannerPDF/
 │   │   ├── style.css             # v7: mobile-first, sticky превью, двухколонка ≥820px
 │   │   ├── app.js                # v13: openYooKassaWidget(), поллинг, FONT_CSS_MAP, промокоды
 │   │   └── admin/
-│   │       └── index.html        # Adminка: заказы, корп. ключи (Trial бейдж)
+│   │       ├── index.html        # Adminка: заказы, корп. ключи (Trial бейдж), карточка «Уведомления»
+│   │       ├── sw.js             # Service worker: только Web Push, без кэша
+│   │       ├── manifest.json     # PWA: установка на экран «Домой»
+│   │       └── icons/            # 192/512 + maskable 512
 │   │
 │   ├── nginx/
 │   │   └── default.conf          # Server-блоки: 80→443 редирект, 443 HTTPS, 88 TG webhook
@@ -330,6 +336,8 @@ docker exec bannerprint_nginx nginx -s reload
 | `FONTS_DIR` | Директория с TTF-шрифтами | `/app/fonts` |
 | `BATCH_DIR` | Временная директория для batch ZIP | `/tmp/bannerprint_batches` |
 | `UVICORN_WORKERS` | Количество воркеров (строго 1) | `1` |
+| `VAPID_PRIVATE_KEY` | Приватный ключ Web Push (VAPID). Пусто — push в админку выключен | `genkey`, см. «Web Push» |
+| `VAPID_SUBJECT` | Контакт в VAPID-токене (`mailto:` или `https://`) | по умолчанию `SITE_BASE_URL` |
 
 > Selfwork-переменные (`SELFWORK_SHOP_ID`, `SELFWORK_API_KEY`) нужны только при переключении на запасной провайдер.
 
@@ -379,6 +387,10 @@ GET        /api/admin/stats                  — Общая статистика
 GET        /api/admin/orders                 — Список заказов с пагинацией
 GET        /api/admin/funnel                 — Воронка конверсии
 POST       /api/admin/force_token/{order_id} — Ручная выдача PDF-токена
+GET        /api/admin/push/config            — Публичный VAPID-ключ для подписки устройства
+POST       /api/admin/push/subscribe         — Сохранить подписку устройства (PushSubscription)
+POST       /api/admin/push/unsubscribe       — Удалить подписку по endpoint
+POST       /api/admin/push/test              — Проверочное уведомление на все устройства
 POST/GET/DELETE /api/v1/admin/keys           — Управление корп. ключами
 GET        /api/referral/admin/list          — Список рефереров
 POST       /api/referral/admin/payout/{code} — Вывод баланса
@@ -709,11 +721,56 @@ GS замокан в `conftest.py` — тесты работают без Ghosts
 | `order_limit` | 5 req/min/IP | 2 | `POST /api/order` |
 | `download_limit` | 10 req/min/IP | 3 | `GET /api/download/*` |
 
-`/admin/` обслуживается отдельным `location /admin/` с `alias /app/frontend/admin/`. Rate limit не применяется — защита на уровне `ADMIN_TOKEN`.
+`/admin/` обслуживается отдельным `location /admin/` с `alias /app/frontend/admin/`. Rate limit не применяется — защита на уровне `ADMIN_TOKEN`. `sw.js`, `manifest.json` и иконки PWA отдаются тем же `location`, менять nginx не нужно.
 
 > ❌ `proxy_params` не использовать — вызывает конфликт директив.
 > ❌ `listen 443 ssl http2` → использовать `listen 443 ssl;` (http2 добавляется отдельно позже).
 > ❌ nginx монтирует только `nginx/default.conf` → `/etc/nginx/conf.d/default.conf`.
+
+---
+
+## Web Push и PWA админки
+
+Уведомления о новых заказах и оплатах прямо на телефон/компьютер админа, **без Telegram**: сайт сам шлёт
+сообщение в push-сервис браузера (FCM — Chrome/Android, Mozilla, Apple — Safari/iOS, WNS — Edge), тот будит
+service worker `/admin/sw.js`, появляется системное уведомление; нажатие открывает заказ (`/admin/?order=<id>`).
+Работает параллельно с Telegram-уведомлениями и не зависит от доступности `api.telegram.org`.
+
+### Включение (один раз)
+
+```bash
+# 1. Сгенерировать ключ VAPID (выводится один раз — сразу сохранить)
+docker exec bannerprint_api python -m api.services.push_notify genkey
+
+# 2. Прописать в web/.env (рядом с ADMIN_TOKEN):
+#    VAPID_PRIVATE_KEY=<строка из шага 1>
+#    VAPID_SUBJECT=mailto:you@example.com      # необязательно, по умолчанию SITE_BASE_URL
+
+# 3. Пересоздать контейнер, чтобы он прочитал .env
+cd ~/banner_web/web && docker compose up -d --force-recreate api
+```
+
+Дальше на каждом устройстве: открыть `https://bannerbot.ru/admin/` → войти токеном → карточка
+«Уведомления на этом устройстве» → **«Включить уведомления»** → разрешить в браузере → **«Отправить проверку»**.
+
+- **iPhone/iPad (iOS 16.4+):** push работает только у установленного PWA. Safari → «Поделиться» → «На экран „Домой“»,
+  затем открыть админку **с иконки на экране** и включить уведомления там.
+- **Android/Chrome, десктоп:** достаточно разрешения в браузере; установка на экран по желанию.
+- Токен по умолчанию хранится до закрытия вкладки. Галочка «Запомнить на этом устройстве» сохраняет его в
+  `localStorage` — удобно для PWA, но токен остаётся на устройстве до нажатия «Выйти». Ставить её стоит только на своём телефоне.
+
+### Как устроено
+
+- Подписки устройств — таблица `push_subscriptions` (до 10 устройств, старые вытесняются).
+- Сообщение содержит только номер заказа, размер и сумму (как в Telegram) — **текст баннера не передаётся**.
+  Новый заказ и его оплата имеют один `tag`: «Оплачено» заменяет «Новый заказ», а не копится рядом.
+- Отправка идёт в фоне (`BackgroundTasks` / `fire_and_forget`): медленный push-сервис не задерживает ни создание
+  заказа, ни ответ на webhook ЮКасса. Хранение сообщения у push-сервиса для выключенного устройства — 24 часа.
+- Подписка, на которую push-сервис отвечает 404/410, удаляется сразу; после 20 подряд неудач — тоже.
+- `endpoint` принимается только от известных push-сервисов (защита от SSRF).
+- Смена `VAPID_PRIVATE_KEY` делает старые подписки недействительными: админка при открытии сама сбросит старую
+  подписку, останется нажать «Включить уведомления» заново на каждом устройстве.
+- Выключить на сервере — убрать `VAPID_PRIVATE_KEY` и пересоздать контейнер: все функции модуля становятся no-op.
 
 ---
 

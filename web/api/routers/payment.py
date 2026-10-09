@@ -31,6 +31,7 @@ from fastapi import APIRouter, HTTPException, Request
 from ..db import get_db
 from ..routers.order import OrderStatus, transition
 from ..services.payment import verify_yookassa_payment
+from ..services.push_notify import fire_and_forget, push_order_paid
 from ..services.referral_store import accrue_commission
 from ..services.tg_notify import notify_order_paid
 from ..services.token_store import create_token
@@ -146,8 +147,9 @@ async def payment_callback(request: Request):
             # Некритично — логируем, не прерываем
             logger.error("Ошибка начисления реферала для %s: %s", order_id, e)
 
-    # --- ШАГ 9: обновляем TG-сообщение об оплате ---
+    # --- ШАГ 9: уведомляем админа: Web Push в фоне, затем TG-сообщение об оплате ---
     if row:
+        fire_and_forget(push_order_paid(order_id, row["amount_rub"]))
         try:
             await notify_order_paid(
                 order_id=order_id,

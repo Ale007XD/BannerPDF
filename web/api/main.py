@@ -117,6 +117,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Web Push админки (PWA): подписки устройств и проверочное уведомление
+from .routers.push import router as push_router  # noqa: E402
+
+app.include_router(push_router, prefix="/api")
+
 # Роутеры API
 app.include_router(preview.router,  prefix="/api")
 app.include_router(order.router,    prefix="/api")
