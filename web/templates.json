@@ -13,7 +13,8 @@
     "PT Sans Narrow",
     "Fira Sans Cond",
     "Golos Text",
-    "Tenor Sans"
+    "Tenor Sans",
+    "Caveat"
   ],
   "colors": [
     { "name": "Черный",  "rgb": [0,   0,   0  ], "emoji": "⚫️" },

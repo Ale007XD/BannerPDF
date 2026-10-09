@@ -173,6 +173,21 @@ def test_birthday_library_is_consistent():
 @needs_node
 def test_birthday_links_prefill_exactly():
     bp = _build_pages()
-    for e in bp.examples(bp.BDAY_GROUPS, bp.BDAY_TARGET_MM):
+    for e in bp.examples(bp.BDAY_GROUPS, bp.BDAY_TARGET_MM, bp.BDAY_FONT):
         out = prefill("?" + urlsplit(e["href"]).query)
         assert out["size"] == {"key": e["key"]} and out["lines"] == e["lines"], e["id"]
+        assert out["font"] == bp.BDAY_FONT, e["id"]
+
+
+def test_fonts_templates_match_config_and_files():
+    from web.api.services.config import FONTS
+
+    assert set(TEMPLATES["fonts"]) == set(FONTS)
+    for name, path in FONTS.items():
+        assert (WEB / "fonts" / Path(path).name).is_file(), name
+    assert (WEB / "fonts" / "OFL-Caveat.txt").is_file()  # лицензия OFL лежит рядом со шрифтом
+    assert bp_font_in_templates()
+
+
+def bp_font_in_templates():
+    return _build_pages().BDAY_FONT in TEMPLATES["fonts"]

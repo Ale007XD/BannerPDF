@@ -23,6 +23,7 @@ import math
 import os
 import subprocess
 import tempfile
+from functools import lru_cache
 from urllib.parse import urlsplit
 
 from PIL import Image, ImageDraw, ImageFont
@@ -354,6 +355,42 @@ def create_preview_jpeg(data: dict) -> io.BytesIO:
     buf.seek(0)
     return buf
 # ---------------------------------------------------------------------------
+@lru_cache(maxsize=1024)
+def _glyph_ink_x(font_path: str, char: str) -> tuple[float, float]:
+    """Видимые границы одного символа по X от точки (0, 0), в долях кегля.
+
+    Берём растеризацией: textbbox в Pillow возвращает левую границу 0 вместо
+    реального левого выступа буквы, из-за чего текст съезжал вправо.
+    """
+    fnt = ImageFont.truetype(font_path, 1000)
+    img = Image.new("L", (3000, 1600), 0)
+    ImageDraw.Draw(img).text((1000, 200), char, font=fnt, fill=255)
+    box = img.getbbox()
+    return ((box[0] - 1000) / 1000, (box[2] - 1000) / 1000) if box else (0.0, 0.0)
+
+
+@lru_cache(maxsize=4096)
+def _ink_metrics(font_path: str, font_name: str, text: str) -> tuple[float, float, float, float, float]:
+    """Видимые границы строки в долях кегля: (left, top, right, bottom, ascent).
+
+    PDF-ветке нужно повторять превью: подгонка по ширине и центрирование идут по
+    видимой части строки, а не по рамке метрики (иначе наклонные «!», «,» рукописного
+    шрифта выходят за поля), а базовая линия учитывает нижние выносные элементы.
+
+    По горизонтали ширина берётся у самого ReportLab (он рисует без кернинга, как и
+    будет выведено в PDF), поправка только на выступ первой и последней буквы.
+    По вертикали — видимые границы строки из Pillow (кернинг на них не влияет).
+    """
+    fnt = ImageFont.truetype(font_path, 1000)
+    _, top, _, bottom = ImageDraw.Draw(Image.new("L", (1, 1))).textbbox((0, 0), text, font=fnt)
+    first, last = text[:1], text[-1:]
+    left = _glyph_ink_x(font_path, first)[0] if first.strip() else 0.0
+    right = pdfmetrics.stringWidth(text, font_name, 1000) / 1000
+    if last.strip():
+        right += _glyph_ink_x(font_path, last)[1] - pdfmetrics.stringWidth(last, font_name, 1000) / 1000
+    return left, top / 1000, right, bottom / 1000, fnt.getmetrics()[0] / 1000
+
+
 def _create_raw_pdf(data: dict) -> io.BytesIO:
     width_mm: int = data["width"]
     height_mm: int = data["height"]
@@ -402,19 +439,10 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
     c.setFillColorCMYK(tc, tm, ty, tk)
 
     def rl_measure(text: str, size: float):
-        # size — в мм (единицы layout). stringWidth требует pt.
-        size_pt = size * mm
-        # Ширина в pt → мм, чтобы совпадало с safe_w_mm.
-        w_mm = pdfmetrics.stringWidth(text, font_name, size_pt) / mm
-        # Высота — через Pillow textbbox (px = мм при scale=1).
-        # face.ascent / 1000 * size_pt (~0.85×size_pt) завышает высоту
-        # относительно реального bbox (~0.65×size), что вызывает
-        # преждевременный вертикальный fit и уменьшает шрифт в PDF.
-        # Pillow даёт точный визуальный bbox — layout идентичен превью.
-        _fnt = ImageFont.truetype(font_path, int(size))
-        _bbox = ImageDraw.Draw(Image.new("RGB", (1, 1))).textbbox((0, 0), text, font=_fnt)
-        h_mm = _bbox[3] - _bbox[1]
-        return w_mm, h_mm
+        # size — в мм (единицы layout). Ширина и высота — по видимым границам букв,
+        # как в Pillow-превью (см. _ink_metrics), поэтому layout совпадает с превью.
+        left, top, right, bottom, _ = _ink_metrics(font_path, font_name, text)
+        return (right - left) * size, (bottom - top) * size
 
     details = _calculate_layout(text_items, safe_w_mm, safe_h_mm, measure_fn=rl_measure)
 
@@ -439,12 +467,15 @@ def _create_raw_pdf(data: dict) -> io.BytesIO:
     y_top = h_pt - safe_pt - padding_pt
     for d in details:
         size_pt = d["font_size_pt"]
-        text_w = pdfmetrics.stringWidth(d["text"], font_name, size_pt)
-        x = safe_pt + (safe_w_mm * mm - text_w) / 2
+        left, top, right, _bottom, ascent = _ink_metrics(font_path, font_name, d["text"])
+        ink_w_pt = (right - left) * size_pt
+        # Центрируем видимую часть строки (а не рамку по метрике шрифта).
+        x = safe_pt + (safe_w_mm * mm - ink_w_pt) / 2 - left * size_pt
 
-        # y_top — верхняя граница bbox строки в RL-координатах.
-        # Нижняя граница = y_top - height_pt = baseline (descent ≈ 0 для заглавных букв).
-        y_pos = y_top - d["height_pt"]
+        # y_top — верхняя граница видимой части строки в RL-координатах.
+        # Базовая линия ниже неё на (ascent - top): так нижние выносные элементы
+        # строчных («р», «д», «у») остаются внутри строки, а не уезжают за поля.
+        y_pos = y_top - (ascent - top) * size_pt
 
         c.setFont(font_name, size_pt)
         to = c.beginText(x, y_pos)

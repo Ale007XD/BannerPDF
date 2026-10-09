@@ -488,6 +488,14 @@ body {
   background: #fff5f3;
 }
 
+.font-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
 .font-name {
   font-size: 15px;
   font-weight: 600;

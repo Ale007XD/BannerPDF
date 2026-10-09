@@ -44,6 +44,7 @@ FONTS: dict[str, str] = {
     "Tenor Sans":     os.path.join(FONTS_DIR, "TenorSans-Regular.ttf"),
     "Fira Sans Cond": os.path.join(FONTS_DIR, "FiraSansCondensed-ExtraBold.ttf"),
     "PT Sans Narrow": os.path.join(FONTS_DIR, "PTSansNarrow-Bold.ttf"),
+    "Caveat":         os.path.join(FONTS_DIR, "Caveat-Bold.ttf"),  # рукописный, OFL (fonts/OFL-Caveat.txt)
 }
 
 # ---------------------------------------------------------------------------

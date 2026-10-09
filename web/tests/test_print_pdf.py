@@ -357,3 +357,58 @@ class TestFinalPdfWithGhostscript:
             pdf = bg.create_final_pdf(_order()).getvalue()
         assert pdf.startswith(b"%PDF-")
         assert any("тестовая проблема" in r.getMessage() for r in caplog.records)
+
+
+@needs_gs
+class TestEveryFont:
+    """Каждый шрифт из FONTS проходит весь печатный контур: текст в кривых, CMYK, размер 1:1."""
+
+    @pytest.mark.parametrize("font", list(FONTS))
+    @pytest.mark.parametrize("lines", [["С Днём рождения, мама!", "814000000"], ["ШИНОМОНТАЖ", "24 часа"]])
+    def test_font_renders_clean_pdf(self, repo_fonts, font, lines):
+        order = _order()
+        order["font"] = font
+        order["text_lines"] = [{"text": t, "scale": 1.0} for t in lines]
+        pdf = bg.create_final_pdf(order).getvalue()
+        assert check_print_pdf(pdf, width_mm=2000, height_mm=750, max_total_ink=MAX_TOTAL_INK_PERCENT) == []
+
+
+@needs_gs
+class TestInkStaysInsideSafeZone:
+    """Видимый текст в PDF не выходит за поля (30 мм) и стоит по центру — для каждого шрифта.
+
+    Раньше PDF подгонял и центрировал строку по ширине метрики, а превью — по видимым
+    границам: у рукописного шрифта наклонные «!» и «,» упирались в край (0 мм вместо 30),
+    а хвосты строчных съезжали вниз.
+    """
+
+    DPI = 40
+    TEXTS = [["Мне годик!"], ["60 лет,", "а душа молодая!"], ["МЫ ОТКРЫЛИСЬ!", "Кофейня у дома"]]
+
+    @pytest.mark.parametrize("font", list(FONTS))
+    @pytest.mark.parametrize("lines", TEXTS)
+    def test_margins(self, repo_fonts, tmp_path, font, lines):
+        import subprocess
+
+        from PIL import Image, ImageChops
+
+        from web.api.services.config import SAFE_ZONE_MM
+
+        order = _order(width=2000, height=1000, bg_color="Черный", text_color="Белый")
+        order["font"] = font
+        order["text_lines"] = [{"text": t, "scale": 1.0} for t in lines]
+        pdf_path, png_path = tmp_path / "b.pdf", tmp_path / "b.png"
+        pdf_path.write_bytes(bg.create_final_pdf(order).getvalue())
+        subprocess.run(
+            ["gs", "-q", "-dNOPAUSE", "-dBATCH", "-sDEVICE=png16m", f"-r{self.DPI}",
+             f"-sOutputFile={png_path}", str(pdf_path)],
+            check=True,
+        )
+        im = Image.open(png_path).convert("RGB")
+        box = ImageChops.difference(im, Image.new("RGB", im.size, im.getpixel((0, 0)))).getbbox()
+        to_mm = 25.4 / self.DPI
+        left, right = box[0] * to_mm, (im.width - box[2]) * to_mm
+        top, bottom = box[1] * to_mm, (im.height - box[3]) * to_mm
+        tol = 2 * to_mm  # два пикселя растра
+        assert min(left, right, top, bottom) >= SAFE_ZONE_MM - tol, (left, right, top, bottom)
+        assert abs(left - right) <= 4, (left, right)  # по центру

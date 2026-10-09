@@ -41,12 +41,13 @@ CALC = """<div class="calc"><label>Расстояние до баннера, м 
 <p id="o1"></p>
 <label>Ширина баннера, мм <input id="w" type="number" value="2000" min="100" max="3000"></label>
 <label>Знаков в самой длинной строке <input id="n" type="number" value="12" min="1"></label>
-<label>Шрифт <select id="f"><option value="0.6">Golos Text / Tenor Sans</option>
-<option value="0.45">Fira Sans Cond / PT Sans Narrow</option></select></label>
+<label>Шрифт <select id="f"><option value="1.17">Golos Text / Tenor Sans</option>
+<option value="1.56">Fira Sans Cond / PT Sans Narrow</option>
+<option value="1.09">Caveat (рукописный)</option></select></label>
 <p id="o2"></p></div>
 <script>(function(){var $=function(i){return document.getElementById(i)};function r(){
 var d=+$('d').value||1;$('o1').textContent='Высота прописных: комфортно от '+Math.round(d/0.12)+' мм, предел чтения около '+Math.round(d/0.3)+' мм.';
-var u=(+$('w').value||100)-60,n=+$('n').value||1,k=+$('f').value,c=0.7*u/(n*k);
+var u=(+$('w').value||100)-60,n=+$('n').value||1,k=+$('f').value,c=k*u/n;
 $('o2').textContent='В строку шириной '+u+' мм помещаются прописные высотой до ~'+Math.round(c)+' мм, это комфортно читается с '+Math.round(c*0.12)+' м.';}
 ['d','w','n','f'].forEach(function(i){$(i).addEventListener('input',r)});r();})();</script>"""
 
@@ -66,7 +67,7 @@ PAGES = [
          desc="Какая высота букв нужна баннеру, чтобы читалось с 10, 20, 50 метров. Таблица, калькулятор и расчёт предельной высоты по ширине баннера.",
          h1="Высота шрифта на баннере по расстоянию", related=["razmery-bannerov", "trebovaniya-k-maketu"],
          lead="Два эмпирических правила: комфортно читается текст с высотой прописных около 25 мм на каждые 3 м; предел чтения примерно 1 мм на 0,3 м. Это ориентиры, а не стандарт: результат зависит от шрифта, контраста и освещения.",
-         sections=[("Таблица", ["{{DIST}}"]), ("Калькулятор", ["{{CALC}}", "Второй расчёт оценочный: высота прописных принята равной 0,7 высоты кегля, средняя ширина знака 0,6 кегля у обычных гротесков и 0,45 у узких. Поля по 30 мм с каждой стороны учтены."]),
+         sections=[("Таблица", ["{{DIST}}"]), ("Калькулятор", ["{{CALC}}", "Второй расчёт оценочный: высота прописных в долях ширины строки на знак принята 1,17 у обычных гротесков, 1,56 у узких и 1,09 у Caveat (заглавными). В обычном регистре Caveat читается не хуже обычного гротеска. Поля по 30 мм с каждой стороны учтены."]),
                    ("Для движущегося зрителя", ["У дороги текст нужно прочитать за пару секунд. При 60 км/ч (около 17 м/с) это порядка 35–50 м: комфортная высота букв 300–400 мм, поэтому строк должно быть мало."])],
          faq=[("Почему длинный телефон получается мелким?", "Строка ограничена шириной баннера: чем больше знаков, тем меньше кегль. Сократите текст или увеличьте ширину.")]),
     dict(slug="lyuversy-i-podgib", title="Люверсы и подгиб баннера: шаг, количество, что в файле",
@@ -232,25 +233,27 @@ def pick_size(lines, target=TARGET_CAP_MM):
     return SIZE_KEYS[-1]
 
 
-def example_href(bg, color, key, lines):
+def example_href(bg, color, key, lines, font=None):
     params = {"size": key, "bg": bg, "color": color}
+    if font:
+        params["font"] = font
     params.update({f"text{i}": t for i, t in enumerate(lines, 1)})
     return "/?" + urlencode(params, quote_via=quote)
 
 
-def examples(groups=None, target=TARGET_CAP_MM):
+def examples(groups=None, target=TARGET_CAP_MM, font=None):
     out = []
     for group, bg, color, items in groups or EXAMPLE_GROUPS:
         for ex_id, lines in items:
             key, w, h = pick_size(lines, target)
-            out.append(dict(id=ex_id, group=group, lines=lines, key=key, bg=bg, color=color,
-                            cap=cap_mm(w, max(len(x) for x in lines)), href=example_href(bg, color, key, lines)))
+            out.append(dict(id=ex_id, group=group, lines=lines, key=key, bg=bg, color=color, font=font,
+                            cap=cap_mm(w, max(len(x) for x in lines)), href=example_href(bg, color, key, lines, font)))
     return out
 
 
-def examples_html(groups=None, target=TARGET_CAP_MM):
+def examples_html(groups=None, target=TARGET_CAP_MM, font=None):
     groups = groups or EXAMPLE_GROUPS
-    ex, html = examples(groups, target), ""
+    ex, html = examples(groups, target, font), ""
     for group, _bg, _color, _items in groups:
         html += f"<h3>{group}</h3><ul>"
         for e in (x for x in ex if x["group"] == group):
@@ -265,33 +268,34 @@ def examples_html(groups=None, target=TARGET_CAP_MM):
 
 TOK["{{EXAMPLES}}"] = examples_html
 
+BDAY_FONT = "Caveat"  # рукописный, пишем в обычном регистре
 BDAY_TARGET_MM = 83  # прописные, читаемые примерно с 10 м: зал, двор
 BDAY_GROUPS = [
     ("Взрослым", "Синий", "Белый", [
-        ("bd-1", ["С ДНЁМ РОЖДЕНИЯ!"]),
-        ("bd-2", ["С ДНЁМ РОЖДЕНИЯ,", "МАМА!"]),
-        ("bd-3", ["С ДНЁМ РОЖДЕНИЯ,", "ПАПА!"]),
-        ("bd-4", ["С ДНЁМ РОЖДЕНИЯ,", "ЛЮБИМАЯ!"]),
-        ("bd-5", ["С ДНЁМ РОЖДЕНИЯ,", "ДОРОГОЙ!"]),
-        ("bd-6", ["С ДНЁМ РОЖДЕНИЯ,", "БАБУШКА!"]),
-        ("bd-7", ["С ДНЁМ РОЖДЕНИЯ,", "ДЕДУШКА!"])]),
+        ("bd-1", ["С Днём рождения!"]),
+        ("bd-2", ["С Днём рождения,", "мама!"]),
+        ("bd-3", ["С Днём рождения,", "папа!"]),
+        ("bd-4", ["С Днём рождения,", "любимая!"]),
+        ("bd-5", ["С Днём рождения,", "дорогой!"]),
+        ("bd-6", ["С Днём рождения,", "бабушка!"]),
+        ("bd-7", ["С Днём рождения,", "дедушка!"])]),
     ("Детям", "Желтый", "Синий", [
-        ("bd-8", ["С ДНЁМ РОЖДЕНИЯ,", "СЫНОЧЕК!"]),
-        ("bd-9", ["С ДНЁМ РОЖДЕНИЯ,", "ДОЧКА!"]),
-        ("bd-10", ["МНЕ ГОДИК!"]),
-        ("bd-11", ["МНЕ 5 ЛЕТ!"]),
-        ("bd-12", ["МНЕ 10 ЛЕТ!"]),
-        ("bd-13", ["ПРАЗДНИК ПРИШЁЛ!"]),
-        ("bd-14", ["С ДНЁМ РОЖДЕНИЯ,", "ПРИНЦЕССА!"]),
-        ("bd-15", ["С ДНЁМ РОЖДЕНИЯ,", "ГЕРОЙ!"])]),
+        ("bd-8", ["С Днём рождения,", "сыночек!"]),
+        ("bd-9", ["С Днём рождения,", "дочка!"]),
+        ("bd-10", ["Мне годик!"]),
+        ("bd-11", ["Мне 5 лет!"]),
+        ("bd-12", ["Мне 10 лет!"]),
+        ("bd-13", ["Праздник пришёл!"]),
+        ("bd-14", ["С Днём рождения,", "принцесса!"]),
+        ("bd-15", ["С Днём рождения,", "герой!"])]),
     ("Юбилей", "Черный", "Желтый", [
-        ("bd-16", ["С ЮБИЛЕЕМ!"]),
-        ("bd-17", ["С 18-ЛЕТИЕМ!"]),
-        ("bd-18", ["С 30-ЛЕТИЕМ!"]),
-        ("bd-19", ["С 50-ЛЕТИЕМ!"]),
-        ("bd-20", ["60 ЛЕТ,", "А ДУША МОЛОДАЯ!"]),
-        ("bd-21", ["30 ЛЕТ —", "ЭТО ТОЛЬКО НАЧАЛО!"]),
-        ("bd-22", ["С ЮБИЛЕЕМ,", "ДОРОГОЙ!"])]),
+        ("bd-16", ["С юбилеем!"]),
+        ("bd-17", ["С 18-летием!"]),
+        ("bd-18", ["С 30-летием!"]),
+        ("bd-19", ["С 50-летием!"]),
+        ("bd-20", ["60 лет,", "а душа молодая!"]),
+        ("bd-21", ["30 лет —", "это только начало!"]),
+        ("bd-22", ["С юбилеем,", "дорогой!"])]),
 ]
 
 
@@ -301,7 +305,7 @@ def bday_sizes_table():
                  [[LABELS[k], round(cap_mm(w, n)), round(cap_mm(w, n) * 0.12)] for k, w, h in SIZE_KEYS])
 
 
-TOK["{{BDAY}}"] = lambda: examples_html(BDAY_GROUPS, BDAY_TARGET_MM)
+TOK["{{BDAY}}"] = lambda: examples_html(BDAY_GROUPS, BDAY_TARGET_MM, BDAY_FONT)
 TOK["{{BDAYSIZES}}"] = bday_sizes_table
 
 PAGES.append(dict(
@@ -315,7 +319,7 @@ PAGES.append(dict(
         ("Готовые тексты", ["{{BDAY}}"]),
         ("Что учесть", [
             f"Имя подставьте в конструкторе, заменив слово в строке. Чем длиннее строка, тем мельче буквы: на ширине 1,5 м имя из 10 знаков даст прописные около {cap_mm(1500, 10):.0f} мм, из 16 около {cap_mm(1500, 16):.0f} мм.",
-            "Печать по готовому PDF делает типография: сроки и стоимость спросите у неё заранее, особенно если праздник скоро. Подгиб и люверсы входят в её работу, в файле их нет."])],
+            "Все примеры набраны рукописным шрифтом Caveat в обычном регистре: так он читается лучше всего. В конструкторе шрифт можно сменить. Печать по готовому PDF делает типография: сроки и стоимость спросите у неё заранее, особенно если праздник скоро. Подгиб и люверсы входят в её работу, в файле их нет."])],
     faq=[("Можно ли добавить фото или шары?", "Нет, в конструкторе только текст и цвет. Для картинок нужен другой редактор."),
          ("Какой размер выбрать для дома?", "Для комнаты хватит 1,5×0,5 м; для двора и зала лучше от 2×1 м.")]))
 

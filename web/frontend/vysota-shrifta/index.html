@@ -24,14 +24,15 @@
 <p id="o1"></p>
 <label>Ширина баннера, мм <input id="w" type="number" value="2000" min="100" max="3000"></label>
 <label>Знаков в самой длинной строке <input id="n" type="number" value="12" min="1"></label>
-<label>Шрифт <select id="f"><option value="0.6">Golos Text / Tenor Sans</option>
-<option value="0.45">Fira Sans Cond / PT Sans Narrow</option></select></label>
+<label>Шрифт <select id="f"><option value="1.17">Golos Text / Tenor Sans</option>
+<option value="1.56">Fira Sans Cond / PT Sans Narrow</option>
+<option value="1.09">Caveat (рукописный)</option></select></label>
 <p id="o2"></p></div>
 <script>(function(){var $=function(i){return document.getElementById(i)};function r(){
 var d=+$('d').value||1;$('o1').textContent='Высота прописных: комфортно от '+Math.round(d/0.12)+' мм, предел чтения около '+Math.round(d/0.3)+' мм.';
-var u=(+$('w').value||100)-60,n=+$('n').value||1,k=+$('f').value,c=0.7*u/(n*k);
+var u=(+$('w').value||100)-60,n=+$('n').value||1,k=+$('f').value,c=k*u/n;
 $('o2').textContent='В строку шириной '+u+' мм помещаются прописные высотой до ~'+Math.round(c)+' мм, это комфортно читается с '+Math.round(c*0.12)+' м.';}
-['d','w','n','f'].forEach(function(i){$(i).addEventListener('input',r)});r();})();</script><p>Второй расчёт оценочный: высота прописных принята равной 0,7 высоты кегля, средняя ширина знака 0,6 кегля у обычных гротесков и 0,45 у узких. Поля по 30 мм с каждой стороны учтены.</p><h2>Для движущегося зрителя</h2><p>У дороги текст нужно прочитать за пару секунд. При 60 км/ч (около 17 м/с) это порядка 35–50 м: комфортная высота букв 300–400 мм, поэтому строк должно быть мало.</p>
+['d','w','n','f'].forEach(function(i){$(i).addEventListener('input',r)});r();})();</script><p>Второй расчёт оценочный: высота прописных в долях ширины строки на знак принята 1,17 у обычных гротесков, 1,56 у узких и 1,09 у Caveat (заглавными). В обычном регистре Caveat читается не хуже обычного гротеска. Поля по 30 мм с каждой стороны учтены.</p><h2>Для движущегося зрителя</h2><p>У дороги текст нужно прочитать за пару секунд. При 60 км/ч (около 17 м/с) это порядка 35–50 м: комфортная высота букв 300–400 мм, поэтому строк должно быть мало.</p>
 <h2>Частые вопросы</h2><details><summary>Почему длинный телефон получается мелким?</summary><p>Строка ограничена шириной баннера: чем больше знаков, тем меньше кегль. Сократите текст или увеличьте ширину.</p></details>
 <p style="margin-top:32px"><a class="btn" href="/">Собрать макет — 299 ₽</a></p>
 <p class="bc">Читайте также: <a href="/razmery-bannerov/">Размеры баннеров: какой выбрать</a> · <a href="/trebovaniya-k-maketu/">Требования к макету баннера для печати</a></p>

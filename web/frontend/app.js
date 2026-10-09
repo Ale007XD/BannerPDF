@@ -226,6 +226,16 @@ const FONT_CSS_MAP = {
   "Tenor Sans":     "'Tenor Sans', serif",
   "Fira Sans Cond": "'Fira Sans Condensed', sans-serif",
   "PT Sans Narrow": "'PT Sans Narrow', sans-serif",
+  "Caveat":         "'Caveat', cursive",
+};
+
+// Короткие подсказки: для чего шрифт подходит (показываются под названием)
+const FONT_NOTES = {
+  "Golos Text":     "универсальный, для любого текста",
+  "Fira Sans Cond": "узкий жирный: длинные строки, чтение издалека",
+  "PT Sans Narrow": "узкий плотный: много знаков в строке",
+  "Tenor Sans":     "тонкий, строгий: читать вблизи",
+  "Caveat":         "рукописный: поздравления, личные надписи",
 };
 
 /** Рендерит кнопки шрифтов. Первый шрифт становится активным. */
@@ -237,7 +247,7 @@ function renderFonts(fonts) {
     btn.dataset.font = name;
     const cssFontFamily = FONT_CSS_MAP[name] || "sans-serif";
     btn.innerHTML = `
-      <span class="font-name">${escapeHtml(name)}</span>
+      <span class="font-name">${escapeHtml(name)}<small class="font-note">${escapeHtml(FONT_NOTES[name] || "")}</small></span>
       <span class="font-sample" style="font-family:${cssFontFamily}">${escapeHtml("Продажа 123-45-67")}</span>
       <span class="font-check">✓</span>
     `;
