@@ -40,7 +40,7 @@ MAX_TOTAL_INK_PERCENT: int = 240
 # Шрифты: отображаемое имя → путь внутри контейнера
 # ---------------------------------------------------------------------------
 FONTS: dict[str, str] = {
-    "Golos Text":     os.path.join(FONTS_DIR, "GolosText-Regular.ttf"),
+    "Golos Text":     os.path.join(FONTS_DIR, "GolosText-Bold.ttf"),  # внутри файла начертание Bold (700)
     "Tenor Sans":     os.path.join(FONTS_DIR, "TenorSans-Regular.ttf"),
     "Fira Sans Cond": os.path.join(FONTS_DIR, "FiraSansCondensed-ExtraBold.ttf"),
     "PT Sans Narrow": os.path.join(FONTS_DIR, "PTSansNarrow-Bold.ttf"),

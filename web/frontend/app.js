@@ -229,6 +229,16 @@ const FONT_CSS_MAP = {
   "Caveat":         "'Caveat', cursive",
 };
 
+// Начертание каждого файла в web/fonts: образец на кнопке должен выглядеть как итоговый баннер.
+// Совпадение имени файла, начертания внутри и этих чисел проверяет tests/test_fonts.py.
+const FONT_WEIGHTS = {
+  "Golos Text":     700,
+  "Fira Sans Cond": 800,
+  "PT Sans Narrow": 700,
+  "Tenor Sans":     400,
+  "Caveat":         700,
+};
+
 // Короткие подсказки: для чего шрифт подходит (показываются под названием)
 const FONT_NOTES = {
   "Golos Text":     "универсальный, для любого текста",
@@ -248,7 +258,7 @@ function renderFonts(fonts) {
     const cssFontFamily = FONT_CSS_MAP[name] || "sans-serif";
     btn.innerHTML = `
       <span class="font-name">${escapeHtml(name)}<small class="font-note">${escapeHtml(FONT_NOTES[name] || "")}</small></span>
-      <span class="font-sample" style="font-family:${cssFontFamily}">${escapeHtml("Продажа 123-45-67")}</span>
+      <span class="font-sample" style="font-family:${cssFontFamily};font-weight:${FONT_WEIGHTS[name] || 400}">${escapeHtml("Продажа 123-45-67")}</span>
       <span class="font-check">✓</span>
     `;
     el.fontList.appendChild(btn);

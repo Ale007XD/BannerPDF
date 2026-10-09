@@ -201,7 +201,7 @@ BannerPDF/
 ### Требования
 
 - Docker + Docker Compose
-- Шрифты TTF: `GolosText-Regular.ttf`, `TenorSans-Regular.ttf`, `FiraSansCondensed-ExtraBold.ttf`, `PTSansNarrow-Bold.ttf`
+- Шрифты TTF: `GolosText-Bold.ttf`, `TenorSans-Regular.ttf`, `FiraSansCondensed-ExtraBold.ttf`, `PTSansNarrow-Bold.ttf`, `Caveat-Bold.ttf` (OFL, лицензия `OFL-Caveat.txt`)
 
 > ❌ `FiraSans-Regular.ttf` и `IgraSans-Regular.ttf` на сервере отсутствуют — не использовать.
 
@@ -284,7 +284,7 @@ VPS_SSH_KEY   — приватный SSH-ключ
 
 ```
 /home/bannerweb/banner_web/fonts/
-  GolosText-Regular.ttf
+  GolosText-Bold.ttf
   TenorSans-Regular.ttf
   FiraSansCondensed-ExtraBold.ttf
   PTSansNarrow-Bold.ttf
