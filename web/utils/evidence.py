@@ -14,6 +14,7 @@ evidence.py — проверяемые факты о BannerBot для кейса
 Запуск:
   python evidence.py --key bp_live_XXXX                  # 3 рендера
   python evidence.py --key bp_live_XXXX --base https://bannerbot.ru --out evidence_out
+  python evidence.py --check-dir evidence_out            # проверить уже сохранённые PDF, лимит не тратится
 
 Внимание: Trial-ключ даёт 3 PDF пожизненно — для замеров лучше отдельный ключ
 Business (создаётся в админке, 1 000 PDF/мес). Каждый рендер списывается с лимита.
@@ -92,10 +93,8 @@ OPS = {
 }
 
 
-def color_report(raw):
-    """Считает операторы цвета в потоках страниц (Flate или открытых). Эвристика."""
-    counts = {k: 0 for k in OPS}
-    undecoded = 0
+def iter_streams(raw):
+    """Отдаёт (заголовок_объекта, декодированный_текст | None) для потоков, кроме растровых."""
     for m in re.finditer(rb"stream\r?\n", raw):
         head = raw[max(0, m.start() - 400):m.start()].split(b"obj")[-1]
         if b"/Image" in head:
@@ -108,9 +107,24 @@ def color_report(raw):
             if b"FlateDecode" in head:
                 chunk = zlib.decompress(chunk)
         except (ValueError, zlib.error):
+            yield head, None
+            continue
+        yield head, chunk.decode("latin-1")
+
+
+def pdf_text(raw):
+    """Открытый текст PDF + содержимое всех разобранных потоков (в т.ч. сжатых объектов)."""
+    return raw.decode("latin-1") + "\n" + "\n".join(t for _, t in iter_streams(raw) if t)
+
+
+def color_report(raw):
+    """Считает операторы цвета в потоках страниц (Flate или открытых). Эвристика."""
+    counts = {k: 0 for k in OPS}
+    undecoded = 0
+    for _, text in iter_streams(raw):
+        if text is None:
             undecoded += 1
             continue
-        text = chunk.decode("latin-1")
         for name, rx in OPS.items():
             counts[name] += len(rx.findall(text))
     names = [n.decode() for n in (b"/DeviceCMYK", b"/DeviceRGB", b"/ICCBased") if n in raw]
@@ -120,30 +134,71 @@ def color_report(raw):
     return base + extra + warn
 
 
+MEDIABOX_RE = re.compile(r"/MediaBox\s*\[\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*\]")
+FONT_RE = re.compile(r"/BaseFont\s*/([^\s/\[\]<>()]+)")
+
+
+def size_text(x0, y0, x1, y1, want_w, want_h, note=""):
+    w, h = (x1 - x0) * PT_TO_MM, (y1 - y0) * PT_TO_MM
+    ok = abs(w - want_w) <= 1 and abs(h - want_h) <= 1
+    return f"{w:.1f}×{h:.1f} мм ({'совпадает' if ok else 'НЕ совпадает'} с {want_w}×{want_h}){note}"
+
+
 def check_pdf(path, want_w, want_h):
     res = {"size": "н/д", "fonts": "н/д", "colorspaces": "н/д"}
+    raw = path.read_bytes()
+    text = None
+
     info = run_tool(["pdfinfo", "-box", str(path)])
-    if info:
-        m = re.search(r"MediaBox:\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)", info)
+    m = re.search(r"MediaBox:\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)", info or "")
+    if m:
+        res["size"] = size_text(*(float(v) for v in m.groups()), want_w, want_h)
+    else:  # poppler нет — разбираем PDF сами
+        text = pdf_text(raw)
+        m = MEDIABOX_RE.search(text)
         if m:
-            x0, y0, x1, y1 = (float(v) for v in m.groups())
-            w, h = (x1 - x0) * PT_TO_MM, (y1 - y0) * PT_TO_MM
-            ok = abs(w - want_w) <= 1 and abs(h - want_h) <= 1
-            res["size"] = f"{w:.1f}×{h:.1f} мм ({'совпадает' if ok else 'НЕ совпадает'} с {want_w}×{want_h})"
+            res["size"] = size_text(*(float(v) for v in m.groups()), want_w, want_h, " [без poppler]")
+
     fonts = run_tool(["pdffonts", str(path)])
     if fonts is not None:
         rows = [ln for ln in fonts.splitlines()[2:] if ln.strip()]
         res["fonts"] = "нет (текст в кривых)" if not rows else f"{len(rows)} шт. — текст НЕ в кривых"
-    res["colorspaces"] = color_report(path.read_bytes())
+    else:
+        text = text or pdf_text(raw)
+        names = sorted(set(FONT_RE.findall(text)))
+        res["fonts"] = ("нет (текст в кривых) [без poppler]" if not names
+                        else f"{len(names)} шт. ({', '.join(names[:3])}) — текст НЕ в кривых [без poppler]")
+
+    res["colorspaces"] = color_report(raw)
     return res
+
+
+def check_dir(d):
+    """Проверка уже сохранённых PDF без запросов к API (лимит ключа не тратится)."""
+    files = sorted(Path(d).glob("*.pdf"))
+    if not files:
+        sys.exit(f"В {d} нет PDF.")
+    lines = [f"# Проверка сохранённых PDF ({d})", "",
+             "| Файл | Размер, КБ | Страница | Шрифты | Цвет (операторы) |", "|---|---|---|---|---|"]
+    for f in files:
+        m = re.search(r"_(\d+)x(\d+)", f.stem)
+        want_w, want_h = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+        c = check_pdf(f, want_w, want_h)
+        lines.append(f"| {f.name} | {f.stat().st_size / 1024:.0f} | {c['size']} | {c['fonts']} | {c['colorspaces']} |")
+    print("\n".join(lines))
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--key", required=True, help="API-ключ bp_live_...")
+    ap.add_argument("--key", help="API-ключ bp_live_... (не нужен с --check-dir)")
+    ap.add_argument("--check-dir", metavar="DIR", help="только проверить уже сохранённые PDF, без запросов к API")
     ap.add_argument("--base", default="https://bannerbot.ru")
     ap.add_argument("--out", default="evidence_out")
     a = ap.parse_args()
+    if a.check_dir:
+        return check_dir(a.check_dir)
+    if not a.key:
+        ap.error("нужен --key (или --check-dir для проверки готовых PDF)")
     if not KEY_RE.match(a.key):
         sys.exit(
             "Ключ выглядит как заглушка или неполный: ожидается bp_live_ + 32 символа "
