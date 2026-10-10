@@ -581,6 +581,24 @@ class TestStaticFiles:
             assert path in html
         assert 'id="push-toggle"' in html and 'id="remember-token"' in html
 
+    def test_push_card_explains_failures_in_the_card_not_in_a_toast(self):
+        # тост живёт 2,8 с и обрезается на телефоне: причина отказа должна оставаться в карточке
+        html = (ADMIN_DIR / "index.html").read_text(encoding="utf-8")
+        assert 'id="push-note"' in html and 'id="push-diag-text"' in html
+        body = html[html.index("async function pushEnable()"):html.index("async function pushToggle()")]
+        assert "showToast" not in body.replace('showToast("✓ Уведомления включены", "ok")', "")
+        toggle = html[html.index("async function pushToggle()"):html.index("async function pushTest()")]
+        assert 'showToast("Ошибка' not in toggle
+
+    def test_permission_is_requested_first_and_waits_are_bounded(self):
+        html = (ADMIN_DIR / "index.html").read_text(encoding="utf-8")
+        body = html[html.index("async function pushEnable()"):html.index("async function pushToggle()")]
+        # разрешение — первое ожидание в обработчике клика (пока действует жест пользователя)
+        assert body.index("Notification.requestPermission()") < body.index("pushManager.subscribe")
+        assert "withTimeout(Notification.requestPermission(), 15000)" in body
+        assert "}), 20000)" in body                                    # подписка тоже не ждёт вечно
+        assert "sub.unsubscribe()" in body                            # сервер отказал — в браузере подписку снимаем
+
     def test_token_is_remembered_only_on_request(self):
         html = (ADMIN_DIR / "index.html").read_text(encoding="utf-8")
         assert "saveToken(token, $(\"remember-token\").checked)" in html

@@ -407,6 +407,10 @@
     }
     /* ---- Уведомления на устройстве ---- */
     .push-status { font-size: 13px; color: var(--ink-2); line-height: 1.45; margin-bottom: 10px; }
+    .push-note { font-size: 13px; line-height: 1.45; color: var(--ink); background: var(--bg); border-left: 3px solid var(--accent); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+    .push-diag { margin-top: 12px; font-size: 12px; color: var(--ink-2); }
+    .push-diag summary { cursor: pointer; }
+    .push-diag pre { margin: 8px 0 0; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; line-height: 1.5; user-select: text; }
     .push-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .push-actions .btn { width: auto; flex: 1 1 140px; margin-top: 0; }
     .remember-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--ink-2); }
@@ -450,10 +454,15 @@
     <div class="card" id="push-card">
       <div class="card-label">Уведомления на этом устройстве</div>
       <div class="push-status" id="push-status">Проверяем…</div>
+      <div class="push-note" id="push-note" style="display:none;"></div>
       <div class="push-actions">
         <button class="btn btn--accent" id="push-toggle" style="display:none;"></button>
         <button class="btn btn--ghost" id="push-test" style="display:none;">Отправить проверку</button>
       </div>
+      <details class="push-diag" id="push-diag">
+        <summary>Диагностика</summary>
+        <pre id="push-diag-text"></pre>
+      </details>
     </div>
 
     <!-- Вкладки -->
@@ -1018,6 +1027,14 @@ async function deactivateKey(keyId) {
    ===================================================================== */
 let _swReg   = null;
 let _pushKey = null;
+let _pushOn  = false;     // на этом устройстве подписка есть (обновляется в pushRefreshState)
+let _pushLastErr = "";
+const TIMEOUT = Symbol("timeout");
+
+const SITE_SETTINGS_HINT =
+  "Разрешите уведомления для сайта: Chrome → ⋮ → Настройки → Настройки сайтов → Уведомления " +
+  "(или «Информация о сайте» слева от адреса → Разрешения). Затем на Android проверьте " +
+  "Настройки → Приложения → Chrome → Уведомления: они должны быть включены.";
 
 function pushSupported() {
   return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
@@ -1041,6 +1058,13 @@ function sameKey(buffer, b64) {
   return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
+// Запросы разрешения и подписки на телефоне иногда зависают без ответа — ждём ограниченное время
+function withTimeout(promise, ms) {
+  let timer;
+  const limit = new Promise((resolve) => { timer = setTimeout(() => resolve(TIMEOUT), ms); });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
+
 function setPushUi(status, { toggle = null, test = false } = {}) {
   $("push-status").textContent = status;
   const btn = $("push-toggle");
@@ -1048,6 +1072,45 @@ function setPushUi(status, { toggle = null, test = false } = {}) {
   btn.textContent   = toggle || "";
   btn.disabled      = false;
   $("push-test").style.display = test ? "" : "none";
+}
+
+// Пояснение об ошибке живёт в карточке: тост исчезает за 2,8 с и обрезается на узком экране
+function setPushNote(text) {
+  const el = $("push-note");
+  el.textContent = text || "";
+  el.style.display = text ? "" : "none";
+  pushRenderDiag();
+}
+
+async function pushRenderDiag() {
+  const lines = [
+    `браузер: ${navigator.userAgent}`,
+    `запущено как: ${isStandalone() ? "приложение (иконка на экране «Домой»)" : "вкладка браузера"}`,
+    `защищённое соединение: ${window.isSecureContext ? "да" : "НЕТ"}`,
+    `сеть: ${navigator.onLine ? "онлайн" : "офлайн"}`,
+    `разрешение на уведомления: ${"Notification" in window ? Notification.permission : "API недоступен"}`,
+    `service worker: ${_swReg ? (_swReg.active ? "активен" : "не активен") + ", область " + _swReg.scope : "не запущен"}`,
+  ];
+  try {
+    const sub = _swReg ? await _swReg.pushManager.getSubscription() : null;
+    lines.push(`подписка в браузере: ${sub ? "есть (" + new URL(sub.endpoint).host + ")" : "нет"}`);
+  } catch (e) {
+    lines.push(`подписка в браузере: не прочитать (${e.name})`);
+  }
+  lines.push(`ключ с сервера: ${_pushKey ? "получен" : "нет"}`);
+  if (_pushLastErr) lines.push(`последняя ошибка: ${_pushLastErr}`);
+  $("push-diag-text").textContent = lines.join("\n");
+}
+
+function describePushError(e) {
+  const name = (e && e.name) || "Error", msg = (e && e.message) || String(e);
+  _pushLastErr = `${name}: ${msg}`;
+  if (name === "AbortError") {
+    return "Не удалось связаться с push-сервисом браузера (Google). Проверьте интернет, отключите VPN и экономию " +
+           "трафика, обновите «Google Play-сервисы» и повторите.";
+  }
+  if (name === "NotAllowedError") return "Браузер не разрешил подписку: уведомления заблокированы. " + SITE_SETTINGS_HINT;
+  return `Не удалось включить: ${_pushLastErr}`;
 }
 
 async function pushSendSubscription(sub) {
@@ -1063,8 +1126,10 @@ async function pushSendSubscription(sub) {
 }
 
 async function pushRefreshState() {
+  _pushOn = false;
   if (Notification.permission === "denied") {
-    setPushUi("Уведомления запрещены в настройках браузера для этого сайта.");
+    setPushUi("Уведомления заблокированы для этого сайта.", { toggle: "Проверить ещё раз" });
+    setPushNote(SITE_SETTINGS_HINT + " Потом нажмите «Проверить ещё раз».");
     return;
   }
   let sub = await _swReg.pushManager.getSubscription();
@@ -1074,11 +1139,19 @@ async function pushRefreshState() {
   }
   if (sub) {
     // На сервере подписка могла пропасть (очистка, лимит устройств): повторная отправка идемпотентна
-    await pushSendSubscription(sub).catch(() => {});
+    try {
+      await pushSendSubscription(sub);
+    } catch (e) {
+      setPushUi(`Подписка есть в браузере, но сервер её не принял: ${e.message}`, { toggle: "Выключить" });
+      pushRenderDiag();
+      return;
+    }
+    _pushOn = true;
     setPushUi("Включены: новые заказы и оплаты придут на это устройство.", { toggle: "Выключить", test: true });
   } else {
     setPushUi("Выключены.", { toggle: "Включить уведомления" });
   }
+  pushRenderDiag();
 }
 
 async function pushInit() {
@@ -1086,13 +1159,16 @@ async function pushInit() {
     setPushUi(isIos() && !isStandalone()
       ? "На iPhone уведомления работают только в приложении: «Поделиться» → «На экран Домой», затем откройте иконку."
       : "Этот браузер не поддерживает push-уведомления.");
+    pushRenderDiag();
     return;
   }
   try {
     _swReg = await navigator.serviceWorker.register("/admin/sw.js", { scope: "/admin/" });
     await navigator.serviceWorker.ready;
-  } catch {
+  } catch (e) {
+    _pushLastErr = `${e.name}: ${e.message}`;
     setPushUi("Не удалось запустить service worker.");
+    pushRenderDiag();
     return;
   }
   try {
@@ -1100,45 +1176,86 @@ async function pushInit() {
     const cfg  = await resp.json();
     if (!cfg.enabled) {
       setPushUi("Web Push не настроен на сервере (нужен VAPID_PRIVATE_KEY).");
+      pushRenderDiag();
       return;
     }
     _pushKey = cfg.public_key;
     await pushRefreshState();
-  } catch {
+  } catch (e) {
+    _pushLastErr = `${e.name}: ${e.message}`;
     setPushUi("Нет связи с сервером.");
+    pushRenderDiag();
   }
+}
+
+async function pushEnable() {
+  // Разрешение просим первым делом, прямо в обработчике клика, пока действует жест пользователя
+  $("push-status").textContent = "Ждём ответа на запрос разрешения…";
+  const perm = await withTimeout(Notification.requestPermission(), 15000);
+  if (perm === TIMEOUT) {
+    setPushNote("Запрос разрешения не получил ответа за 15 секунд — возможно, окно не показано. " +
+                SITE_SETTINGS_HINT + " Потом нажмите «Включить уведомления» ещё раз.");
+    return;
+  }
+  if (perm === "denied") {
+    setPushNote("Уведомления для этого сайта заблокированы. " + SITE_SETTINGS_HINT);
+    return;
+  }
+  if (perm !== "granted") {
+    setPushNote("Запрос разрешения закрыт без ответа. Нажмите «Включить уведомления» ещё раз и выберите «Разрешить». " +
+                "Если запрос не появляется — " + SITE_SETTINGS_HINT);
+    return;
+  }
+  $("push-status").textContent = "Подписываем устройство…";
+  const sub = await withTimeout(_swReg.pushManager.subscribe({
+    userVisibleOnly:      true,
+    applicationServerKey: urlBase64ToUint8Array(_pushKey),
+  }), 20000);
+  if (sub === TIMEOUT) {
+    setPushNote("Push-сервис браузера не ответил за 20 секунд. Проверьте интернет, отключите VPN и повторите.");
+    return;
+  }
+  try {
+    await pushSendSubscription(sub);
+  } catch (e) {
+    await sub.unsubscribe().catch(() => {});   // сервер подписку не принял — в браузере она ни к чему
+    _pushLastErr = `сервер: ${e.message}`;
+    setPushNote(`Сервер не принял подписку: ${e.message}`);
+    return;
+  }
+  showToast("✓ Уведомления включены", "ok");
 }
 
 async function pushToggle() {
   const btn = $("push-toggle");
   btn.disabled = true;
+  setPushNote("");
+  _pushLastErr = "";
   try {
-    const existing = await _swReg.pushManager.getSubscription();
-    if (existing) {
-      await existing.unsubscribe();
-      await fetch(`${API_BASE}/admin/push/unsubscribe`, {
-        method:  "POST",
-        headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body:    JSON.stringify({ endpoint: existing.endpoint }),
-      }).catch(() => {});
+    if (_pushOn) {
+      const existing = await _swReg.pushManager.getSubscription();
+      if (existing) {
+        await existing.unsubscribe();
+        await fetch(`${API_BASE}/admin/push/unsubscribe`, {
+          method:  "POST",
+          headers: { ...authHeaders(), "Content-Type": "application/json" },
+          body:    JSON.stringify({ endpoint: existing.endpoint }),
+        }).catch(() => {});
+      }
       showToast("Уведомления выключены", "ok");
     } else {
-      if ((await Notification.requestPermission()) !== "granted") {
-        await pushRefreshState();
-        return;
-      }
-      const sub = await _swReg.pushManager.subscribe({
-        userVisibleOnly:      true,
-        applicationServerKey: urlBase64ToUint8Array(_pushKey),
-      });
-      await pushSendSubscription(sub);
-      showToast("✓ Уведомления включены", "ok");
+      await pushEnable();
     }
   } catch (e) {
-    showToast(`Ошибка: ${e.message}`, "err");
+    setPushNote(describePushError(e));
   }
   await pushRefreshState();
 }
+
+// Вернулись из настроек сайта — перечитать разрешение без перезагрузки страницы
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && _swReg && _pushKey && !$("push-toggle").disabled) pushRefreshState().catch(() => {});
+});
 
 async function pushTest() {
   const btn = $("push-test");
