@@ -599,6 +599,19 @@ class TestStaticFiles:
         assert "}), 20000)" in body                                    # подписка тоже не ждёт вечно
         assert "sub.unsubscribe()" in body                            # сервер отказал — в браузере подписку снимаем
 
+    def test_silent_chrome_denial_is_recognised_and_permission_changes_are_picked_up(self):
+        # Chrome отвечает «denied» без окна и оставляет permission == "default": нужно отдельное пояснение
+        html = (ADMIN_DIR / "index.html").read_text(encoding="utf-8")
+        body = html[html.index("async function pushEnable()"):html.index("async function pushToggle()")]
+        assert 'Notification.permission === "denied"' in body and "EMBARGO_HINT" in body
+        assert "Очистить и сбросить" in html.split("const EMBARGO_HINT")[1].split(";")[0]
+        # разрешили через значок сайта — включаемся сами, ссылку на PermissionStatus держим (иначе GC глушит change)
+        watch = html[html.index("async function pushWatchPermission()"):html.index("async function pushInit()")]
+        assert 'name: "notifications"' in watch and "_permStatus = await" in watch
+        assert 'state === "granted" && !_pushOn' in watch
+        # диагностика показывает, что и как быстро ответил браузер
+        assert "последний запрос разрешения" in html and "Permissions API" in html
+
     def test_token_is_remembered_only_on_request(self):
         html = (ADMIN_DIR / "index.html").read_text(encoding="utf-8")
         assert "saveToken(token, $(\"remember-token\").checked)" in html

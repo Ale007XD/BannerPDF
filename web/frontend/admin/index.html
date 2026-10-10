@@ -1029,12 +1029,24 @@ let _swReg   = null;
 let _pushKey = null;
 let _pushOn  = false;     // на этом устройстве подписка есть (обновляется в pushRefreshState)
 let _pushLastErr = "";
+let _pushReq = null;      // что ответил браузер на последний запрос разрешения: {result, ms}
+let _permStatus = null;   // PermissionStatus держим в переменной: иначе сборщик мусора перестаёт слать change
 const TIMEOUT = Symbol("timeout");
 
 const SITE_SETTINGS_HINT =
   "Разрешите уведомления для сайта: Chrome → ⋮ → Настройки → Настройки сайтов → Уведомления " +
   "(или «Информация о сайте» слева от адреса → Разрешения). Затем на Android проверьте " +
   "Настройки → Приложения → Chrome → Уведомления: они должны быть включены.";
+
+// Chrome отвечает «denied» мгновенно, не показав окно, и при этом оставляет разрешение «спрашивать»
+// (Notification.permission === "default"): так он глушит повторные запросы после нескольких закрытых окон.
+// В настройках сайта это не видно, лечится только сбросом или явным «Разрешить».
+const EMBARGO_HINT =
+  "Chrome отклонил запрос, не показав его, хотя запрета в настройках сайта нет. Так он делает, если окно запроса " +
+  "уже несколько раз закрывали (блокировка примерно на неделю). Как снять: Chrome → ⋮ → Настройки → Настройки сайтов → " +
+  "Все сайты → bannerbot.ru → «Очистить и сбросить», затем откройте админку, один раз нажмите «Включить уведомления» " +
+  "и выберите «Разрешить». Или: значок сайта слева от адреса → Разрешения → Уведомления → Разрешить — " +
+  "тогда включение произойдёт само.";
 
 function pushSupported() {
   return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
@@ -1089,6 +1101,8 @@ async function pushRenderDiag() {
     `защищённое соединение: ${window.isSecureContext ? "да" : "НЕТ"}`,
     `сеть: ${navigator.onLine ? "онлайн" : "офлайн"}`,
     `разрешение на уведомления: ${"Notification" in window ? Notification.permission : "API недоступен"}`,
+    `Permissions API: ${_permStatus ? _permStatus.state : "н/д"}`,
+    `последний запрос разрешения: ${_pushReq ? `${_pushReq.result} за ${_pushReq.ms} мс` : "не было"}`,
     `service worker: ${_swReg ? (_swReg.active ? "активен" : "не активен") + ", область " + _swReg.scope : "не запущен"}`,
   ];
   try {
@@ -1154,6 +1168,19 @@ async function pushRefreshState() {
   pushRenderDiag();
 }
 
+// Разрешение могли выдать в обход нашей кнопки (значок сайта → Разрешения): подхватываем без перезагрузки
+async function pushWatchPermission() {
+  if (_permStatus || !navigator.permissions) return;
+  try {
+    _permStatus = await navigator.permissions.query({ name: "notifications" });
+    _permStatus.addEventListener("change", () => {
+      if (!_swReg || !_pushKey || $("push-toggle").disabled) return;
+      if (_permStatus.state === "granted" && !_pushOn) pushToggle().catch(() => {});
+      else pushRefreshState().catch(() => {});
+    });
+  } catch { /* Permissions API для уведомлений доступен не везде */ }
+}
+
 async function pushInit() {
   if (!pushSupported()) {
     setPushUi(isIos() && !isStandalone()
@@ -1180,6 +1207,7 @@ async function pushInit() {
       return;
     }
     _pushKey = cfg.public_key;
+    await pushWatchPermission();
     await pushRefreshState();
   } catch (e) {
     _pushLastErr = `${e.name}: ${e.message}`;
@@ -1191,14 +1219,18 @@ async function pushInit() {
 async function pushEnable() {
   // Разрешение просим первым делом, прямо в обработчике клика, пока действует жест пользователя
   $("push-status").textContent = "Ждём ответа на запрос разрешения…";
+  const t0   = performance.now();
   const perm = await withTimeout(Notification.requestPermission(), 15000);
+  _pushReq = { result: perm === TIMEOUT ? "нет ответа" : perm, ms: Math.round(performance.now() - t0) };
   if (perm === TIMEOUT) {
     setPushNote("Запрос разрешения не получил ответа за 15 секунд — возможно, окно не показано. " +
                 SITE_SETTINGS_HINT + " Потом нажмите «Включить уведомления» ещё раз.");
     return;
   }
   if (perm === "denied") {
-    setPushNote("Уведомления для этого сайта заблокированы. " + SITE_SETTINGS_HINT);
+    setPushNote(Notification.permission === "denied"
+      ? "Уведомления для этого сайта заблокированы. " + SITE_SETTINGS_HINT
+      : EMBARGO_HINT);
     return;
   }
   if (perm !== "granted") {
