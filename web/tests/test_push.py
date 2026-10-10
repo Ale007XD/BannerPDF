@@ -612,10 +612,22 @@ class TestStaticFiles:
         # диагностика показывает, что и как быстро ответил браузер
         assert "последний запрос разрешения" in html and "Permissions API" in html
 
+    def test_fresh_subscription_is_not_dropped_when_browser_hides_the_vapid_key(self):
+        # Firefox для Android: после успешной подписки options.applicationServerKey пуст/другой.
+        # Раньше это считалось «ключ сменился» и свежую подписку тут же снимали (тост «включены», статус «Выключены»).
+        html = (ADMIN_DIR / "index.html").read_text(encoding="utf-8")
+        refresh = html[html.index("async function pushRefreshState()"):html.index("async function pushWatchPermission()")]
+        assert "readKeyHint()" in refresh and "браузер ключ не отдаёт, оставляем подписку" in refresh
+        assert refresh.index("if (hint)") < refresh.index("else if (exposed)")        # собственная запись важнее данных браузера
+        enable = html[html.index("async function pushEnable()"):html.index("async function pushToggle()")]
+        assert enable.index("await pushSendSubscription(sub)") < enable.index("writeKeyHint(_pushKey)")
+        assert "ключ подписки:" in html                                               # виден в «Диагностике»
+
     def test_token_is_remembered_only_on_request(self):
         html = (ADMIN_DIR / "index.html").read_text(encoding="utf-8")
         assert "saveToken(token, $(\"remember-token\").checked)" in html
-        assert html.count("localStorage.setItem") == 1   # единственное место: ветка remember
+        assert html.count("localStorage.setItem(TOKEN_KEY") == 1   # токен — только в ветке remember
+        assert html.count("localStorage.setItem") == 2             # плюс несекретная запись о ключе VAPID (PUSH_KEY_HINT)
 
     def test_sw_scope_matches_location(self):
         # sw.js лежит в /admin/, поэтому его область действия не шире админки

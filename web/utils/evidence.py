@@ -49,6 +49,19 @@ BASE_PAYLOAD = {
 }
 PT_TO_MM = 25.4 / 72
 
+KEY_RE = re.compile(r"^bp_live_[A-Za-z0-9_-]{32}$")
+
+
+def err_text(body):
+    """Достаёт поле detail из JSON-ответа об ошибке, иначе декодирует тело как UTF-8."""
+    try:
+        d = json.loads(body.decode("utf-8"))
+        if isinstance(d, dict) and "detail" in d:
+            return str(d["detail"])
+    except (ValueError, UnicodeDecodeError):
+        pass
+    return body.decode("utf-8", errors="replace")[:200]
+
 
 def call(url, key, payload=None, timeout=120):
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
@@ -131,13 +144,20 @@ def main():
     ap.add_argument("--base", default="https://bannerbot.ru")
     ap.add_argument("--out", default="evidence_out")
     a = ap.parse_args()
+    if not KEY_RE.match(a.key):
+        sys.exit(
+            "Ключ выглядит как заглушка или неполный: ожидается bp_live_ + 32 символа "
+            f"(всего 40), получено {len(a.key)}.\n"
+            "Полный ключ показывается в админке только один раз при создании — "
+            "в списке виден лишь префикс. Если не сохранили, создайте новый."
+        )
     base = a.base.rstrip("/")
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
 
     status, _, body, _ = call(f"{base}/api/v1/usage", a.key)
     if status != 200:
-        sys.exit(f"Ключ не принят: HTTP {status} {body[:200]!r}")
+        sys.exit(f"Ключ не принят: HTTP {status} — {err_text(body)}")
     usage = json.loads(body)
     print("Ключ принят:", {k: usage[k] for k in usage if k in ("plan", "pdf_used", "pdf_limit", "is_trial")})
     if usage.get("is_trial"):
@@ -148,7 +168,7 @@ def main():
         payload = {**BASE_PAYLOAD, "width_mm": w, "height_mm": h}
         status, headers, body, dt = call(f"{base}/api/v1/render", a.key, payload)
         if status != 200:
-            print(f"{name}: HTTP {status} {body[:200]!r}")
+            print(f"{name}: HTTP {status} — {err_text(body)}")
             continue
         path = out / f"{name}.pdf"
         path.write_bytes(body)
