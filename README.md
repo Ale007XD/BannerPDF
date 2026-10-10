@@ -255,11 +255,11 @@ Swagger: `http://localhost/api/docs`
 
 ## Деплой на VPS
 
-**VPS:** Hetzner, `bannerweb@host1884433-2`
-**Путь на сервере:** `/home/bannerweb/banner_web/`
+**VPS:** Linux-сервер с Docker Compose (адрес и пользователь хранятся в секретах GitHub, см. ниже)
+**Путь на сервере:** `<DEPLOY_PATH>` (задан в `.github/workflows/deploy-web.yml`)
 **URL:** `https://bannerbot.ru`
 
-> ✅ Новый сервер — нет конфликта с amnezia-xray. Nginx слушает стандартные порты 80 и 443.
+> Nginx слушает стандартные порты 80 и 443.
 
 ### Порты docker-compose
 
@@ -273,7 +273,7 @@ Swagger: `http://localhost/api/docs`
 
 При `push` в `main` с изменениями в `web/**` автоматически запускается `.github/workflows/deploy-web.yml`:
 
-1. Копирует файлы на VPS через SCP (`web/` → `/home/bannerweb/banner_web/`)
+1. Копирует файлы на VPS через SCP (`web/` → `<DEPLOY_PATH>/`)
 2. `docker compose build --no-cache api && docker compose up -d --force-recreate --remove-orphans`
 3. `docker image prune -f`
 4. Health check через `urllib.request` внутри контейнера
@@ -282,20 +282,20 @@ Swagger: `http://localhost/api/docs`
 
 ```
 VPS_HOST      — IP сервера
-VPS_USER      — bannerweb
+VPS_USER      — пользователь для SSH
 VPS_SSH_KEY   — приватный SSH-ключ
 ```
 
 ### Файлы вне репо (монтируются как volume)
 
 ```
-/home/bannerweb/banner_web/fonts/
+<DEPLOY_PATH>/fonts/
   GolosText-Bold.ttf
   TenorSans-Regular.ttf
   FiraSansCondensed-ExtraBold.ttf
   PTSansNarrow-Bold.ttf
 
-/home/bannerweb/banner_web/.env   # секреты
+<DEPLOY_PATH>/.env   # секреты
 ```
 
 ### SSL-сертификат
@@ -327,7 +327,7 @@ docker exec bannerprint_nginx nginx -s reload
 | `ADMIN_TOKEN` | Bearer-токен для `/api/admin/*` и `/api/v1/admin/*` | 32 байта |
 | `BOT_INTERNAL_SECRET` | Секрет для внутреннего API бота | |
 | `TG_NOTIFY_TOKEN` | Токен `@BannerBotInfo_bot` (сигнальный бот) | |
-| `TG_ADMIN_CHAT_ID` | chat_id администратора | `195351142` |
+| `TG_ADMIN_CHAT_ID` | chat_id администратора | числовой ID чата, например `123456789` |
 | `TG_WEBHOOK_SECRET` | Секрет TG webhook (только A-Z a-z 0-9 - _) | `token_hex(32)` |
 | `TG_API_BASE` | Адрес Bot API, если `api.telegram.org` недоступен с сервера (свой релей) | `https://api.telegram.org` |
 | `TG_PROXY_URL` | HTTP(S)-прокси для запросов к Telegram (необязательно; для `socks5://` нужен `httpx[socks]`) | `http://user:pass@host:3128` |
@@ -434,7 +434,10 @@ web_orders(
   status TEXT,                      -- pending|paid|token_issued|expired
   created_at TEXT, paid_at TEXT,
   yookassa_payment_id TEXT,         -- ID платежа в ЮКасса
-  tg_message_id INTEGER             -- message_id в TG для editMessageText
+  tg_message_id INTEGER,            -- message_id в TG для editMessageText
+  offer_version TEXT, accepted_at TEXT,  -- акцепт соглашения на экране проверки
+  accepted_ip TEXT, accepted_ua TEXT,    -- IP (X-Real-IP) и User-Agent (≤300 симв.) в момент акцепта
+  amended_at TEXT, original_config_json TEXT  -- единственная бесплатная правка текста
 )
 
 download_tokens(token, order_id, expires_at, used)  -- TTL 15 мин
@@ -776,15 +779,22 @@ cd ~/banner_web/web && docker compose up -d --force-recreate api
 
 ## 152-ФЗ
 
-Сервис не собирает и не обрабатывает персональные данные пользователей.
+Раздел описывает, что **фактически** хранит код (источник правды — `web/api/db/schema.sql`).
+Публичные тексты на сайте («Соглашение», «Конфиденциальность») должны ему соответствовать.
+Юридическая оценка применимости 152-ФЗ — вне этого README.
+
+Регистрация не нужна, имя, телефон и адрес пользователя не запрашиваются.
 
 | | |
 |---|---|
-| **Не хранится** | email, имя, tg_id, IP-адреса |
-| **Хранится** | `order_id` (UUID), `size_key`, `ref_code`, `token` (hex), `amount_rub`, `config_json`, временные метки — не являются ПД |
+| **Хранится при заказе** | `order_id` (UUID), `size_key`, `ref_code`, `promo_code`, `token` (hex), `amount_rub`, `config_json`, временные метки |
+| **Акцепт соглашения** | `offer_version`, `accepted_at`, **`accepted_ip`** (X-Real-IP от nginx), **`accepted_ua`** (User-Agent, ≤300 символов) — нужны, чтобы подтвердить, что условия приняты. Срок хранения в коде не ограничен |
+| **Текст макета** | `config_json` / `original_config_json` содержат введённый пользователем текст; он может включать телефоны и адреса. Сервис текст не анализирует (ответственность пользователя — п. 2 Соглашения) |
+| **Не хранится** | имя, tg_id пользователя, платёжные данные (карта вводится на стороне ЮKassa) |
 | **Исключение** | `email` в `api_keys` — основание: исполнение договора |
-| **VPS** | Hetzner, Германия |
-| **Формулировка** | «не собираем и не обрабатываем» (не «152-ФЗ не применяется») |
+| **Администратор** | `push_subscriptions` — устройства админа (не клиентов), `user_agent` ≤200 символов |
+| **Третьи стороны** | ЮKassa (платежи); Яндекс.Метрика с Вебвизором (cookie, действия на странице) |
+| **Сервер** | Германия |
 
 ---
 
@@ -798,7 +808,7 @@ cd ~/banner_web/web && docker compose up -d --force-recreate api
 - [x] Lifespan cleanup просроченных токенов и заказов
 - [x] Автодеплой через GitHub Actions + health check
 - [x] SSL (bannerbot.ru, истекает 2026-06-19)
-- [x] Переезд на новый сервер `bannerweb@host1884433-2`, nginx на стандартных портах 80/443
+- [x] Переезд на новый сервер, nginx на стандартных портах 80/443
 - [x] Фронтенд: динамический рендер из `/api/templates`, шрифты в кнопках
 - [x] Фронтенд: FAB + sticky-бар превью на мобиле, двухколонка на десктопе
 - [x] Фронтенд: кастомный размер 100–3000 мм, защита от совпадения цветов
