@@ -89,13 +89,37 @@ def verify_key(key: str) -> dict | None:
     return dict(row)
 
 
-def increment_pdf_usage(key_id: int) -> None:
-    """Увеличивает счётчик pdf_used для ключа."""
+def increment_pdf_usage(key_id: int, count: int = 1) -> None:
+    """Увеличивает счётчик pdf_used для ключа на count (по умолчанию 1)."""
     with get_db() as conn:
         conn.execute(
-            "UPDATE api_keys SET pdf_used = pdf_used + 1 WHERE id = ?",
-            (key_id,),
+            "UPDATE api_keys SET pdf_used = pdf_used + ? WHERE id = ?",
+            (count, key_id),
         )
+
+
+def charge_batch_job(job_id: str, key_id: int, files: int) -> bool:
+    """
+    Списывает лимит за batch-задачу ровно один раз — при первой выдаче ZIP.
+
+    Атомарно: метка charged_at ставится условным UPDATE (WHERE charged_at IS NULL),
+    а списание pdf_used идёт в той же транзакции. Параллельные и повторные
+    скачивания видят заполненную метку и ничего не списывают.
+
+    Возвращает True, если списание выполнено сейчас; False — если уже было.
+    """
+    with get_db() as conn:
+        claimed = conn.execute(
+            "UPDATE batch_jobs SET charged_at = ? WHERE id = ? AND charged_at IS NULL",
+            (datetime.now(timezone.utc).isoformat(), job_id),
+        ).rowcount
+        if not claimed:
+            return False
+        conn.execute(
+            "UPDATE api_keys SET pdf_used = pdf_used + ? WHERE id = ?",
+            (files, key_id),
+        )
+    return True
 
 
 def list_keys() -> list[dict]:

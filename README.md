@@ -445,7 +445,7 @@ pending_orders(order_id, config_json, expires_at)   -- TTL 30 мин
 promo_codes(code, uses_left, expires_at, discount)  -- промокоды (discount=100 → бесплатно)
 api_plans(id, name, pdf_limit, rpm_limit, price_rub)
 api_keys(id, key_hash, key_prefix, plan_id, label, email, active, pdf_used, period_start)
-batch_jobs(id, api_key_id, status, total, done, errors_json, expires_at)  -- TTL 1 ч
+batch_jobs(id, api_key_id, status, total, done, errors_json, expires_at, charged_at)  -- TTL 1 ч; лимит списывается один раз при первой выдаче ZIP
 referrers(ref_code, balance_rub, created_at)
 referrals(id, referrer_id, order_id, order_amount, commission, ...)
 ```

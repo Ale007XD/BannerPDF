@@ -119,7 +119,8 @@ CREATE TABLE IF NOT EXISTS batch_jobs (
     errors_json TEXT    NOT NULL DEFAULT '[]',
     created_at  TEXT    NOT NULL,
     ready_at    TEXT,
-    expires_at  TEXT    NOT NULL
+    expires_at  TEXT    NOT NULL,
+    charged_at  TEXT    -- когда списан лимит PDF (первая выдача ZIP); NULL = ещё не списан
 );
 
 CREATE INDEX IF NOT EXISTS idx_batch_status ON batch_jobs(status);

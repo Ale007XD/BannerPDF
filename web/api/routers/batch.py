@@ -16,7 +16,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from ..services.api_key_store import increment_pdf_usage
+from ..services.api_key_store import charge_batch_job
 from ..services.batch_worker import get_job_status, get_job_zip_path, submit_job
 from ..services.sanitizer import validate_banner_config
 from .corp_api import require_api_key
@@ -193,8 +193,9 @@ async def batch_download(
     """
     Возвращает ZIP-архив с PDF-файлами.
     Доступен только когда status=ready, TTL 1 час.
-    После успешного скачивания — счётчик pdf_used увеличивается
-    на фактическое количество сгенерированных файлов.
+    Лимит pdf_used списывается один раз за задачу — при первой выдаче архива,
+    на фактическое количество сгенерированных файлов. Повторное скачивание
+    в пределах TTL лимит не списывает.
     """
     job = get_job_status(job_id)
 
@@ -220,13 +221,12 @@ async def batch_download(
             detail="Архив истёк или не найден. TTL batch-архива — 1 час.",
         )
 
-    # Увеличиваем счётчик на кол-во успешно сгенерированных PDF
-    for _ in range(job["done"]):
-        increment_pdf_usage(api_key["id"])
+    # Один раз за задачу, при первой выдаче архива (атомарно, см. charge_batch_job)
+    charged = charge_batch_job(job_id, api_key["id"], job["done"])
 
     logger.info(
-        "batch_download: job=%s ключ=%s %d файлов",
-        job_id[:8], api_key["key_prefix"], job["done"],
+        "batch_download: job=%s ключ=%s %d файлов списано=%s",
+        job_id[:8], api_key["key_prefix"], job["done"], charged,
     )
 
     return FileResponse(

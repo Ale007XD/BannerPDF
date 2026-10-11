@@ -14,8 +14,9 @@ api_check.py — сквозная проверка корп. API BannerBot по 
 Только стандартная библиотека. Если рядом лежит evidence.py, PDF проверяются
 дополнительно (размер страницы, шрифты, цвет).
 
-Запуск:
-  python3 api_check.py --key bp_live_...                       # 5 строк CSV
+Запуск (ключ лучше передавать через окружение, а не в командной строке):
+  export BANNERBOT_KEY=bp_live_...
+  python3 api_check.py                                         # 5 строк CSV
   python3 api_check.py --key bp_live_... --csv banners.csv --size-key 3x2
   python3 api_check.py --key bp_live_... --rows 20 --recount
 
@@ -26,6 +27,7 @@ import argparse
 import csv
 import io
 import json
+import os
 import re
 import sys
 import time
@@ -86,6 +88,8 @@ def http(method, url, key, json_body=None, multipart=None, timeout=180):
             return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read(), time.perf_counter() - t0
     except urllib.error.HTTPError as e:
         return e.code, {k.lower(): v for k, v in e.headers.items()}, e.read(), time.perf_counter() - t0
+    except urllib.error.URLError as e:
+        sys.exit(f"Нет соединения с {url}: {e.reason}")
 
 
 def get_usage(base, key):
@@ -112,7 +116,8 @@ def pdf_report(path, size_key):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--key", required=True)
+    ap.add_argument("--key", default=os.environ.get("BANNERBOT_KEY"),
+                    help="API-ключ; лучше через переменную BANNERBOT_KEY, чтобы он не попал в историю команд")
     ap.add_argument("--base", default="https://bannerbot.ru")
     ap.add_argument("--size-key", default="3x2", help="типовой размер (3x2 = 3000×2000 мм)")
     ap.add_argument("--csv", help="свой CSV без заголовка; иначе будет сгенерирован")
@@ -120,11 +125,29 @@ def main():
     ap.add_argument("--out", default="api_check_out")
     ap.add_argument("--recount", action="store_true", help="скачать ZIP повторно и сверить счётчик")
     a = ap.parse_args()
+    if not a.key:
+        sys.exit("Нужен ключ: --key или переменная окружения BANNERBOT_KEY.")
     if not KEY_RE.match(a.key):
         sys.exit("Ключ выглядит как заглушка или неполный (нужно bp_live_ + 32 символа). "
                  "Полный ключ показывается в админке один раз при создании.")
     base, out = a.base.rstrip("/"), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
+
+    # CSV готовим и проверяем ДО первого запроса: ошибка файла не должна стоить лимита
+    if a.csv:
+        if not Path(a.csv).is_file():
+            sys.exit(f"CSV не найден: {a.csv} (текущая папка: {Path.cwd()}). Без --csv скрипт сам создаст файл на --rows строк.")
+        raw = Path(a.csv).read_bytes()
+        try:
+            raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            sys.exit("CSV должен быть в UTF-8 (в Excel: «CSV UTF-8»). Сервер иначе ответит ошибкой.")
+    else:
+        sio = io.StringIO()
+        w = csv.writer(sio)
+        for i in range(1, a.rows + 1):
+            w.writerow([f"АКЦИЯ {i}", "Скидки до 70%"])
+        raw = sio.getvalue().encode("utf-8")
 
     print("1. Ключ и лимиты")
     u0 = get_usage(base, a.key)
@@ -147,14 +170,6 @@ def main():
 
     # --- пакет ---
     print("3. Пакет из CSV")
-    if a.csv:
-        raw = Path(a.csv).read_bytes()
-    else:
-        sio = io.StringIO()
-        w = csv.writer(sio)
-        for i in range(1, a.rows + 1):
-            w.writerow([f"АКЦИЯ {i}", "Скидки до 70%"])
-        raw = sio.getvalue().encode("utf-8")
     (out / "banners.csv").write_bytes(raw)
     expected = sum(1 for row in csv.reader(io.StringIO(raw.decode("utf-8-sig"))) if any(c.strip() for c in row))
     print(f"  строк с данными в CSV: {expected}")

@@ -22,6 +22,7 @@ Business (создаётся в админке, 1 000 PDF/мес). Каждый 
 import argparse
 import base64
 import json
+import os
 import re
 import shutil
 import statistics
@@ -190,7 +191,8 @@ def check_dir(d):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--key", help="API-ключ bp_live_... (не нужен с --check-dir)")
+    ap.add_argument("--key", default=os.environ.get("BANNERBOT_KEY"),
+                    help="API-ключ bp_live_... или переменная BANNERBOT_KEY (не нужен с --check-dir)")
     ap.add_argument("--check-dir", metavar="DIR", help="только проверить уже сохранённые PDF, без запросов к API")
     ap.add_argument("--base", default="https://bannerbot.ru")
     ap.add_argument("--out", default="evidence_out")

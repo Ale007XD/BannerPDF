@@ -31,8 +31,8 @@ curl -X POST https://bannerbot.ru/api/v1/render \
     "text_color": "Черный",
     "font": "Golos Text",
     "text_lines": [
-      {"text": "ЛЕТНЯЯ РАСПРОДАЖА", "scale": 100},
-      {"text": "Скидки до 70%",     "scale": 70}
+      {"text": "ЛЕТНЯЯ РАСПРОДАЖА", "scale": 1.0},
+      {"text": "Скидки до 70%",     "scale": 0.7}
     ]
   }' \
   --output banner.pdf
@@ -56,7 +56,7 @@ curl -X POST https://bannerbot.ru/api/v1/render \
 
 - **PDF/мес** — лимит рендеров; у платных планов сбрасывается раз в 30 дней, у Trial — нет
 - **RPM** — максимум запросов в минуту на ключ
-- Счётчик растёт только при успешном рендере (HTTP 200)
+- Счётчик растёт только при успешном рендере (HTTP 200). Для batch лимит списывается один раз — при первом скачивании ZIP, на число PDF в архиве; повторное скачивание в пределах TTL ничего не списывает
 
 ---
 
@@ -75,8 +75,8 @@ curl -X POST https://bannerbot.ru/api/v1/render \
   "text_color": "Черный",
   "font":       "Golos Text",
   "text_lines": [
-    {"text": "Текст строки 1", "scale": 100},
-    {"text": "Текст строки 2", "scale": 70}
+    {"text": "Текст строки 1", "scale": 1.0},
+    {"text": "Текст строки 2", "scale": 0.7}
   ]
 }
 ```
@@ -91,7 +91,7 @@ curl -X POST https://bannerbot.ru/api/v1/render \
 | `font` | string | Шрифт (см. справочник) |
 | `text_lines` | array, 1–6 эл. | Строки текста |
 | `text_lines[].text` | string | Текст строки, до 120 символов |
-| `text_lines[].scale` | integer | Масштаб строки: **50–100** (100 = полный размер). По умолчанию 100 |
+| `text_lines[].scale` | number | Масштаб строки: **0.3–1.5** (1.0 = полный размер). По умолчанию 1.0. Значения 1.5–2.0 принимаются и приводятся к 1.5; вне 0.3–2.0 — ошибка 422 |
 
 **Ответ:** `application/pdf`
 
@@ -115,7 +115,7 @@ curl -X POST https://bannerbot.ru/api/v1/render \
     "bg_color":   "Красный",
     "text_color": "Белый",
     "font":       "Fira Sans Cond",
-    "text_lines": [{"text": "АКЦИЯ", "scale": 100}]
+    "text_lines": [{"text": "АКЦИЯ", "scale": 1.0}]
   }' \
   --output banner.pdf
 ```
@@ -193,7 +193,7 @@ curl https://bannerbot.ru/api/v1/usage \
 АКЦИЯ,,
 ```
 
-Пустые ячейки и полностью пустые строки пропускаются. Максимум 500 строк.
+Пустые ячейки и полностью пустые строки пропускаются. Максимум 500 строк, до 6 непустых ячеек в строке. Все строки текста в batch выводятся в полный размер (`scale` 1.0).
 
 ```bash
 curl -X POST https://bannerbot.ru/api/v1/batch/submit \
@@ -252,6 +252,8 @@ curl https://bannerbot.ru/api/v1/batch/550e8400... \
 
 Доступен когда `status = ready`. TTL архива — 1 час после завершения.
 
+Лимит PDF списывается **один раз** — при первом успешном скачивании, на число файлов в архиве (`X-Files-Count`). Повторное скачивание в пределах TTL лимит не списывает; пока архив не скачан, лимит не тратится.
+
 ```bash
 curl https://bannerbot.ru/api/v1/batch/550e8400.../download \
   -H "Authorization: Bearer bp_live_ВАШ_КЛЮЧ" \
@@ -260,7 +262,7 @@ curl https://bannerbot.ru/api/v1/batch/550e8400.../download \
 
 Заголовки ответа: `X-Files-Count`, `X-Errors-Count`.
 
-**Рекомендуемый polling-интервал:** 3–5 секунд.
+**Интервал опроса.** Запросы статуса входят в RPM вашего плана, поэтому интервал должен быть не меньше `60 / RPM` секунд: Starter (10 RPM) — от 6 с, Trial (5 RPM) — от 12 с, Business (60 RPM) — от 1 с. При ответе 429 подождите и повторите запрос: задача продолжает выполняться, лимит не теряется.
 
 ---
 
@@ -333,7 +335,7 @@ def render_banner(text_lines: list[str], size_key: str = "3x2") -> bytes:
             "bg_color":   "Белый",
             "text_color": "Черный",
             "font":       "Golos Text",
-            "text_lines": [{"text": t, "scale": 100} for t in text_lines],
+            "text_lines": [{"text": t, "scale": 1.0} for t in text_lines],
         },
         timeout=60,
     )
