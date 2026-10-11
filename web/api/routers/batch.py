@@ -11,6 +11,7 @@ GET  /api/v1/batch/{job_id}/download — скачать ZIP (когда status=r
 import csv
 import io
 import logging
+import os
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -18,7 +19,7 @@ from fastapi.responses import FileResponse
 
 from ..services.api_key_store import charge_batch_job
 from ..services.batch_worker import get_job_status, get_job_zip_path, submit_job
-from ..services.sanitizer import validate_banner_config
+from ..services.sanitizer import MAX_LINE_LENGTH, validate_banner_config
 from .corp_api import require_api_key
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,16 @@ router = APIRouter(prefix="/v1/batch")
 
 # Максимум строк в одном batch-задании
 BATCH_MAX_ITEMS = 500
+
+# Максимальный размер CSV, байт. Корректный файл на 500 строк × 6 ячеек × 120 символов
+# (кириллица, 2 байта) занимает около 730 КБ. Лимит нарочно ниже 1 МиБ — умолчания nginx
+# (client_max_body_size): иначе клиент у границы получит HTML-страницу 413 от nginx
+# вместо JSON. Тело запроса целиком принимает nginx, эта проверка — второй рубеж.
+# Если поднимаете лимит — поднимайте и client_max_body_size в nginx.
+BATCH_MAX_FILE_BYTES = int(os.getenv("BATCH_MAX_FILE_BYTES", "1000000"))
+
+# Сколько проблемных ячеек перечислять в ответе об ошибке
+BATCH_MAX_REPORTED = 10
 
 
 # ---------------------------------------------------------------------------
@@ -58,13 +69,28 @@ async def batch_submit(
     """
     # --- Парсинг CSV ---
     try:
-        content = await file.read()
-        text = content.decode("utf-8-sig")  # utf-8-sig убирает BOM от Excel
+        content = await file.read(BATCH_MAX_FILE_BYTES + 1)
     except Exception:
         raise HTTPException(status_code=422, detail="Не удалось прочитать CSV-файл")
+    if len(content) > BATCH_MAX_FILE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"CSV-файл слишком большой: максимум {BATCH_MAX_FILE_BYTES // 1000} КБ. "
+                f"Разбейте его на несколько заданий (до {BATCH_MAX_ITEMS} строк в каждом)."
+            ),
+        )
+    try:
+        text = content.decode("utf-8-sig")  # utf-8-sig убирает BOM от Excel
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=422,
+            detail="Не удалось прочитать CSV-файл: ожидается кодировка UTF-8",
+        )
 
     reader = csv.reader(io.StringIO(text))
     items: list[dict] = []
+    too_long: list[tuple[int, int, int]] = []  # (строка CSV, ячейка, длина)
 
     for i, row in enumerate(reader, start=1):
         # Фильтруем полностью пустые строки
@@ -78,6 +104,12 @@ async def batch_submit(
         ]
         if not text_lines:
             continue
+
+        # Как и в /render: до MAX_LINE_LENGTH символов. Иначе санитайзер молча обрежет текст.
+        for k, cell in enumerate(row, start=1):
+            length = len(cell.strip())
+            if length > MAX_LINE_LENGTH:
+                too_long.append((i, k, length))
 
         config = {
             "bg_color":    bg_color,
@@ -114,6 +146,21 @@ async def batch_submit(
                 status_code=422,
                 detail=f"Превышен лимит строк: максимум {BATCH_MAX_ITEMS} баннеров за один запрос",
             )
+
+    if too_long:
+        shown = "; ".join(
+            f"Строка CSV {r}, ячейка {c} ({n} симв.)"
+            for r, c, n in too_long[:BATCH_MAX_REPORTED]
+        )
+        rest = len(too_long) - BATCH_MAX_REPORTED
+        more = f"; и ещё {rest}" if rest > 0 else ""
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Ячейка длиннее {MAX_LINE_LENGTH} символов: {shown}{more}. "
+                f"Сократите текст до {MAX_LINE_LENGTH} символов."
+            ),
+        )
 
     if not items:
         raise HTTPException(status_code=422, detail="CSV-файл не содержит данных")

@@ -10,6 +10,7 @@ api_check.py — сквозная проверка корп. API BannerBot по 
   5. GET  /api/v1/batch/{id}/download — ZIP скачивается ОДИН раз; проверяется состав.
   6. Сверка счётчика pdf_used: на сколько вырос после единичного и после пакета.
   --recount: скачать ZIP ещё раз и посмотреть, не списывается ли лимит повторно.
+  5. Отказы: ячейка > 120 символов (422), файл > 1 МБ (413), не UTF-8 (422); лимит не тратится.
 
 Только стандартная библиотека. Если рядом лежит evidence.py, PDF проверяются
 дополнительно (размер страницы, шрифты, цвет).
@@ -46,6 +47,12 @@ except ImportError:
     evidence = None
 
 results = []  # (название проверки, ok, комментарий)
+metrics = []  # информационные строки: измерения, не проверки
+
+
+def metric(text):
+    metrics.append(text)
+    print(f"  [ИЗМ] {text}")
 
 
 def check(name, ok, note=""):
@@ -124,6 +131,7 @@ def main():
     ap.add_argument("--rows", type=int, default=5, help="строк в сгенерированном CSV")
     ap.add_argument("--out", default="api_check_out")
     ap.add_argument("--recount", action="store_true", help="скачать ZIP повторно и сверить счётчик")
+    ap.add_argument("--no-negative", action="store_true", help="пропустить проверку отказов (загружает ~1 МБ)")
     a = ap.parse_args()
     if not a.key:
         sys.exit("Нужен ключ: --key или переменная окружения BANNERBOT_KEY.")
@@ -164,6 +172,8 @@ def main():
         sys.exit("Единичный рендер не прошёл, дальше смысла нет.")
     (out / "single.pdf").write_bytes(pdf)
     check("ответ — PDF", pdf[:5] == b"%PDF-", f"{len(pdf)/1024:.0f} КБ, сервер {h.get('x-render-time-ms','?')} мс, запрос {dt:.2f} с")
+    metric(f"единичный рендер: сервер {h.get('x-render-time-ms','?')} мс, запрос целиком {dt:.2f} с "
+           "(первый запрос после перезапуска может быть заметно дольше прогретых)")
     pdf_report(out / "single.pdf", a.size_key)
     u1 = get_usage(base, a.key)
     check("счётчик после единичного +1", u1["pdf_used"] == u0["pdf_used"] + 1, f"{u0['pdf_used']} → {u1['pdf_used']}")
@@ -173,6 +183,7 @@ def main():
     (out / "banners.csv").write_bytes(raw)
     expected = sum(1 for row in csv.reader(io.StringIO(raw.decode("utf-8-sig"))) if any(c.strip() for c in row))
     print(f"  строк с данными в CSV: {expected}")
+    t_submit = time.perf_counter()
     st, _, body, _ = http("POST", f"{base}/api/v1/batch/submit", a.key, multipart={
         "fields": {"size_key": a.size_key, "bg_color": BG, "text_color": FG, "font": FONT},
         "file": ("banners.csv", raw)})
@@ -181,7 +192,7 @@ def main():
     job = json.loads(body)
     check("total совпадает с CSV", job["total"] == expected, f"сервер {job['total']}, ожидалось {expected}")
 
-    deadline, status = time.time() + 600, {}
+    deadline, status, batch_s = time.time() + 600, {}, None
     while time.time() < deadline:
         time.sleep(interval)
         st, _, body, _ = http("GET", f"{base}/api/v1/batch/{job['job_id']}", a.key)
@@ -195,11 +206,15 @@ def main():
         status = json.loads(body)
         print(f"  {status['status']}: {status['done']}/{status['total']}, ошибок {len(status['errors'])}")
         if status["status"] in ("ready", "failed"):
+            batch_s = time.perf_counter() - t_submit
             break
     check("задача завершилась (ready)", status.get("status") == "ready", f"статус {status.get('status')}")
     if status.get("status") != "ready":
         return finish(out)
     check("ошибок в задаче нет", not status["errors"], str(status["errors"])[:200])
+    if batch_s:
+        metric(f"пакет: {status['done']} PDF от отправки до готовности за {batch_s:.1f} с "
+               f"({status['done'] / batch_s:.1f} PDF/с; точность ±{interval:.0f} с из-за шага опроса)")
 
     u2 = get_usage(base, a.key)
     check("до скачивания лимит не списан", u2["pdf_used"] == u1["pdf_used"],
@@ -227,6 +242,27 @@ def main():
         u4 = get_usage(base, a.key)
         check("повторное скачивание не списывает лимит", st != 200 or u4["pdf_used"] == u3["pdf_used"],
               f"HTTP {st}, счётчик {u3['pdf_used']} → {u4['pdf_used']}")
+        u3 = u4
+
+    if not a.no_negative:
+        print("5. Проверка отказов (лимит не тратится)")
+        fields = {"size_key": a.size_key, "bg_color": BG, "text_color": FG, "font": FONT}
+
+        def reject(content):
+            return http("POST", f"{base}/api/v1/batch/submit", a.key,
+                        multipart={"fields": fields, "file": ("neg.csv", content)})
+
+        st, _, body, _ = reject(("Д" * 121 + "\r\n").encode("utf-8"))
+        check("ячейка 121 символ → 422 с позицией", st == 422 and "ячейка 1 (121" in err_text(body),
+              f"HTTP {st}: {err_text(body)[:110]}")
+        st, h, body, _ = reject(b"a\n" * 510000)  # 1 020 000 байт: больше лимита приложения, меньше 1 МиБ nginx
+        is_json = h.get("content-type", "").startswith("application/json")
+        check("файл больше 1 МБ → 413", st == 413,
+              f"HTTP {st}, " + ("JSON-ответ приложения" if is_json else "ответ не JSON — отвечал не код приложения"))
+        st, _, body, _ = reject("Привет\r\n".encode("cp1251"))
+        check("не UTF-8 → 422 с пояснением", st == 422 and "UTF-8" in err_text(body), f"HTTP {st}: {err_text(body)[:90]}")
+        u5 = get_usage(base, a.key)
+        check("отказы не списали лимит", u5["pdf_used"] == u3["pdf_used"], f"{u3['pdf_used']} → {u5['pdf_used']}")
     finish(out)
 
 
@@ -234,6 +270,8 @@ def finish(out):
     bad = [r for r in results if not r[1]]
     lines = ["# Проверка API BannerBot", "", "| Проверка | Итог | Комментарий |", "|---|---|---|"]
     lines += [f"| {n} | {'OK' if ok else 'FAIL'} | {note} |" for n, ok, note in results]
+    if metrics:
+        lines += ["", "## Измерения", ""] + [f"- {m}" for m in metrics]
     (out / "api_check.md").write_text("\n".join(lines), encoding="utf-8")
     print(f"\nИтог: {len(results) - len(bad)} OK, {len(bad)} FAIL. Отчёт и файлы: {out}/")
     sys.exit(1 if bad else 0)
