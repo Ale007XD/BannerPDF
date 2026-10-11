@@ -24,6 +24,7 @@
 - [Тесты](#тесты)
 - [Nginx и rate limits](#nginx-и-rate-limits)
 - [Web Push и PWA админки](#web-push-и-pwa-админки)
+- [Telegram через Cloudflare Worker](#telegram-через-cloudflare-worker)
 - [152-ФЗ](#152-фз)
 - [Pending tasks](#pending-tasks)
 
@@ -50,7 +51,7 @@
 | Executor | `ProcessPoolExecutor(max_workers=2)` — только для GS в batch_worker |
 | Frontend | Vanilla HTML/CSS/JS, без фреймворков и сборки |
 | База данных | SQLite WAL — `banner_web.db` (отдельная от `banner_bot.db`) |
-| Прокси | Nginx 1.25 в Docker — реверс-прокси + статика + rate limits, порты 80/443/88 |
+| Прокси | Nginx 1.25 в Docker — реверс-прокси + статика + rate limits, порты 80/443 |
 | Деплой | GitHub Actions → SCP → Docker Compose |
 | Оплата (активная) | ЮКасса — embedded-виджет, верификация через GET `/v3/payments/{id}` |
 | Оплата (запасная) | Сам.Эквайринг (selfwork.ru) — SHA256 в теле, `*_selfwork.py` |
@@ -62,13 +63,13 @@
 
 ```
                         ┌──────────────────────────────────────┐
-  Браузер               │  Nginx (Docker, порты 80/443/88)     │
+  Браузер               │  Nginx (Docker, порты 80/443)        │
   ──────────────────►   │  • Статика /app/frontend              │
                         │  • Статика /app/frontend/admin/       │
                         │  • Rate limits (preview/order/dl)     │
                         │  • TLS (Let's Encrypt, :443)          │
                         │  • Редирект 80 → https://$host        │
-                        │  • :88 → TG webhook                   │
+                        │  • /api/ → FastAPI (в т.ч. TG webhook)│
                         └──────────────┬───────────────────────┘
                                        │ proxy_pass :8000
                         ┌──────────────▼───────────────────────┐
@@ -181,8 +182,11 @@ BannerPDF/
 │   │       └── icons/            # 192/512 + maskable 512
 │   │
 │   ├── nginx/
-│   │   └── default.conf          # Server-блоки: 80→443 редирект, 443 HTTPS, 88 TG webhook
+│   │   └── default.conf          # Server-блоки: 80→443 редирект, 443 HTTPS (включая /api/tg/callback)
 │   │                             # ⚠️ nginx.conf и proxy_params НЕ монтировать
+│   │
+│   ├── tools/
+│   │   └── cf-tg-relay.js        # Cloudflare Worker: релей Telegram ⇄ сайт (не входит в образ)
 │   │
 │   └── tests/
 │       ├── conftest.py
@@ -259,7 +263,8 @@ Swagger: `http://localhost/api/docs`
 **Путь на сервере:** `<DEPLOY_PATH>` (задан в `.github/workflows/deploy-web.yml`)
 **URL:** `https://bannerbot.ru`
 
-> Nginx слушает стандартные порты 80 и 443.
+> Nginx слушает стандартные порты 80 и 443. Webhook Telegram приходит не на отдельный порт, а через Worker Cloudflare на `/api/tg/callback`
+> (см. [Telegram через Cloudflare Worker](#telegram-через-cloudflare-worker)).
 
 ### Порты docker-compose
 
@@ -267,7 +272,6 @@ Swagger: `http://localhost/api/docs`
 |---|---|
 | **80** | Nginx — редирект на 443 |
 | **443** | Nginx — основной сайт (HTTPS) |
-| **88** | Nginx → FastAPI — TG webhook |
 
 ### Автоматический деплой (GitHub Actions)
 
@@ -801,6 +805,58 @@ cd ~/banner_web/web && docker compose up -d --force-recreate api
 
 ---
 
+## Telegram через Cloudflare Worker
+
+Хостинг VPS не пропускает трафик Telegram в обе стороны: с сервера не открывается `api.telegram.org`, а запросы Telegram
+к сайту обрываются по таймауту (`getWebhookInfo` → `last_error_message: Connection timed out`, в `access.log` nginx нет
+адресов `149.154.*` / `91.108.*`). Поэтому между сайтом и Telegram стоит Worker Cloudflare (`web/tools/cf-tg-relay.js`,
+бесплатного тарифа хватает). Код сайта не менялся: адрес Bot API берётся из `TG_API_BASE`.
+
+```
+сайт     ──POST──► Worker  /<RELAY_SECRET>/bot<TOKEN>/<method> ──► api.telegram.org
+                   (уведомление о заказе, правка сообщения, ответ на кнопку; ответ Telegram возвращается синхронно)
+Telegram ──POST──► Worker  /<RELAY_SECRET>/tg-hook ──POST──► https://bannerbot.ru/api/tg/callback
+                   (нажатие «✅ Выдать PDF»)
+```
+
+### Развёртывание (один раз)
+
+1. Cloudflare → Workers & Pages → Create → Hello World → Edit code → вставить `web/tools/cf-tg-relay.js` → Deploy.
+2. Settings → Variables and Secrets → Secret `RELAY_SECRET` = `openssl rand -hex 16`.
+3. В `web/.env`: `TG_API_BASE=https://<имя>.<аккаунт>.workers.dev/<RELAY_SECRET>` и `TG_WEBHOOK_SECRET` (`openssl rand -hex 32`);
+   затем `docker compose up -d --force-recreate api`.
+4. Зарегистрировать webhook на Worker (с VPS; секреты не выводятся):
+
+```bash
+cd ~/banner_web/web; set -a; . ./.env; set +a
+curl -sS -m 15 -X POST "$TG_API_BASE/bot$TG_NOTIFY_TOKEN/setWebhook" -H 'content-type: application/json' \
+  -d "{\"url\":\"$TG_API_BASE/tg-hook\",\"secret_token\":\"$TG_WEBHOOK_SECRET\",\"allowed_updates\":[\"callback_query\"],\"drop_pending_updates\":true}"
+# ожидается {"ok":true,"result":true,"description":"Webhook was set"}
+```
+
+Проверка (Worker принимает только POST, поэтому `-X POST` обязателен):
+
+```bash
+curl -sS -m 15 -X POST "$TG_API_BASE/bot$TG_NOTIFY_TOKEN/getWebhookInfo" -H 'content-type: application/json' -d '{}' \
+  | python3 -c 'import sys,json;r=json.load(sys.stdin)["result"];print({k:r.get(k) for k in ("pending_update_count","last_error_message","last_error_date")})'
+```
+
+`last_error_date` показывает, свежая ли ошибка: Telegram не стирает старую `last_error_message`. Если `pending_update_count`
+не уменьшается, а ошибка свежая, смотреть `docker logs bannerprint_api --since 10m | grep tg/callback`.
+
+### Как устроено
+
+- Без секретного первого сегмента пути Worker отвечает 404. На Telegram пропускаются только методы из `ALLOWED_METHODS`
+  (нельзя читать апдейты, удалять webhook, слать файлы), на сайт уходит один фиксированный адрес `SITE_CALLBACK`.
+- Секрет webhook проверяет сайт: Worker пересылает `X-Telegram-Bot-Api-Secret-Token` как есть, без верного значения
+  `/api/tg/callback` отвечает 403 (Worker возвращает этот статус Telegram, а не маскирует его).
+- Если сайт недоступен или завис, Worker отвечает Telegram 502/504, и Telegram повторяет доставку. Повтор безопасен:
+  `do_force_token()` идемпотентна.
+- После настройки `getWebhookInfo` и `setWebhook` можно убрать из `ALLOWED_METHODS`.
+- Смена `RELAY_SECRET` требует нового `TG_API_BASE` в `.env` и повторного `setWebhook`.
+
+---
+
 ## 152-ФЗ
 
 Раздел описывает, что **фактически** хранит код (источник правды — `web/api/db/schema.sql`).
@@ -844,7 +900,7 @@ cd ~/banner_web/web && docker compose up -d --force-recreate api
 - [x] `app.js` v12: модалка `#modal-pay` с виджетом ЮКасса, очистка контейнера
 - [x] E2E флоу: превью → заказ → виджет ЮКасса → webhook → PDF скачан ✅
 - [x] TG-уведомления о новых заказах (`@BannerBotInfo_bot` + inline-кнопка «Выдать PDF»)
-- [x] TG webhook зарегистрирован на порту 88
+- [x] TG webhook: Telegram → Cloudflare Worker (`<TG_API_BASE>/tg-hook`) → `/api/tg/callback`; порт 88 не используется
 - [x] `do_force_token()` вынесена — вызывается из TG и из adminки
 - [x] `tg_message_id` в `web_orders`: после webhook редактируется TG-сообщение («💳 Оплачено»)
 - [x] Миграция БД: колонки `yookassa_payment_id` и `tg_message_id`
