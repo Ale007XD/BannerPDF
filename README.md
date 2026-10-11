@@ -149,7 +149,7 @@ BannerPDF/
 │   │   │   ├── payment.py        # POST /api/payment/callback (ЮКасса, активный)
 │   │   │   ├── payment_selfwork.py  # POST /api/payment/callback (Selfwork, запасной)
 │   │   │   ├── download.py       # GET /api/download/{token}
-│   │   │   ├── admin.py          # stats|orders|funnel + force_token + order audit
+│   │   │   ├── admin.py          # stats|orders|funnel + force_token + order audit + промокоды
 │   │   │   ├── push.py           # /api/admin/push/* — подписка устройств админа (Web Push)
 │   │   │   ├── referral.py       # Реферальная программа
 │   │   │   ├── corp_api.py       # Корп. API (Trial + платные тарифы)
@@ -166,6 +166,7 @@ BannerPDF/
 │   │       ├── token_store.py       # create_token(), consume_token() — SQLite
 │   │       ├── order_store.py       # save_pending(), get_pending() — SQLite
 │   │       ├── push_notify.py       # Web Push (VAPID) админу: push_new_order(), push_order_paid()
+│   │       ├── promo_store.py       # промокоды: reserve() атомарно, calc_amount(), release_*, create_promo()
 │   │       ├── referral_store.py    # accrue_commission() 15%
 │   │       ├── api_key_store.py     # generate_key(), verify_key()
 │   │       ├── batch_worker.py      # asyncio.Queue + ProcessPoolExecutor
@@ -391,6 +392,9 @@ GET        /api/admin/stats                  — Общая статистика
 GET        /api/admin/orders                 — Список заказов с пагинацией
 GET        /api/admin/funnel                 — Воронка конверсии
 POST       /api/admin/force_token/{order_id} — Ручная выдача PDF-токена
+POST       /api/admin/promo                  — Выдать промокод {discount 1–100, uses 1–1000, code?, expires_in_days?, note?}
+GET        /api/admin/promo                  — Список промокодов: остаток, оплачено, статус
+POST       /api/admin/promo/{code}/active    — Включить или отключить промокод {active}
 GET        /api/admin/push/config            — Публичный VAPID-ключ для подписки устройства
 POST       /api/admin/push/subscribe         — Сохранить подписку устройства (PushSubscription)
 POST       /api/admin/push/unsubscribe       — Удалить подписку по endpoint
@@ -441,12 +445,15 @@ web_orders(
   tg_message_id INTEGER,            -- message_id в TG для editMessageText
   offer_version TEXT, accepted_at TEXT,  -- акцепт соглашения на экране проверки
   accepted_ip TEXT, accepted_ua TEXT,    -- IP (X-Real-IP) и User-Agent (≤300 симв.) в момент акцепта
-  amended_at TEXT, original_config_json TEXT  -- единственная бесплатная правка текста
+  amended_at TEXT, original_config_json TEXT, -- единственная бесплатная правка текста
+  promo_released_at TEXT            -- использование промокода возвращено (платёж не создан)
 )
 
 download_tokens(token, order_id, expires_at, used)  -- TTL 15 мин
 pending_orders(order_id, config_json, expires_at)   -- TTL 30 мин
-promo_codes(code, uses_left, expires_at, discount)  -- промокоды (discount=100 → бесплатно)
+promo_codes(code, uses_left, expires_at, discount, uses_total, created_at, note, active)
+                                                     -- discount: % скидки, 100 → бесплатно; uses_left списывается
+                                                     -- при создании заказа (любая скидка), возвращается, если платёж не создан
 api_plans(id, name, pdf_limit, rpm_limit, price_rub)
 api_keys(id, key_hash, key_prefix, plan_id, label, email, active, pdf_used, period_start)
 batch_jobs(id, api_key_id, status, total, done, errors_json, expires_at, charged_at)  -- TTL 1 ч; лимит списывается один раз при первой выдаче ZIP

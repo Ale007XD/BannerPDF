@@ -33,6 +33,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..db import get_db
+from ..services import promo_store
 from ..services.config import BANNER_SIZES
 from ..services.order_store import save_pending
 from ..services.payment import create_payment
@@ -285,6 +286,10 @@ async def create_order(
       4. Создаёт платёж через API ЮКасса
       5. Возвращает {order_id, amount_rub, confirmation_token, payment_id}
 
+    Промокод любого размера резервирует одно использование до создания заказа
+    (services/promo_store.py). Скидка меньше 100% идёт по платному флоу с
+    уменьшенной суммой; если платёж создать не удалось, использование возвращается.
+
     Бесплатный флоу (промокод discount=100):
       1–3. То же
       4. Пропускает ЮКасса
@@ -319,29 +324,18 @@ async def create_order(
     # Санитайзим строки перед сохранением
     config["text_lines"] = sanitize_text_lines(config["text_lines"])
 
-    # --- Валидация промокода ---
+    # --- Промокод: атомарно резервируем одно использование (скидка любого размера) ---
     promo_discount = 0
     applied_promo: Optional[str] = None
 
     if req.promo_code:
-        with get_db() as conn:
-            promo = conn.execute(
-                "SELECT uses_left, expires_at, discount FROM promo_codes WHERE code = ?",
-                (req.promo_code,),
-            ).fetchone()
+        try:
+            promo_discount = promo_store.reserve(req.promo_code)
+        except promo_store.PromoError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        applied_promo = req.promo_code
 
-        if promo is None:
-            raise HTTPException(status_code=422, detail="Промокод не найден")
-        if promo["uses_left"] <= 0:
-            raise HTTPException(status_code=422, detail="Промокод исчерпан")
-        if (promo["expires_at"] is not None
-                and promo["expires_at"] < datetime.now(timezone.utc).isoformat()):
-            raise HTTPException(status_code=422, detail="Срок действия промокода истёк")
-
-        promo_discount = promo["discount"]
-        applied_promo  = req.promo_code
-
-    amount_rub = max(0, int(SITE_PDF_PRICE * (100 - promo_discount) / 100))
+    amount_rub = promo_store.calc_amount(SITE_PDF_PRICE, promo_discount)
     is_free    = amount_rub == 0
 
     order_id   = str(uuid.uuid4())
@@ -351,41 +345,40 @@ async def create_order(
 
     # Сохраняем заказ вместе с фиксацией акцепта
     now_iso = datetime.now(timezone.utc).isoformat()
-    with get_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO web_orders
-              (id, amount_rub, size_key, ref_code, promo_code, config_json, status, created_at,
-               offer_version, accepted_at, accepted_ip, accepted_ua)
-            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
-            """,
-            (
-                order_id,
-                amount_rub,
-                req.size_key or "custom",
-                req.ref_code,
-                applied_promo,
-                config_str,
-                now_iso,
-                OFFER_VERSION,
-                now_iso,
-                _client_ip(request),
-                request.headers.get("user-agent", "")[:_MAX_UA_LEN],
-            ),
-        )
+    try:
+        with get_db() as conn:
+            conn.execute(
+                """
+                INSERT INTO web_orders
+                  (id, amount_rub, size_key, ref_code, promo_code, config_json, status, created_at,
+                   offer_version, accepted_at, accepted_ip, accepted_ua)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+                """,
+                (
+                    order_id,
+                    amount_rub,
+                    req.size_key or "custom",
+                    req.ref_code,
+                    applied_promo,
+                    config_str,
+                    now_iso,
+                    OFFER_VERSION,
+                    now_iso,
+                    _client_ip(request),
+                    request.headers.get("user-agent", "")[:_MAX_UA_LEN],
+                ),
+            )
+    except Exception:
+        # Заказа нет — вернуть использование некому, кроме нас
+        if applied_promo:
+            promo_store.release_code(applied_promo)
+        raise
 
     # Сохраняем в pending_orders (TTL-буфер для webhook)
     save_pending(order_id, config)
 
     # --- Бесплатный заказ (промокод 100%) ---
     if is_free:
-        # Декрементируем счётчик промокода
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE promo_codes SET uses_left = uses_left - 1 WHERE code = ?",
-                (applied_promo,),
-            )
-
         # FSM: pending → paid → token_issued
         transition(order_id, "webhook_paid")
         transition(order_id, "issue_token")
@@ -438,6 +431,8 @@ async def create_order(
         )
     except Exception as e:
         logger.error("Ошибка создания платежа для заказа %s: %s", order_id, e)
+        # Платёж не создан — человек ничего не платил, использование промокода возвращаем
+        promo_store.release_for_order(order_id)
         raise HTTPException(status_code=500, detail="Ошибка создания платежа. Попробуйте позже.")
     yk_ms = (time.perf_counter() - t_yk) * 1000
 
@@ -462,6 +457,7 @@ async def create_order(
         size_label=size_label,
         lines=text_lines_list,
         font=req.font,
+        promo_code=applied_promo,
     )
 
     timing = _server_timing(started, yk=yk_ms)

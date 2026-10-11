@@ -387,6 +387,35 @@
     }
     .new-key-warn { font-size: 11px; color: var(--ink-2); }
 
+    /* ---- Промокоды ---- */
+    .promo-field { display: flex; flex-direction: column; gap: 6px; }
+    .promo-label { font-size: 12px; color: var(--ink-2); }
+    .promo-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+    .promo-chip {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 6px 12px;
+      border: 1.5px solid var(--border);
+      border-radius: 20px;
+      background: var(--bg);
+      color: var(--ink-2);
+      cursor: pointer;
+    }
+    .promo-chip.active { border-color: var(--accent2); color: var(--ink); background: var(--surface); }
+    .promo-code {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: 0.04em;
+      word-break: break-all;
+    }
+    .promo-st--active { background: #e0f5e0; color: var(--ok); }
+    .promo-st--exhausted, .promo-st--expired, .promo-st--disabled { background: var(--bg); color: var(--ink-3); }
+    .promo-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .promo-actions .btn { width: auto; flex: 1; margin-top: 0; padding: 10px; font-size: 11px; }
+
     /* ---- Toast ---- */
     .toast {
       position: fixed;
@@ -469,6 +498,7 @@
     <div class="card" style="padding:8px;">
       <div class="tabs">
         <button class="tab-btn active" id="tab-orders" data-tab="orders">Заказы</button>
+        <button class="tab-btn" id="tab-promo" data-tab="promo">Промокоды</button>
         <button class="tab-btn" id="tab-keys" data-tab="keys">API ключи</button>
       </div>
     </div>
@@ -515,6 +545,61 @@
     </div>
 
     </div><!-- /pane-orders -->
+
+    <!-- ======= ВКЛАДКА: ПРОМОКОДЫ ======= -->
+    <div id="pane-promo" style="display:none;">
+
+      <!-- Выдать промокод -->
+      <div class="card">
+        <div class="card-label">Выдать промокод</div>
+        <div class="create-key-form">
+          <div class="promo-field">
+            <label class="promo-label" for="promo-discount">Скидка, %</label>
+            <input class="form-input" type="number" id="promo-discount" min="1" max="100" step="1" value="100" inputmode="numeric">
+            <div class="promo-chips" data-target="promo-discount">
+              <button type="button" class="promo-chip" data-value="100">100</button>
+              <button type="button" class="promo-chip" data-value="50">50</button>
+              <button type="button" class="promo-chip" data-value="30">30</button>
+              <button type="button" class="promo-chip" data-value="20">20</button>
+              <button type="button" class="promo-chip" data-value="10">10</button>
+            </div>
+          </div>
+          <div class="promo-field">
+            <label class="promo-label" for="promo-uses">Сколько раз можно применить</label>
+            <input class="form-input" type="number" id="promo-uses" min="1" max="1000" step="1" value="1" inputmode="numeric">
+            <div class="promo-chips" data-target="promo-uses">
+              <button type="button" class="promo-chip" data-value="1">1</button>
+              <button type="button" class="promo-chip" data-value="3">3</button>
+              <button type="button" class="promo-chip" data-value="5">5</button>
+            </div>
+          </div>
+          <select class="form-select" id="promo-expires">
+            <option value="">Без срока действия</option>
+            <option value="7">Действует 7 дней</option>
+            <option value="30">Действует 30 дней</option>
+            <option value="90">Действует 90 дней</option>
+          </select>
+          <input class="form-input" type="text" id="promo-note" maxlength="100" placeholder="Кому или зачем (видно только вам)">
+          <input class="form-input" type="text" id="promo-code" maxlength="20" placeholder="Код (пусто — сгенерировать)"
+                 autocapitalize="characters" autocomplete="off" spellcheck="false">
+          <button class="btn btn--accent" id="create-promo-btn">Создать промокод</button>
+        </div>
+        <!-- Созданный код: остаётся в списке ниже, повторно показывать не страшно -->
+        <div id="new-promo-result" style="display:none;margin-top:14px;">
+          <div class="new-key-box">
+            <div class="new-key-value" id="new-promo-value"></div>
+            <div class="new-key-warn" id="new-promo-info"></div>
+          </div>
+          <button class="btn btn--ghost" id="copy-promo-btn" style="margin-top:8px;">Копировать код</button>
+        </div>
+      </div>
+
+      <!-- Список промокодов -->
+      <div class="orders-list" id="promo-list">
+        <div class="empty-state">Загрузка...</div>
+      </div>
+
+    </div><!-- /pane-promo -->
 
     <!-- ======= ВКЛАДКА: API КЛЮЧИ ======= -->
     <div id="pane-keys" style="display:none;">
@@ -748,7 +833,7 @@ async function loadOrders() {
 }
 
 async function refresh() {
-  await Promise.all([loadStats(), loadOrders()]);
+  await Promise.all([loadStats(), loadOrders(), ...(_activeTab === "promo" ? [loadPromos()] : [])]);
   el.refreshLabel.textContent = "обновлено " + new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
 }
 
@@ -865,8 +950,10 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.classList.add("active");
 
     el.paneOrders.style.display = _activeTab === "orders" ? "" : "none";
+    elPromo.pane.style.display  = _activeTab === "promo"  ? "" : "none";
     el.paneKeys.style.display   = _activeTab === "keys"   ? "" : "none";
 
+    if (_activeTab === "promo") loadPromos();
     if (_activeTab === "keys") loadKeys();
   });
 });
@@ -1019,6 +1106,190 @@ async function deactivateKey(keyId) {
   } catch (e) {
     showToast(`Ошибка: ${e.message}`, "err");
     if (btn) { btn.disabled = false; btn.textContent = "Деактивировать"; }
+  }
+}
+
+/* =====================================================================
+   ПРОМОКОДЫ
+   ===================================================================== */
+const elPromo = {
+  pane:        $("pane-promo"),
+  list:        $("promo-list"),
+  discount:    $("promo-discount"),
+  uses:        $("promo-uses"),
+  expires:     $("promo-expires"),
+  note:        $("promo-note"),
+  code:        $("promo-code"),
+  createBtn:   $("create-promo-btn"),
+  result:      $("new-promo-result"),
+  resultValue: $("new-promo-value"),
+  resultInfo:  $("new-promo-info"),
+  copyBtn:     $("copy-promo-btn"),
+};
+
+const PROMO_STATUS_LABEL = { active: "Действует", exhausted: "Исчерпан", expired: "Истёк", disabled: "Отключён" };
+
+// Заметка и код вводит админ, но в innerHTML всё равно идёт только экранированное
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+function copyText(text) {
+  if (!navigator.clipboard) { showToast("Не удалось скопировать", "err"); return; }
+  navigator.clipboard.writeText(text).then(
+    () => showToast("Скопировано", "ok"),
+    () => showToast("Не удалось скопировать", "err"),
+  );
+}
+
+// FastAPI отдаёт detail строкой (наши ошибки) или списком (валидация pydantic)
+async function apiErrorText(resp) {
+  const err = await resp.json().catch(() => ({}));
+  const d = err.detail;
+  if (Array.isArray(d)) return d.map((x) => x.msg).join("; ");
+  return d || `HTTP ${resp.status}`;
+}
+
+function promoDiscountText(p) { return p.discount >= 100 ? "бесплатно (100%)" : `−${p.discount}%`; }
+function promoLeftText(p)     { return p.uses_total ? `осталось ${p.uses_left} из ${p.uses_total}` : `осталось ${p.uses_left}`; }
+
+// Быстрые значения под полями: выбранный чип подсвечивается, пока значение совпадает
+function promoChipsSync(input) {
+  document.querySelectorAll(`.promo-chips[data-target="${input.id}"] .promo-chip`).forEach((chip) => {
+    chip.classList.toggle("active", chip.dataset.value === String(input.value));
+  });
+}
+document.querySelectorAll(".promo-chips").forEach((box) => {
+  const input = $(box.dataset.target);
+  box.addEventListener("click", (e) => {
+    const chip = e.target.closest(".promo-chip");
+    if (!chip) return;
+    input.value = chip.dataset.value;
+    promoChipsSync(input);
+  });
+  input.addEventListener("input", () => promoChipsSync(input));
+  promoChipsSync(input);
+});
+
+// Тот же формат, что принимает форма заказа: A-Z и 0-9
+elPromo.code.addEventListener("input", () => {
+  elPromo.code.value = elPromo.code.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+});
+
+async function loadPromos() {
+  try {
+    const resp = await fetch(`${API_BASE}/admin/promo`, { headers: authHeaders() });
+    if (!resp.ok) return;
+    renderPromos((await resp.json()).promos);
+  } catch { /* некритично */ }
+}
+
+function renderPromos(promos) {
+  if (!promos || promos.length === 0) {
+    elPromo.list.innerHTML = `<div class="empty-state">Промокодов нет — выдайте первый</div>`;
+    return;
+  }
+
+  elPromo.list.innerHTML = "";
+  promos.forEach((p) => {
+    const card = document.createElement("div");
+    card.className = `key-card${p.status === "active" ? "" : " key-card--inactive"}`;
+
+    const lines = [
+      `<strong>${esc(promoDiscountText(p))}</strong> · ${esc(promoLeftText(p))}`,
+      `Оплачено: ${p.used}` + (p.reserved ? ` · заказов без оплаты: ${p.reserved}` : ""),
+      p.expires_at ? `Действует до: ${formatDate(p.expires_at)}` : "Без срока",
+      p.note ? esc(p.note) : "",
+      p.created_at ? `<span style="font-size:11px;color:var(--ink-3);">Создан: ${formatDate(p.created_at)}</span>` : "",
+    ].filter(Boolean);
+
+    card.innerHTML = `
+      <div class="key-head">
+        <span class="promo-code">${esc(p.code)}</span>
+        <span class="key-plan promo-st--${esc(p.status)}">${esc(PROMO_STATUS_LABEL[p.status] || p.status)}</span>
+      </div>
+      <div class="key-meta">${lines.join("<br>")}</div>
+      <div class="promo-actions">
+        <button class="btn btn--ghost" data-act="copy">Копировать</button>
+        <button class="btn btn--ghost" data-act="toggle">${p.active ? "Отключить" : "Включить"}</button>
+      </div>
+    `;
+
+    card.querySelector('[data-act="copy"]').addEventListener("click", () => copyText(p.code));
+    card.querySelector('[data-act="toggle"]').addEventListener("click", (e) => setPromoActive(p.code, !p.active, e.currentTarget));
+    elPromo.list.appendChild(card);
+  });
+}
+
+elPromo.createBtn.addEventListener("click", async () => {
+  const discount = parseInt(elPromo.discount.value, 10);
+  const uses     = parseInt(elPromo.uses.value, 10);
+  const code     = elPromo.code.value.trim();
+
+  if (!(discount >= 1 && discount <= 100)) { showToast("Скидка: от 1 до 100%", "err"); return; }
+  if (!(uses >= 1 && uses <= 1000))        { showToast("Применений: от 1 до 1000", "err"); return; }
+  if (code && code.length < 2)             { showToast("Код: минимум 2 символа", "err"); return; }
+
+  const days = elPromo.expires.value ? parseInt(elPromo.expires.value, 10) : null;
+
+  elPromo.createBtn.disabled = true;
+  elPromo.createBtn.textContent = "Создаём...";
+  elPromo.result.style.display = "none";
+
+  try {
+    const resp = await fetch(`${API_BASE}/admin/promo`, {
+      method:  "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body:    JSON.stringify({
+        discount,
+        uses,
+        code: code || null,
+        expires_in_days: days,
+        note: elPromo.note.value.trim() || null,
+      }),
+    });
+    if (!resp.ok) throw new Error(await apiErrorText(resp));
+
+    const data = await resp.json();
+    elPromo.resultValue.textContent = data.code;
+    elPromo.resultInfo.textContent =
+      `${promoDiscountText(data)} · применений: ${data.uses_total}` +
+      (data.expires_at ? ` · до ${formatDate(data.expires_at)}` : " · без срока");
+    elPromo.result.style.display = "block";
+
+    elPromo.note.value = "";
+    elPromo.code.value = "";
+    showToast("✓ Промокод создан", "ok");
+    loadPromos();
+  } catch (e) {
+    showToast(`Ошибка: ${e.message}`, "err");
+  } finally {
+    elPromo.createBtn.disabled = false;
+    elPromo.createBtn.textContent = "Создать промокод";
+  }
+});
+
+elPromo.copyBtn.addEventListener("click", () => {
+  const code = elPromo.resultValue.textContent;
+  if (code) copyText(code);
+});
+
+async function setPromoActive(code, active, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch(`${API_BASE}/admin/promo/${encodeURIComponent(code)}/active`, {
+      method:  "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body:    JSON.stringify({ active }),
+    });
+    if (!resp.ok) throw new Error(await apiErrorText(resp));
+    showToast(active ? "Промокод включён" : "Промокод отключён", "ok");
+    loadPromos();
+  } catch (e) {
+    showToast(`Ошибка: ${e.message}`, "err");
+    if (btn) btn.disabled = false;
   }
 }
 

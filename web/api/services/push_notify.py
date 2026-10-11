@@ -241,8 +241,10 @@ def _short(order_id: str) -> str:
 
 
 async def push_new_order(order_id: str, amount_rub: int, size_label: str, promo_code: Optional[str] = None) -> None:
-    if promo_code:
+    if promo_code and amount_rub == 0:
         title, tail = "🆓 Заказ по промокоду", "PDF выдан автоматически"
+    elif promo_code:
+        title, tail = f"🆕 Новый заказ · {amount_rub} ₽", f"промокод {promo_code}, ожидает оплаты"
     else:
         title, tail = f"🆕 Новый заказ · {amount_rub} ₽", "ожидает оплаты"
     await _deliver(

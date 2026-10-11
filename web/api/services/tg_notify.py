@@ -86,7 +86,7 @@ async def notify_new_order(
         # f"<b>Текст:</b>\n{lines_text}\n\n"
         f"<b>Сумма:</b> {amount_rub} ₽\n"
         + (f"<b>Промокод:</b> <code>{promo_code}</code>\n" if promo_code else "")
-        + ("\n✅ PDF выдан автоматически по промокоду" if promo_code else "\nОжидание оплаты...")
+        + ("\n✅ PDF выдан автоматически по промокоду" if promo_code and amount_rub == 0 else "\nОжидание оплаты...")
     )
 
     data = await _tg_post("sendMessage", {

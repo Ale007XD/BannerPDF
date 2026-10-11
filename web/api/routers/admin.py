@@ -6,20 +6,23 @@ admin.py
 
 GET  /api/admin/stats  — сводная статистика
 GET  /api/admin/orders — список заказов с пагинацией
+POST /api/admin/promo  — выдать промокод; GET — список; POST /promo/{code}/active — вкл/выкл
 """
 
 import json
 import logging
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from ..db import get_db
 from ..routers.order import AMEND_WINDOW_HOURS, OrderStatus, transition
+from ..services import promo_store
 from ..services.api_key_store import create_api_key, deactivate_key, list_keys
 
 logger = logging.getLogger(__name__)
@@ -343,6 +346,64 @@ async def admin_audit_by_payment(payment_id: str):
     if row is None:
         raise HTTPException(status_code=404, detail=f"Платёж {payment_id} не найден")
     return _build_audit(row["id"])
+
+
+# ---------------------------------------------------------------------------
+# Промокоды: выдача из админки (списание — services/promo_store.py)
+# ---------------------------------------------------------------------------
+
+class CreatePromoRequest(BaseModel):
+    discount:        int = Field(..., ge=1, le=100)      # % скидки; 100 = бесплатно
+    uses:            int = Field(..., ge=1, le=1000)     # сколько раз можно применить
+    code:            str | None = None                   # пусто = сгенерировать
+    expires_in_days: int | None = Field(None, ge=1, le=3650)
+    note:            str | None = Field(None, max_length=100)
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, v):
+        if v is None or not v.strip():
+            return None
+        cleaned = v.strip().upper()
+        # тот же формат, что принимает POST /api/order (OrderRequest.promo_code)
+        if not re.match(r"^[A-Z0-9]{2,20}$", cleaned):
+            raise ValueError("Код: 2–20 символов, только латинские буквы и цифры")
+        return cleaned
+
+
+class PromoActiveRequest(BaseModel):
+    active: bool
+
+
+@router.post("/admin/promo", dependencies=[Depends(require_admin)])
+async def admin_create_promo(body: CreatePromoRequest):
+    """Создаёт промокод. Без `code` генерирует случайный из 8 символов."""
+    try:
+        return promo_store.create_promo(
+            discount=body.discount,
+            uses=body.uses,
+            code=body.code,
+            expires_in_days=body.expires_in_days,
+            note=body.note,
+        )
+    except promo_store.PromoExists:
+        raise HTTPException(status_code=409, detail=f"Код {body.code} уже существует")
+
+
+@router.get("/admin/promo", dependencies=[Depends(require_admin)])
+async def admin_list_promos():
+    """Все промокоды: остаток, оплаченные и ожидающие использования, статус."""
+    return {"promos": promo_store.list_promos()}
+
+
+@router.post("/admin/promo/{code}/active", dependencies=[Depends(require_admin)])
+async def admin_set_promo_active(code: str, body: PromoActiveRequest):
+    """Отключает или снова включает промокод. Уже оформленные заказы не затрагивает."""
+    code = code.strip().upper()
+    if not promo_store.set_active(code, body.active):
+        raise HTTPException(status_code=404, detail="Промокод не найден")
+    logger.info("admin_set_promo_active: %s active=%s", code, body.active)
+    return {"code": code, "active": body.active}
 
 
 # ---------------------------------------------------------------------------

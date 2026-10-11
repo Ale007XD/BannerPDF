@@ -64,7 +64,9 @@ CREATE TABLE IF NOT EXISTS web_orders (
     accepted_ua         TEXT,                 -- User-Agent, обрезан до 300 символов
     -- Единственная бесплатная правка текста в течение AMEND_WINDOW_HOURS после оплаты
     amended_at          TEXT,                 -- UTC; NOT NULL = правка использована
-    original_config_json TEXT                 -- config_json до правки (для разбора споров)
+    original_config_json TEXT,                -- config_json до правки (для разбора споров)
+    -- Использование промокода возвращено (платёж создать не удалось); защита от двойного возврата
+    promo_released_at   TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_orders_status  ON web_orders(status);
@@ -99,11 +101,16 @@ CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_orders(expires_at);
 -- ------------------------------------------------------------
 -- Промокоды
 -- ------------------------------------------------------------
+-- Использование списывается при создании заказа (services/promo_store.py).
 CREATE TABLE IF NOT EXISTS promo_codes (
     code       TEXT    PRIMARY KEY,         -- напр. "AVITO26"
     uses_left  INTEGER NOT NULL DEFAULT 0,  -- убывает при каждом применении
     expires_at TEXT,                        -- NULL = бессрочно
-    discount   INTEGER NOT NULL DEFAULT 100 -- % скидки; 100 = бесплатно, 50 = половина
+    discount   INTEGER NOT NULL DEFAULT 100,-- % скидки; 100 = бесплатно, 50 = половина
+    uses_total INTEGER,                     -- выданный лимит (для «осталось N из M»); NULL у старых кодов
+    created_at TEXT,                        -- NULL у кодов, добавленных вручную до админки
+    note       TEXT,                        -- кому или зачем выдан (видно только в админке)
+    active     INTEGER NOT NULL DEFAULT 1   -- 0 = отключён из админки
 );
 
 -- ------------------------------------------------------------
