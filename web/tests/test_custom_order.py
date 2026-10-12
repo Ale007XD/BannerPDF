@@ -31,3 +31,30 @@ def test_constructor_and_birthday_page_link_to_order_page():
     assert "custom_link_click" in INDEX
     bday = (WEB / "frontend" / "baner-na-den-rozhdeniya" / "index.html").read_text(encoding="utf-8")
     assert bday.count("/zakaz-banner-s-kartinkoy/") >= 2
+
+
+CSS = (WEB / "frontend" / "style.css").read_text(encoding="utf-8")
+
+
+def _css_block(selector):
+    start = CSS.index(selector + " {")
+    return CSS[start: CSS.index("}", start)]
+
+
+def test_buy_card_texts_are_readable_on_dark_background():
+    desc = _css_block(".buy-desc")
+    size = int(desc.split("font-size:")[1].split("px")[0])
+    assert size >= 13
+    assert "#888" not in desc  # серый на тёмной карточке читался плохо
+    link = _css_block(".custom-link")
+    assert "color: #fff" in link and "font-size: 15px" in link
+
+
+def test_custom_link_is_a_proper_tap_target_without_inline_style():
+    assert '<a class="custom-link" href="/zakaz-banner-s-kartinkoy/"' in INDEX
+    assert 'class="custom-link" style=' not in INDEX
+
+
+def test_constructor_faq_links_to_order_page():
+    faq = INDEX[INDEX.index("Можно ли добавить логотип или картинку?"):]
+    assert 'href="/zakaz-banner-s-kartinkoy/"' in faq[:600]

@@ -598,10 +598,36 @@ body {
 }
 
 .buy-desc {
-  font-size: 11px;
-  color: #888;
+  font-size: 13px;
+  color: #d6d2cc;
   margin-bottom: 18px;
   letter-spacing: 0.02em;
+}
+
+/* Ссылка на заказ макета с картинкой: карточка тёмная, поэтому светлый текст и рамка */
+.custom-link {
+  display: block;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1.35;
+  text-align: center;
+  text-decoration: none;
+}
+
+.custom-link strong {
+  display: block;
+  margin-top: 2px;
+  font-weight: 700;
+}
+
+.custom-link:hover,
+.custom-link:focus-visible {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #fff;
 }
 
 .buy-btn {
