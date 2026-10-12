@@ -482,6 +482,11 @@ def render(p):
 <meta property="og:type" content="article"><meta property="og:locale" content="ru_RU"><meta property="og:site_name" content="BannerBot">
 <meta property="og:title" content="{p['title']}"><meta property="og:description" content="{p['desc']}"><meta property="og:url" content="{url}">
 <meta property="og:image" content="{SITE}/static/og/og-image.jpg">
+<meta property="og:image:secure_url" content="{SITE}/static/og/og-image.jpg">
+<meta property="og:image:type" content="image/jpeg"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="{p['h1']}">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="{p['title']}">
+<meta name="twitter:description" content="{p['desc']}"><meta name="twitter:image" content="{SITE}/static/og/og-image.jpg">
 <script type="application/ld+json">{ld}</script>
 <style>{CSS}</style>
 {METRIKA}

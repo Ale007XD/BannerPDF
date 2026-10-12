@@ -42,3 +42,12 @@ def test_related_links_resolve_and_sitemap_lists_pages():
 
 def test_eyelet_formula():
     assert bp.eyelets(2000, 1000, 500) == 12
+
+
+def test_open_graph_set_is_complete_for_link_previews():
+    for p in bp.PAGES:
+        html = bp.render(p)
+        for needle in ('property="og:image:width" content="1200"', 'property="og:image:height" content="630"',
+                       'property="og:image:type"', 'property="og:image:alt"', 'name="twitter:card" content="summary_large_image"',
+                       'name="twitter:image"'):
+            assert needle in html, (p["slug"], needle)
