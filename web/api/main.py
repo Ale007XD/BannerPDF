@@ -31,6 +31,7 @@ from .routers import (
     order,
     payment,
     preview,
+    promo,
     referral,
     tg_webhook,
 )
@@ -126,6 +127,7 @@ app.include_router(push_router, prefix="/api")
 app.include_router(preview.router,  prefix="/api")
 app.include_router(order.router,    prefix="/api")
 app.include_router(payment.router,  prefix="/api")
+app.include_router(promo.router,    prefix="/api")
 app.include_router(download.router, prefix="/api")
 app.include_router(admin.router,    prefix="/api")
 app.include_router(referral.router, prefix="/api")

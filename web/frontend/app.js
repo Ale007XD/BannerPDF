@@ -17,6 +17,7 @@ const API = {
   templates: "/api/templates",
   preview:   "/api/preview",
   order:     "/api/order",
+  promoCheck: "/api/promo/check",
   amend:     (id) => `/api/order/${id}/amend`,
   status:    (id) => `/api/payment/status/${id}`,
   download:  (token) => `/api/download/${token}`,
@@ -34,7 +35,8 @@ const CUSTOM_SIZE_MAX      = 3000;  // мм
 const REFERRAL_ENABLED = false;
 
 // Текст кнопки покупки — один источник правды (используется в finally)
-const BUY_BTN_TEXT = "Получить PDF";
+const BUY_BTN_TEXT  = "Получить PDF";
+const BUY_FREE_TEXT = "Получить PDF бесплатно";   // промокод на 100%
 
 // Контакты для ручной оплаты
 const CONTACT_TG = "ale007xd";
@@ -51,6 +53,8 @@ const state = {
   maxLines:  6,          // обновляется из шаблонов
   refCode:   "",
   promoCode: "",        // промокод (сбрасывается после использования)
+  promoInfo: null,      // ответ /api/promo/check для действующего кода: {discount, price, final_price, free}
+  promoRejected: false, // сервер сказал, что код не подходит: в заказ его не кладём (платим по цене на экране)
 
   // Кастомный размер (мм, null = не задан)
   customW:   null,
@@ -86,6 +90,7 @@ const el = {
   refStatus:   $("ref-status"),
   promoInput:  $("promo-input"),
   promoStatus: $("promo-status"),
+  buyPrice:    document.querySelector(".buy-price"),   // без id: разметку цены проверяют тесты
   buyBtn:      $("buy-btn"),
 
   // Кастомный размер
@@ -567,7 +572,7 @@ function buildConfig() {
     font:       state.font,
     text_lines: getTextLines(),
     ref_code:   state.refCode   || undefined,
-    promo_code: state.promoCode || undefined,
+    promo_code: promoCodeForOrder(),
   };
 
   if (state.sizeKey === "custom") {
@@ -749,31 +754,145 @@ async function validateRefCode() {
 }
 
 /* =====================================================================
-   ПРОМОКОД
+   ПРОМОКОД — проверка на сервере, цена со скидкой, тексты кнопок
    ===================================================================== */
+const PROMO_CHECK_DEBOUNCE_MS = 450;
+const BASE_PRICE_TEXT  = el.buyPrice ? el.buyPrice.textContent : "";   // «299 ₽» из разметки
+const BS_BUY_BASE_TEXT = el.bsBuyBtn.textContent;                      // «Получить PDF — 299 ₽»
+
+let _promoTimer = null;
+let _promoSeq   = 0;      // номер последней проверки: ответы на устаревшие проверки игнорируем
+let _orderBusy  = false;  // идёт создание заказа: текст основной кнопки не трогаем
+
+function setPromoStatus(text, kind) {
+  if (!el.promoStatus) return;
+  el.promoStatus.textContent = text;
+  el.promoStatus.className = "promo-status" + (kind ? ` promo-status--${kind}` : "");
+}
+
+/**
+ * Код для заказа. Если сервер уже сказал, что код не подходит, не отправляем его:
+ * человек видит обычную цену и платит её. Если проверка не удалась (сеть, лимит) —
+ * отправляем, окончательно решает сервер при создании заказа.
+ */
+function promoCodeForOrder() {
+  return state.promoRejected ? undefined : (state.promoCode || undefined);
+}
+
+/** Цена в карточке покупки: «299 ₽» зачёркнута, рядом сумма со скидкой. */
+function renderPrice() {
+  if (!el.buyPrice) return;
+  const p = state.promoInfo;
+  if (!p || p.final_price >= p.price) {
+    el.buyPrice.textContent = BASE_PRICE_TEXT;
+    return;
+  }
+  const old = document.createElement("s");
+  old.className = "buy-price-old";
+  old.textContent = `${p.price} ₽`;
+  el.buyPrice.replaceChildren(old, document.createTextNode(`${p.final_price} ₽`));
+}
+
+/** Тексты кнопок покупки: основной (десктоп) и в нижней шторке (мобильный). */
+function renderBuyButtons() {
+  const p = state.promoInfo;
+  const free = !!(p && p.free);
+  if (!_orderBusy) el.buyBtn.textContent = free ? BUY_FREE_TEXT : BUY_BTN_TEXT;
+  el.bsBuyBtn.textContent = free
+    ? BUY_FREE_TEXT
+    : (p ? `Получить PDF — ${p.final_price} ₽` : BS_BUY_BASE_TEXT);
+  syncBuyButtons();
+}
+
+function renderPromo() {
+  renderPrice();
+  renderBuyButtons();
+}
+
+/** Полный сброс: код использован заказом (или человек его стёр). */
+function resetPromo() {
+  clearTimeout(_promoTimer);
+  _promoSeq++;
+  state.promoCode = "";
+  state.promoInfo = null;
+  state.promoRejected = false;
+  if (el.promoInput) el.promoInput.value = "";
+  setPromoStatus("", "");
+  renderPromo();
+}
+
+function promoUnavailable(text) {
+  state.promoInfo = null;
+  state.promoRejected = false;
+  setPromoStatus(text, "");
+  renderPromo();
+}
+
+async function checkPromo(code) {
+  const seq = ++_promoSeq;
+  try {
+    const resp = await fetch(API.promoCheck, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    if (seq !== _promoSeq) return;
+    if (resp.status === 429) {
+      promoUnavailable("Слишком много проверок, подождите минуту. Код проверим при оформлении.");
+      return;
+    }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+    const data = await resp.json();
+    if (seq !== _promoSeq) return;
+
+    if (data.valid) {
+      state.promoInfo = data;
+      state.promoRejected = false;
+      setPromoStatus(data.free ? "Промокод применён: бесплатно" : `Промокод применён: −${data.discount}%`, "ok");
+    } else {
+      state.promoInfo = null;
+      state.promoRejected = true;
+      setPromoStatus(data.message || "Промокод не подходит", "error");
+    }
+    renderPromo();
+  } catch {
+    if (seq === _promoSeq) promoUnavailable("Не удалось проверить промокод. Проверим его при оформлении.");
+  }
+}
+
+/** Ввод: приводим к A-Z0-9 и проверяем, когда человек остановился. */
+function schedulePromoCheck() {
+  clearTimeout(_promoTimer);
+  _promoSeq++;                        // ответ на прошлую проверку уже не нужен
+  state.promoInfo = null;
+  state.promoRejected = false;
+
+  const code = state.promoCode;
+  if (code.length < 2) {
+    setPromoStatus("", "");
+    renderPromo();
+    return;
+  }
+  setPromoStatus("Проверяем…", "");
+  renderPromo();
+  _promoTimer = setTimeout(() => checkPromo(code), PROMO_CHECK_DEBOUNCE_MS);
+}
+
+/** После неудачного заказа или закрытого окна оплаты: код мог быть использован, показываем как есть. */
+function recheckPromo() {
+  if (state.promoCode.length >= 2) {
+    clearTimeout(_promoTimer);
+    checkPromo(state.promoCode);
+  }
+}
+
 if (el.promoInput) {
   el.promoInput.addEventListener("input", () => {
     const val = el.promoInput.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
     el.promoInput.value = val;
     state.promoCode = val;
-
-    if (!val) {
-      if (el.promoStatus) {
-        el.promoStatus.textContent = "";
-        el.promoStatus.className = "promo-status";
-      }
-      el.buyBtn.textContent = BUY_BTN_TEXT;
-      syncBuyButtons();
-      return;
-    }
-    if (val.length < 2) return;
-
-    if (el.promoStatus) {
-      el.promoStatus.textContent = "Промокод будет применён при оформлении";
-      el.promoStatus.className = "promo-status promo-status--ok";
-    }
-    el.buyBtn.textContent = "Получить PDF бесплатно";
-    syncBuyButtons();
+    schedulePromoCheck();
   });
 }
 
@@ -839,6 +958,10 @@ function openConfirm() {
   addConfirmMeta("Шрифт", state.font);
   addConfirmMeta("Фон", state.bgColor);
   addConfirmMeta("Цвет текста", state.textColor);
+  if (state.promoInfo) {
+    const p = state.promoInfo;
+    addConfirmMeta("К оплате", p.free ? "бесплатно (промокод)" : `${p.final_price} ₽ (промокод −${p.discount}%)`);
+  }
 
   el.confirmCheck.checked = false;
   el.confirmPay.disabled = true;
@@ -862,6 +985,7 @@ el.confirmPay.addEventListener("click", () => {
 
 async function createOrder(payload) {
   const attempt = ++payAttempt;
+  _orderBusy = true;
   el.buyBtn.disabled = true;
   el.buyBtn.textContent = "Создаём заказ...";
   syncBuyButtons();
@@ -889,9 +1013,7 @@ async function createOrder(payload) {
     // Бесплатный заказ (промокод 100% скидки) — пропускаем ЮКасса
     if (data.free && data.download_token) {
       hideModal(el.modalPay);
-      state.promoCode = "";
-      if (el.promoInput)  { el.promoInput.value  = ""; }
-      if (el.promoStatus) { el.promoStatus.textContent = ""; el.promoStatus.className = "promo-status"; }
+      resetPromo();
       // «Готово!» показывает downloadPdf только после успешной выдачи файла;
       // раньше окно успеха перекрывало ошибку скачивания.
       showModal(el.modalWait);
@@ -910,11 +1032,12 @@ async function createOrder(payload) {
     if (attempt === payAttempt) {
       hideModal(el.modalPay);
       showError("Не удалось создать заказ", e.message);
+      recheckPromo();   // код мог закончиться между проверкой и заказом
     }
   } finally {
+    _orderBusy = false;
     el.buyBtn.disabled = false;
-    el.buyBtn.textContent = BUY_BTN_TEXT;
-    syncBuyButtons();
+    renderBuyButtons();
   }
 }
 
@@ -969,6 +1092,7 @@ function showPayLoading(text = "Готовим оплату…") {
   el.payClose.onclick = () => {
     payAttempt++;
     hideModal(el.modalPay);
+    recheckPromo();
   };
   showModal(el.modalPay);
 }
@@ -1052,6 +1176,7 @@ async function openYooKassaWidget(confirmationToken, orderId, attempt) {
     payAttempt++;
     checkout.destroy();
     hideModal(el.modalPay);
+    recheckPromo();
   };
 
   checkout.render("yookassa-widget-form");
@@ -1101,6 +1226,7 @@ function startPolling(silent = false) {
       const data = await resp.json();
 
       if (data.status === "token_issued" && data.download_token) {
+        resetPromo();   // код списан этим заказом
         el.waitText.textContent = "Формируем PDF...";
         el.waitBar.style.width = "100%";
         setTimeout(() => downloadPdf(data.download_token), 500);

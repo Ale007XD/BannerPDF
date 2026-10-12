@@ -118,6 +118,28 @@ class TestNginx:
         assert "proxy_pass http://api:8000;" in block
         assert "proxy_set_header X-Real-IP $remote_addr;" in block
 
+    def test_promo_check_is_rate_limited_with_the_same_proxy_settings(self):
+        promo = _location_block(NGINX, "location = /api/promo/check {")
+        api = _location_block(NGINX, "location /api/ {")
+        assert "limit_req zone=promo_limit burst=10 nodelay;" in promo
+        assert "limit_req_status 429;" in promo
+        # точный location не наследует настройки префиксного: прокси должен совпадать полностью
+        proxy = lambda block: sorted(re.findall(r"^\s*(proxy_\w+ [^;]+);", block, flags=re.M))  # noqa: E731
+        assert proxy(promo) == proxy(api)
+        assert "limit_req" not in api   # лимит стоит только у точного location; зоны preview/order/download пока не подключены
+
+    def test_promo_limit_zone_is_declared_in_http_block(self):
+        conf = (WEB / "nginx" / "nginx.conf").read_text(encoding="utf-8")
+        m = re.search(r"limit_req_zone \$binary_remote_addr zone=promo_limit:(\d+m) rate=(\d+)r/m;", conf)
+        assert m, "зона promo_limit не объявлена в nginx.conf"
+        assert int(m.group(2)) >= 10   # дебаунс на сайте: человек не должен упираться в лимит
+
+    def test_every_applied_limit_zone_is_declared(self):
+        conf = (WEB / "nginx" / "nginx.conf").read_text(encoding="utf-8")
+        declared = set(re.findall(r"limit_req_zone [^;]*zone=(\w+):", conf))
+        used = set(re.findall(r"limit_req zone=(\w+)", NGINX))
+        assert used <= declared, f"в default.conf применены необъявленные зоны: {used - declared}"
+
 
     def test_http2_enabled_on_every_tls_server(self):
         servers = _server_blocks()
@@ -590,4 +612,36 @@ class TestPaymentPathLatency:
 
     def test_loader_style_exists_and_assets_bumped(self):
         assert ".pay-loading" in CSS
-        assert "app.js?v=20" in INDEX
+        assert "app.js?v=21" in INDEX
+
+
+class TestPromoCheckWiring:
+    """Путь проверки промокода совпадает в фронте, роутере и nginx; ввод больше не обещает «бесплатно» любому коду."""
+
+    def test_same_path_in_js_router_and_nginx(self):
+        path = "/api/promo/check"
+        assert f'promoCheck: "{path}"' in APP_JS
+        assert f"location = {path} {{" in NGINX
+        router = (WEB / "api" / "routers" / "promo.py").read_text(encoding="utf-8")
+        assert '@router.post("/promo/check")' in router   # префикс /api — в main.py
+        assert "app.include_router(promo.router" in (WEB / "api" / "main.py").read_text(encoding="utf-8")
+
+    def test_order_payload_uses_checked_promo_code(self):
+        body = _function_body(APP_JS, "function buildConfig()")
+        assert "promo_code: promoCodeForOrder()" in body
+        assert "promo_code: state.promoCode" not in body
+
+    def test_input_handler_checks_on_server_instead_of_promising_free(self):
+        assert "Промокод будет применён при оформлении" not in APP_JS
+        handler = APP_JS[APP_JS.index("el.promoInput.addEventListener(\"input\""):]
+        handler = handler[: handler.index("\n}\n")]
+        assert "schedulePromoCheck()" in handler
+        assert "BUY_FREE_TEXT" not in handler and "бесплатно" not in handler
+
+    def test_free_text_only_comes_from_server_answer(self):
+        body = _function_body(APP_JS, "function renderBuyButtons()")
+        assert "p.free" in body
+
+    def test_price_markup_kept_for_seo_and_old_price_style_exists(self):
+        assert f'<span class="buy-price">{PRICE} ₽</span>' in INDEX   # JSON-LD/описание берут цену отсюда
+        assert ".buy-price-old" in INDEX and "line-through" in INDEX

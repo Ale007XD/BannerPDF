@@ -150,6 +150,7 @@ BannerPDF/
 │   │   │   ├── payment_selfwork.py  # POST /api/payment/callback (Selfwork, запасной)
 │   │   │   ├── download.py       # GET /api/download/{token}
 │   │   │   ├── admin.py          # stats|orders|funnel + force_token + order audit + промокоды
+│   │   │   ├── promo.py          # POST /api/promo/check — скидка и цена по коду без списания
 │   │   │   ├── push.py           # /api/admin/push/* — подписка устройств админа (Web Push)
 │   │   │   ├── referral.py       # Реферальная программа
 │   │   │   ├── corp_api.py       # Корп. API (Trial + платные тарифы)
@@ -357,6 +358,7 @@ GET  /api/health                   — Healthcheck
 GET  /api/templates                — Размеры, шрифты, цвета
 POST /api/preview                  — JPEG-превью баннера (30 RPM/IP)
 POST /api/order                    — Создание заказа → {order_id, confirmation_token, amount_rub, payment_id}
+POST /api/promo/check              — Проверка промокода → {valid, discount, price, final_price, free} | {valid:false, message}
 GET  /api/payment/status/{id}      — Статус заказа (поллинг)
 POST /api/payment/callback         — Webhook от ЮКасса (verify_yookassa_payment() ПЕРВЫМ)
 GET  /api/download/{token}         — Скачать PDF (10 RPM/IP, одноразовый токен TTL 15 мин)
@@ -564,8 +566,8 @@ api_key:    bp_live_<32 chars base64url>
 8. Поллинг клиента ловит token_issued → PDF скачивается автоматически
 
 Бесплатный флоу (промокод discount=100):
-1. Клиент вводит промокод → нажимает «Получить PDF бесплатно»
-2. POST /api/order → бэкенд проверяет код, uses_left--
+1. Клиент вводит промокод → сайт проверяет его (POST /api/promo/check), кнопка становится «Получить PDF бесплатно»
+2. POST /api/order → бэкенд атомарно резервирует использование (uses_left--)
 3. FSM: PENDING→PAID→TOKEN_ISSUED без ЮКасса
 4. Ответ: {free: true, download_token: "..."}
 5. Фронтенд показывает модалку успеха → PDF скачивается мгновенно
@@ -595,13 +597,21 @@ SELFWORK_API_KEY=...
 
 ## Промокоды
 
-Промокоды позволяют выдавать баннеры бесплатно — для маркетинговых кампаний, партнёров и пр.
+Промокоды дают скидку от 1 до 100% — для маркетинговых кампаний, партнёров и подарков. Код выдаётся из админки (вкладка «Промокоды»).
 
 **Механика:**
-- Фронт передаёт `promo_code` в `POST /api/order`
-- Бэкенд проверяет код, убывает `uses_left`
-- При `discount=100` → `amount_rub=0`, ЮКасса не вызывается, FSM сразу `pending→paid→token_issued`, PDF выдаётся мгновенно
-- TG-уведомление содержит промокод и статус «✅ PDF выдан автоматически»
+- Пока человек вводит код, сайт проверяет его через `POST /api/promo/check` (ничего не списывает) и показывает цену со скидкой: «~~299 ₽~~ 209 ₽». Лимит запросов — `promo_limit` в nginx.
+- Фронт передаёт `promo_code` в `POST /api/order`. Бэкенд **атомарно** резервирует использование одним `UPDATE … WHERE uses_left > 0 AND active = 1 AND (срок не истёк)`: параллельные запросы не применят последнее использование дважды (`services/promo_store.py`).
+- Скидка меньше 100% → заказ идёт в ЮКасса с уменьшенной суммой (`amount = price * (100 − discount) // 100`, не меньше 1 ₽).
+- `discount=100` → `amount_rub=0`, ЮКасса не вызывается, FSM сразу `pending→paid→token_issued`, PDF выдаётся мгновенно.
+- Если платёж в ЮКасса создать не удалось, использование возвращается (идемпотентно, `web_orders.promo_released_at`).
+- Если человек закрыл окно оплаты, использование **остаётся списанным**: в админке такие заказы видны как «заказов без оплаты», код можно выдать заново.
+- TG и Web Push: для бесплатного заказа «✅ PDF выдан автоматически», для оплачиваемого — код и «ожидает оплаты».
+
+**Выдача из админки** (`/admin/`, вкладка «Промокоды»; API: `POST/GET /api/admin/promo`, `POST /api/admin/promo/{code}/active`):
+скидка 1–100%, применений 1–1000 (быстрые значения 1 / 3 / 5), свой код или автогенерация (8 символов без `0/O/1/I`), срок (7 / 30 / 90 дней или без срока), заметка «кому выдан». В списке — остаток «N из M», оплачено, ожидают оплаты, статус (действует / исчерпан / истёк / отключён). Код можно отключить и снова включить.
+
+**Вручную (запасной способ, если админка недоступна):**
 
 **Генерация одноразовых промокодов:**
 
@@ -656,6 +666,10 @@ EOF
 | `uses_left` | Остаток использований; при 0 — «Промокод исчерпан» |
 | `expires_at` | Срок действия ISO 8601, `NULL` = бессрочно |
 | `discount` | Скидка %, `100` = полностью бесплатно |
+| `uses_total` | Выданный лимит («осталось N из M»); `NULL` у кодов, добавленных вручную |
+| `created_at` | Когда выдан; `NULL` у кодов, добавленных вручную |
+| `note` | Кому или зачем выдан (видно только в админке) |
+| `active` | `0` = отключён из админки |
 
 ---
 
@@ -734,6 +748,9 @@ GS замокан в `conftest.py` — тесты работают без Ghosts
 | `preview_limit` | 30 req/min/IP | 5 | `POST /api/preview` |
 | `order_limit` | 5 req/min/IP | 2 | `POST /api/order` |
 | `download_limit` | 10 req/min/IP | 3 | `GET /api/download/*` |
+| `promo_limit` | 20 req/min/IP | 10 | `POST /api/promo/check` (проверка кода при вводе; защита от перебора) |
+
+> ⚠️ Применена (`limit_req` в `default.conf`) только `promo_limit`. Зоны `preview_limit`, `order_limit` и `download_limit` объявлены в `nginx.conf`, но ни один `location` их пока не использует.
 
 `/admin/` обслуживается отдельным `location /admin/` с `alias /app/frontend/admin/`. Rate limit не применяется — защита на уровне `ADMIN_TOKEN`. `sw.js`, `manifest.json` и иконки PWA отдаются тем же `location`, менять nginx не нужно.
 

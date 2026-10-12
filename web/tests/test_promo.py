@@ -13,6 +13,8 @@ test_promo.py
   - admin API: авторизация, создание (генерация / свой код / срок / заметка),
     валидация, дубликат, список со статусами и счётчиками, включение и отключение
   - миграция: коды, добавленные вручную до админки, продолжают работать
+  - peek() и POST /api/promo/check: скидка и цена без списания, те же причины отказа,
+    что у заказа, цена совпадает с суммой реального заказа
 """
 
 import sqlite3
@@ -568,3 +570,120 @@ class TestMigration:
 
         (listed,) = promo_store.list_promos()
         assert listed["code"] == "OLD50" and listed["status"] == "active"
+
+
+# ---------------------------------------------------------------------------
+# peek() и POST /api/promo/check
+# ---------------------------------------------------------------------------
+
+class TestPeek:
+
+    def test_peek_returns_discount_and_never_charges(self, init_test_db):
+        _add_promo(init_test_db, "SALE30", uses_left=2, discount=30)
+        for _ in range(5):
+            assert promo_store.peek("SALE30") == 30
+        assert _uses_left(init_test_db, "SALE30") == 2
+
+    @pytest.mark.parametrize("kwargs", [
+        {"uses_left": 0},
+        {"active": 0},
+        {"expires_at": _iso(-timedelta(days=1))},
+    ])
+    def test_peek_and_reserve_explain_refusal_identically(self, init_test_db, kwargs):
+        _add_promo(init_test_db, "BAD", **{"uses_left": 2, **kwargs})
+        with pytest.raises(promo_store.PromoError) as peeked:
+            promo_store.peek("BAD")
+        with pytest.raises(promo_store.PromoError) as reserved:
+            promo_store.reserve("BAD")
+        assert str(peeked.value) == str(reserved.value)
+
+    def test_peek_unknown_code(self, init_test_db):
+        with pytest.raises(promo_store.PromoError, match="не найден"):
+            promo_store.peek("NOSUCH")
+
+
+class TestCheckEndpoint:
+
+    @pytest.mark.asyncio
+    async def test_partial_discount(self, client, init_test_db):
+        _add_promo(init_test_db, "SALE30", uses_left=3, discount=30)
+        resp = await client.post("/api/promo/check", json={"code": "SALE30"})
+        assert resp.status_code == 200
+        assert resp.json() == {"valid": True, "discount": 30, "price": 299, "final_price": 209, "free": False}
+
+    @pytest.mark.asyncio
+    async def test_full_discount_is_free(self, client, init_test_db):
+        _add_promo(init_test_db, "FREE1", uses_left=1, discount=100)
+        body = (await client.post("/api/promo/check", json={"code": "FREE1"})).json()
+        assert body == {"valid": True, "discount": 100, "price": 299, "final_price": 0, "free": True}
+
+    @pytest.mark.asyncio
+    async def test_no_auth_required_and_input_is_normalized(self, client, init_test_db):
+        _add_promo(init_test_db, "SALE30", uses_left=1, discount=30)
+        resp = await client.post("/api/promo/check", json={"code": "  sale30 "})
+        assert resp.status_code == 200 and resp.json()["valid"] is True
+
+    @pytest.mark.asyncio
+    async def test_check_never_charges_a_use(self, client, init_test_db):
+        _add_promo(init_test_db, "ONE", uses_left=1, discount=30)
+        for _ in range(10):
+            assert (await client.post("/api/promo/check", json={"code": "ONE"})).json()["valid"] is True
+        assert _uses_left(init_test_db, "ONE") == 1
+        assert _orders(init_test_db) == []
+        # и единственное использование всё ещё можно потратить на заказ
+        order = await client.post("/api/order", json={**PAYLOAD, "promo_code": "ONE"})
+        assert order.status_code == 200
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kwargs, message", [
+        ({"uses_left": 0},                          "исчерпан"),
+        ({"active": 0},                             "отключён"),
+        ({"expires_at": _iso(-timedelta(hours=1))}, "истёк"),
+    ])
+    async def test_unusable_code_says_why(self, client, init_test_db, kwargs, message):
+        _add_promo(init_test_db, "NOPE", **{"uses_left": 3, **kwargs})
+        body = (await client.post("/api/promo/check", json={"code": "NOPE"})).json()
+        assert body["valid"] is False and message in body["message"]
+        assert "discount" not in body and "final_price" not in body
+
+    @pytest.mark.asyncio
+    async def test_unknown_code(self, client):
+        body = (await client.post("/api/promo/check", json={"code": "NOSUCH"})).json()
+        assert body == {"valid": False, "message": "Промокод не найден"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("code", ["", " ", "a", "AB-CD", "КОД123", "A" * 21, "SALE 30"])
+    async def test_malformed_code_is_not_found_not_an_error(self, client, code):
+        resp = await client.post("/api/promo/check", json={"code": code})
+        assert resp.status_code == 200
+        assert resp.json() == {"valid": False, "message": "Промокод не найден"}
+
+    @pytest.mark.asyncio
+    async def test_oversized_or_missing_code_is_rejected(self, client):
+        assert (await client.post("/api/promo/check", json={"code": "A" * 65})).status_code == 422
+        assert (await client.post("/api/promo/check", json={})).status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_price_follows_site_price(self, client, init_test_db, monkeypatch):
+        from web.api.routers import promo as promo_router
+        monkeypatch.setattr(promo_router, "SITE_PDF_PRICE", 500)
+        _add_promo(init_test_db, "SALE30", uses_left=1, discount=30)
+        body = (await client.post("/api/promo/check", json={"code": "SALE30"})).json()
+        assert body["price"] == 500 and body["final_price"] == 350
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("discount", [10, 30, 50, 99])
+    async def test_shown_price_equals_charged_amount(self, client, init_test_db, discount):
+        code = f"D{discount}"
+        _add_promo(init_test_db, code, uses_left=2, discount=discount)
+        shown = (await client.post("/api/promo/check", json={"code": code})).json()["final_price"]
+        order = await client.post("/api/order", json={**PAYLOAD, "promo_code": code})
+        assert order.status_code == 200
+        assert order.json()["amount_rub"] == shown
+
+    @pytest.mark.asyncio
+    async def test_code_issued_by_admin_is_checkable(self, client, init_test_db):
+        created = await client.post("/api/admin/promo", json={"discount": 20, "uses": 1}, headers=_auth())
+        code = created.json()["code"]
+        body = (await client.post("/api/promo/check", json={"code": code})).json()
+        assert body["valid"] is True and body["final_price"] == 239   # 299 * 80 // 100

@@ -12,6 +12,7 @@ created_at, note, active). Выдача кодов — через админку
 
 Резерв — один UPDATE с условиями в WHERE: проверка и списание не разделены,
 параллельные запросы не могут применить последнее использование дважды.
+peek() — та же проверка без списания (POST /api/promo/check).
 """
 
 import logging
@@ -74,18 +75,45 @@ def reserve(code: str) -> int:
             ).fetchone()["discount"]
 
         # Не списали: выясняем причину, чтобы показать понятное сообщение
-        row = conn.execute(
-            "SELECT uses_left, expires_at, active FROM promo_codes WHERE code = ?",
-            (code,),
-        ).fetchone()
+        raise _why_unusable(conn, code, now_iso)
 
+
+def peek(code: str) -> int:
+    """
+    Размер скидки в процентах, если код можно применить прямо сейчас.
+    Ничего не списывает: для показа цены на сайте до оформления заказа.
+    Бросает PromoError с той же причиной, что и reserve().
+
+    Ответ — снимок: к моменту заказа код может закончиться, решает reserve().
+    """
+    now_iso = _now().isoformat()
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT discount FROM promo_codes
+            WHERE code = ? AND uses_left > 0 AND active = 1
+              AND (expires_at IS NULL OR expires_at > ?)
+            """,
+            (code, now_iso),
+        ).fetchone()
+        if row is not None:
+            return row["discount"]
+        raise _why_unusable(conn, code, now_iso)
+
+
+def _why_unusable(conn: sqlite3.Connection, code: str, now_iso: str) -> PromoError:
+    """Причина, по которой код нельзя применить (текст показывается пользователю)."""
+    row = conn.execute(
+        "SELECT uses_left, expires_at, active FROM promo_codes WHERE code = ?",
+        (code,),
+    ).fetchone()
     if row is None:
-        raise PromoError("Промокод не найден")
+        return PromoError("Промокод не найден")
     if not row["active"]:
-        raise PromoError("Промокод отключён")
+        return PromoError("Промокод отключён")
     if row["expires_at"] is not None and row["expires_at"] <= now_iso:
-        raise PromoError("Срок действия промокода истёк")
-    raise PromoError("Промокод исчерпан")
+        return PromoError("Срок действия промокода истёк")
+    return PromoError("Промокод исчерпан")
 
 
 def release_code(code: str) -> None:
