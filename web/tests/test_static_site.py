@@ -126,13 +126,33 @@ class TestNginx:
         # точный location не наследует настройки префиксного: прокси должен совпадать полностью
         proxy = lambda block: sorted(re.findall(r"^\s*(proxy_\w+ [^;]+);", block, flags=re.M))  # noqa: E731
         assert proxy(promo) == proxy(api)
-        assert "limit_req" not in api   # лимит стоит только у точного location; зоны preview/order/download пока не подключены
+        assert "limit_req" not in api   # лимиты стоят только у точных location: остальной /api/ не ограничен
 
     def test_promo_limit_zone_is_declared_in_http_block(self):
         conf = (WEB / "nginx" / "nginx.conf").read_text(encoding="utf-8")
         m = re.search(r"limit_req_zone \$binary_remote_addr zone=promo_limit:(\d+m) rate=(\d+)r/m;", conf)
         assert m, "зона promo_limit не объявлена в nginx.conf"
         assert int(m.group(2)) >= 10   # дебаунс на сайте: человек не должен упираться в лимит
+
+    def test_order_creation_is_rate_limited_with_the_same_proxy_settings(self):
+        order = _location_block(NGINX, "location = /api/order {")
+        api = _location_block(NGINX, "location /api/ {")
+        assert "limit_req zone=order_limit burst=2 nodelay;" in order
+        assert "limit_req_status 429;" in order
+        proxy = lambda block: sorted(re.findall(r"^\s*(proxy_\w+ [^;]+);", block, flags=re.M))  # noqa: E731
+        assert proxy(order) == proxy(api)
+
+    def test_order_limit_covers_only_order_creation(self):
+        # amend/abandon/status идут по общему /api/: abandon нельзя душить, он возвращает использование промокода
+        assert "location = /api/order {" in NGINX
+        assert not re.search(r"location\s+[~^=]*\s*/api/order/", NGINX)
+        assert len(re.findall(r"limit_req zone=order_limit", NGINX)) == 1
+
+    def test_order_limit_zone_is_declared_and_allows_a_human(self):
+        conf = (WEB / "nginx" / "nginx.conf").read_text(encoding="utf-8")
+        m = re.search(r"limit_req_zone \$binary_remote_addr zone=order_limit:(\d+m) rate=(\d+)r/m;", conf)
+        assert m, "зона order_limit не объявлена в nginx.conf"
+        assert int(m.group(2)) >= 3   # человек оформляет заказ раз в несколько минут, но не раз в час
 
     def test_every_applied_limit_zone_is_declared(self):
         conf = (WEB / "nginx" / "nginx.conf").read_text(encoding="utf-8")
@@ -612,7 +632,7 @@ class TestPaymentPathLatency:
 
     def test_loader_style_exists_and_assets_bumped(self):
         assert ".pay-loading" in CSS
-        assert "app.js?v=21" in INDEX
+        assert "app.js?v=22" in INDEX
 
 
 class TestPromoCheckWiring:
@@ -641,6 +661,47 @@ class TestPromoCheckWiring:
     def test_free_text_only_comes_from_server_answer(self):
         body = _function_body(APP_JS, "function renderBuyButtons()")
         assert "p.free" in body
+
+    def test_abandon_path_matches_in_js_and_router(self):
+        assert 'abandon:   (id) => `/api/order/${id}/abandon`' in APP_JS
+        router = (WEB / "api" / "routers" / "order.py").read_text(encoding="utf-8")
+        assert '@router.post("/order/{order_id}/abandon")' in router   # префикс /api — в main.py
+
+    def test_release_helper_is_idempotent_friendly_and_survives_network_errors(self):
+        body = _function_body(APP_JS, "async function releaseOrderPromo(")
+        assert "API.abandon(orderId)" in body and 'method: "POST"' in body
+        assert "keepalive: true" in body                 # запрос не обрывается, если вкладку закрывают
+        assert "if (!usedPromo || !orderId) return;" in body
+        assert "try {" in body and "catch" in body       # не дошёл запрос — вернёт фоновая очистка
+        assert body.index("await fetch(") < body.index("recheckPromo()")   # перепроверка после возврата
+
+    def test_every_unpaid_exit_of_the_pay_flow_releases_the_promo_use(self):
+        widget = _function_body(APP_JS, "async function openYooKassaWidget(")
+        # SDK не загрузился, окно закрыли во время загрузки SDK, error_callback, fail, кнопка закрытия
+        assert widget.count("releaseOrderPromo(orderId, usedPromo)") == 5
+        order = _function_body(APP_JS, "async function createOrder(")
+        assert "releaseOrderPromo(data.order_id, usedPromo)" in order        # ответ пришёл после закрытия окна
+        assert "releaseOrderPromo(unpaidOrderId, usedPromo)" in order        # виджет упал при запуске
+
+    def test_paid_and_free_paths_never_release(self):
+        widget = _function_body(APP_JS, "async function openYooKassaWidget(")
+        success = widget[widget.index('checkout.on("success"'):widget.index('checkout.on("fail"')]
+        assert "releaseOrderPromo" not in success
+        polling = _function_body(APP_JS, "function startPolling(")
+        assert "releaseOrderPromo" not in polling
+        order = _function_body(APP_JS, "async function createOrder(")
+        free = order[order.index("if (data.free && data.download_token)"):order.index("Окно закрыли, пока создавался заказ")]
+        assert "releaseOrderPromo" not in free
+
+    def test_closing_the_loader_before_the_order_exists_does_not_guess_an_order(self):
+        loader = _function_body(APP_JS, "function showPayLoading(")
+        assert "releaseOrderPromo" not in loader and "recheckPromo" not in loader   # id ещё неизвестен
+
+    def test_rate_limited_order_gets_a_readable_message(self):
+        order = _function_body(APP_JS, "async function createOrder(")
+        assert "resp.status === 429" in order
+        assert "Слишком много попыток оформить заказ" in order
+        assert order.index("resp.status === 429") < order.index("resp.json()")   # nginx отдаёт HTML, не JSON
 
     def test_price_markup_kept_for_seo_and_old_price_style_exists(self):
         assert f'<span class="buy-price">{PRICE} ₽</span>' in INDEX   # JSON-LD/описание берут цену отсюда

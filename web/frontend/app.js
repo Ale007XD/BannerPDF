@@ -19,7 +19,8 @@ const API = {
   order:     "/api/order",
   promoCheck: "/api/promo/check",
   amend:     (id) => `/api/order/${id}/amend`,
-  status:    (id) => `/api/payment/status/${id}`,
+  abandon:   (id) => `/api/order/${id}/abandon`,
+  status:   (id) => `/api/payment/status/${id}`,
   download:  (token) => `/api/download/${token}`,
   refStats:  (code) => `/api/referral/stats/${code}`,
 };
@@ -887,6 +888,22 @@ function recheckPromo() {
   }
 }
 
+/**
+ * Заказ с промокодом не оплачен (окно закрыли, платёж отклонён, форма не открылась):
+ * просим сервер вернуть списанное использование и заново проверяем код, чтобы цена
+ * на странице соответствовала тому, что код снова можно применить.
+ * Если запрос не дошёл, использование вернёт фоновая очистка (через час).
+ */
+async function releaseOrderPromo(orderId, usedPromo) {
+  if (!usedPromo || !orderId) return;
+  try {
+    await fetch(API.abandon(orderId), { method: "POST", keepalive: true });
+  } catch {
+    // не критично: см. выше
+  }
+  recheckPromo();
+}
+
 if (el.promoInput) {
   el.promoInput.addEventListener("input", () => {
     const val = el.promoInput.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -985,6 +1002,8 @@ el.confirmPay.addEventListener("click", () => {
 
 async function createOrder(payload) {
   const attempt = ++payAttempt;
+  const usedPromo = !!payload.promo_code;
+  let unpaidOrderId = null;   // заказ создан, но виджет оплаты не отработал: вернём промокод
   _orderBusy = true;
   el.buyBtn.disabled = true;
   el.buyBtn.textContent = "Создаём заказ...";
@@ -1003,6 +1022,10 @@ async function createOrder(payload) {
     });
 
     if (!resp.ok) {
+      // 429 отдаёт nginx (HTML, не JSON): заказ не создан и промокод не списан
+      if (resp.status === 429) {
+        throw new Error("Слишком много попыток оформить заказ. Подождите минуту и повторите.");
+      }
       const err = await resp.json().catch(() => ({}));
       throw new Error(err.detail || `Ошибка сервера ${resp.status}`);
     }
@@ -1024,16 +1047,23 @@ async function createOrder(payload) {
     }
 
     // Окно закрыли, пока создавался заказ: заказ остаётся неоплаченным, виджет не нужен
-    if (attempt !== payAttempt) return;
+    if (attempt !== payAttempt) {
+      releaseOrderPromo(data.order_id, usedPromo);
+      return;
+    }
 
     // Инициализируем виджет ЮKassa с полученным confirmation_token
-    await openYooKassaWidget(data.confirmation_token, data.order_id, attempt);
+    unpaidOrderId = data.order_id;
+    await openYooKassaWidget(data.confirmation_token, data.order_id, attempt, usedPromo);
   } catch (e) {
     if (attempt === payAttempt) {
       hideModal(el.modalPay);
       showError("Не удалось создать заказ", e.message);
-      recheckPromo();   // код мог закончиться между проверкой и заказом
     }
+    // Заказ создан, а виджет упал при запуске: вернуть использование.
+    // Заказа нет (ошибка сервера, лимит) — код мог закончиться между проверкой и заказом.
+    if (unpaidOrderId) releaseOrderPromo(unpaidOrderId, usedPromo);
+    else recheckPromo();
   } finally {
     _orderBusy = false;
     el.buyBtn.disabled = false;
@@ -1089,10 +1119,10 @@ function showPayLoading(text = "Готовим оплату…") {
   loader.append(spinner, label);
 
   document.getElementById("yookassa-widget-container").replaceChildren(loader);
+  // Заказ ещё создаётся, id неизвестен: использование вернёт createOrder, когда ответ придёт
   el.payClose.onclick = () => {
     payAttempt++;
     hideModal(el.modalPay);
-    recheckPromo();
   };
   showModal(el.modalPay);
 }
@@ -1107,8 +1137,9 @@ function showPayLoading(text = "Готовим оплату…") {
  * @param {string} confirmationToken — токен из POST /api/order
  * @param {string} orderId           — наш UUID заказа
  * @param {number} attempt           — номер попытки (см. payAttempt)
+ * @param {boolean} usedPromo        — заказ создан с промокодом: при отказе от оплаты вернём использование
  */
-async function openYooKassaWidget(confirmationToken, orderId, attempt) {
+async function openYooKassaWidget(confirmationToken, orderId, attempt, usedPromo = false) {
   try {
     await loadYooKassaSdk();
   } catch (e) {
@@ -1120,9 +1151,13 @@ async function openYooKassaWidget(confirmationToken, orderId, attempt) {
         "Проверьте соединение и отключите блокировщик рекламы для этого сайта, затем попробуйте ещё раз."
       );
     }
+    releaseOrderPromo(orderId, usedPromo);
     return;
   }
-  if (attempt !== payAttempt) return;   // окно закрыли, пока грузился SDK
+  if (attempt !== payAttempt) {   // окно закрыли, пока грузился SDK
+    releaseOrderPromo(orderId, usedPromo);
+    return;
+  }
 
   const container = document.getElementById("yookassa-widget-container");
   const loader = container.querySelector(".pay-loading");
@@ -1155,6 +1190,7 @@ async function openYooKassaWidget(confirmationToken, orderId, attempt) {
       console.error("ЮKassa widget error:", err);
       hideModal(el.modalPay);
       showError("Ошибка виджета оплаты", "Попробуйте ещё раз или напишите нам.");
+      releaseOrderPromo(orderId, usedPromo);
     },
   });
 
@@ -1169,6 +1205,7 @@ async function openYooKassaWidget(confirmationToken, orderId, attempt) {
     console.warn("ЮKassa: платёж отклонён для заказа", orderId);
     checkout.destroy();
     hideModal(el.modalPay);
+    releaseOrderPromo(orderId, usedPromo);
   });
 
   // Кнопка закрытия модалки
@@ -1176,7 +1213,7 @@ async function openYooKassaWidget(confirmationToken, orderId, attempt) {
     payAttempt++;
     checkout.destroy();
     hideModal(el.modalPay);
-    recheckPromo();
+    releaseOrderPromo(orderId, usedPromo);
   };
 
   checkout.render("yookassa-widget-form");

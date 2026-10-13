@@ -130,6 +130,14 @@ def transition(order_id: str, event: str) -> OrderStatus:
                 (datetime.now(timezone.utc).isoformat(), order_id),
             )
 
+    # Оплата пришла по заказу, у которого использование промокода уже вернули: берём его обратно.
+    # Вне транзакции выше (у reclaim своё соединение); сбой сюда не пробрасываем: заказ уже оплачен.
+    if to_status == OrderStatus.PAID:
+        try:
+            promo_store.reclaim_for_order(order_id)
+        except Exception:
+            logger.exception("Не удалось взять обратно использование промокода по заказу %s", order_id)
+
     logger.info("FSM %s: %s → %s (событие=%s)", order_id, from_status, to_status, event)
     return OrderStatus(to_status)
 
@@ -470,6 +478,27 @@ async def create_order(
         "confirmation_token": payment["confirmation_token"],
         "payment_id":         payment["payment_id"],
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/order/{order_id}/abandon
+# ---------------------------------------------------------------------------
+@router.post("/order/{order_id}/abandon")
+async def abandon_order(order_id: str):
+    """
+    Клиент закрыл окно оплаты или платёж отклонён: возвращает использование
+    промокода, если заказ ещё не оплачен. Идемпотентно. Статус заказа не меняется
+    (платёж в ЮKassa остаётся жить, поздняя оплата заберёт использование обратно).
+
+    Доступ по order_id (UUID4, как и у GET /api/payment/status/{id}).
+    {"released": true}  — использование возвращено сейчас;
+    {"released": false} — возвращать нечего (нет кода, уже возвращено или заказ оплачен).
+    """
+    with get_db() as conn:
+        order = conn.execute("SELECT 1 FROM web_orders WHERE id = ?", (order_id,)).fetchone()
+    if not order:
+        raise HTTPException(status_code=404, detail="Заказ не найден")
+    return {"released": promo_store.release_for_order(order_id)}
 
 
 # ---------------------------------------------------------------------------

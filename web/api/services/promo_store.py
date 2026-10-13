@@ -6,9 +6,13 @@ promo_store.py
 created_at, note, active). Выдача кодов — через админку (routers/admin.py).
 
 Использование резервируется при создании заказа, до обращения к ЮKassa.
-Возврат (release_*) — только когда платёж создать не удалось. Если человек
-закрыл окно оплаты, использование остаётся списанным: остаток виден в админке,
-код можно выдать заново.
+Возвращается, когда заказ не будет оплачен:
+  - платёж в ЮKassa создать не удалось (create_order);
+  - клиент закрыл окно оплаты или платёж отклонён (POST /api/order/{id}/abandon);
+  - заказ так и остался неоплаченным RESERVE_TTL_MINUTES минут (release_stale из
+    фонового cleanup).
+Если оплата всё же приходит по заказу с уже возвращённым использованием, оно
+берётся обратно (reclaim_for_order, вызывается из FSM при переходе в PAID).
 
 Резерв — один UPDATE с условиями в WHERE: проверка и списание не разделены,
 параллельные запросы не могут применить последнее использование дважды.
@@ -28,6 +32,12 @@ logger = logging.getLogger(__name__)
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _CODE_LENGTH = 8
 _MAX_GENERATE_ATTEMPTS = 8
+
+# Через сколько минут неоплаченный заказ перестаёт удерживать использование промокода.
+# Значение выбрано нами, а не взято у ЮKassa: в документации срок «подтвердить платёж
+# за определённый срок» без цифры. Ошибка в меньшую сторону не страшна: поздняя оплата
+# берёт использование обратно (reclaim_for_order).
+RESERVE_TTL_MINUTES = 60
 
 
 class PromoError(Exception):
@@ -134,6 +144,9 @@ def release_for_order(order_id: str) -> bool:
     """
     Возвращает использование, списанное заказом. Идемпотентно: повторный вызов
     для того же заказа ничего не делает. Возвращает True, если возврат выполнен.
+
+    Только для неоплаченных заказов (status = 'pending' проверяется в самом UPDATE):
+    если оплата пришла между выбором заказа и возвратом, использование остаётся за ним.
     """
     with get_db() as conn:
         row = conn.execute(
@@ -144,7 +157,7 @@ def release_for_order(order_id: str) -> bool:
         cur = conn.execute(
             """
             UPDATE web_orders SET promo_released_at = ?
-            WHERE id = ? AND promo_released_at IS NULL
+            WHERE id = ? AND promo_released_at IS NULL AND status = 'pending'
             """,
             (_now().isoformat(), order_id),
         )
@@ -158,6 +171,56 @@ def release_for_order(order_id: str) -> bool:
             (row["promo_code"],),
         )
     logger.info("Промокод %s: возвращено использование (заказ %s)", row["promo_code"], order_id)
+    return True
+
+
+def release_stale(older_than_minutes: int = RESERVE_TTL_MINUTES) -> int:
+    """
+    Возвращает использования по заказам, которые так и не оплачены дольше
+    older_than_minutes. Вызывается из фонового cleanup. Возвращает число возвратов.
+    """
+    cutoff = (_now() - timedelta(minutes=older_than_minutes)).isoformat()
+    with get_db() as conn:
+        ids = [
+            r["id"]
+            for r in conn.execute(
+                """
+                SELECT id FROM web_orders
+                WHERE status = 'pending' AND promo_code IS NOT NULL
+                  AND promo_released_at IS NULL AND created_at < ?
+                """,
+                (cutoff,),
+            )
+        ]
+    return sum(1 for order_id in ids if release_for_order(order_id))
+
+
+def reclaim_for_order(order_id: str) -> bool:
+    """
+    Оплата пришла по заказу, у которого использование уже вернули (окно оплаты
+    закрыли или прошёл час): берём использование обратно, чтобы заказ снова его
+    удерживал. Если лимит за это время исчерпан, заказ остаётся оплаченным без
+    использования (деньги получены, PDF выдаётся), в лог пишется предупреждение.
+    Возвращает True, если использование взято обратно.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT promo_code, promo_released_at FROM web_orders WHERE id = ?", (order_id,)
+        ).fetchone()
+        if row is None or not row["promo_code"] or row["promo_released_at"] is None:
+            return False
+        cur = conn.execute(
+            "UPDATE promo_codes SET uses_left = uses_left - 1 WHERE code = ? AND uses_left > 0",
+            (row["promo_code"],),
+        )
+        if cur.rowcount != 1:
+            logger.warning(
+                "Промокод %s: заказ %s оплачен после возврата использования, а лимит уже исчерпан",
+                row["promo_code"], order_id,
+            )
+            return False
+        conn.execute("UPDATE web_orders SET promo_released_at = NULL WHERE id = ?", (order_id,))
+    logger.info("Промокод %s: использование взято обратно (поздняя оплата заказа %s)", row["promo_code"], order_id)
     return True
 
 

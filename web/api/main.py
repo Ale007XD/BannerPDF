@@ -35,7 +35,7 @@ from .routers import (
     referral,
     tg_webhook,
 )
-from .services import batch_worker, renderer
+from .services import batch_worker, promo_store, renderer
 from .services.order_store import cleanup_expired as cleanup_orders
 from .services.token_store import cleanup_expired as cleanup_tokens
 
@@ -50,15 +50,16 @@ CLEANUP_INTERVAL = 300  # секунд между cleanup-циклами
 # Фоновый cleanup
 # ---------------------------------------------------------------------------
 async def _cleanup_loop():
-    """Периодически удаляет просроченные токены и pending_orders."""
+    """Периодически удаляет просроченные токены и pending_orders, возвращает использования промокодов по неоплаченным заказам."""
     while True:
         try:
             await asyncio.sleep(CLEANUP_INTERVAL)
             t = cleanup_tokens()
             p = cleanup_orders()
             b = batch_worker.cleanup_old_batches()
-            if t or p or b:
-                logger.info("Cleanup: токены=%d pending=%d batch_zips=%d", t, p, b)
+            r = promo_store.release_stale()
+            if t or p or b or r:
+                logger.info("Cleanup: токены=%d pending=%d batch_zips=%d промокоды=%d", t, p, b, r)
         except asyncio.CancelledError:
             break
         except Exception as e:

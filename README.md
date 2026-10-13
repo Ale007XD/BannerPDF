@@ -357,7 +357,8 @@ docker exec bannerprint_nginx nginx -s reload
 GET  /api/health                   — Healthcheck
 GET  /api/templates                — Размеры, шрифты, цвета
 POST /api/preview                  — JPEG-превью баннера (30 RPM/IP)
-POST /api/order                    — Создание заказа → {order_id, confirmation_token, amount_rub, payment_id}
+POST /api/order                    — Создание заказа → {order_id, confirmation_token, amount_rub, payment_id} (5 RPM/IP, burst 2)
+POST /api/order/{id}/abandon       — Заказ не оплачен (окно оплаты закрыли): вернуть использование промокода → {released: bool}
 POST /api/promo/check              — Проверка промокода → {valid, discount, price, final_price, free} | {valid:false, message}
 GET  /api/payment/status/{id}      — Статус заказа (поллинг)
 POST /api/payment/callback         — Webhook от ЮКасса (verify_yookassa_payment() ПЕРВЫМ)
@@ -448,7 +449,7 @@ web_orders(
   offer_version TEXT, accepted_at TEXT,  -- акцепт соглашения на экране проверки
   accepted_ip TEXT, accepted_ua TEXT,    -- IP (X-Real-IP) и User-Agent (≤300 симв.) в момент акцепта
   amended_at TEXT, original_config_json TEXT, -- единственная бесплатная правка текста
-  promo_released_at TEXT            -- использование промокода возвращено (платёж не создан)
+  promo_released_at TEXT            -- использование промокода возвращено (не оплачен / платёж не создан); NULL — удерживается
 )
 
 download_tokens(token, order_id, expires_at, used)  -- TTL 15 мин
@@ -604,8 +605,13 @@ SELFWORK_API_KEY=...
 - Фронт передаёт `promo_code` в `POST /api/order`. Бэкенд **атомарно** резервирует использование одним `UPDATE … WHERE uses_left > 0 AND active = 1 AND (срок не истёк)`: параллельные запросы не применят последнее использование дважды (`services/promo_store.py`).
 - Скидка меньше 100% → заказ идёт в ЮКасса с уменьшенной суммой (`amount = price * (100 − discount) // 100`, не меньше 1 ₽).
 - `discount=100` → `amount_rub=0`, ЮКасса не вызывается, FSM сразу `pending→paid→token_issued`, PDF выдаётся мгновенно.
-- Если платёж в ЮКасса создать не удалось, использование возвращается (идемпотентно, `web_orders.promo_released_at`).
-- Если человек закрыл окно оплаты, использование **остаётся списанным**: в админке такие заказы видны как «заказов без оплаты», код можно выдать заново.
+- Использование возвращается, если заказ не будет оплачен (идемпотентно, метка `web_orders.promo_released_at`, только для заказов в статусе `pending`):
+  - платёж в ЮКасса создать не удалось (`create_order`);
+  - человек закрыл окно оплаты, платёж отклонён, форма оплаты не открылась: сайт вызывает `POST /api/order/{id}/abandon` и после него заново проверяет код, чтобы цена на экране соответствовала состоянию кода;
+  - заказ остался неоплаченным `RESERVE_TTL_MINUTES` (60) минут: возврат делает фоновый cleanup (`promo_store.release_stale`, раз в 5 минут). Если запрос abandon не дошёл (вкладку закрыли, пропала сеть), сработает он.
+- Оплата пришла по заказу, у которого использование уже вернули: FSM при переходе в `paid` берёт его обратно (`promo_store.reclaim_for_order`), PDF выдаётся как обычно. Если лимит кода за это время исчерпан, заказ всё равно остаётся оплаченным (деньги получены), в лог пишется предупреждение; так возможен один заказ сверх лимита на каждый открытый и брошенный заказ.
+- 60 минут выбраны нами: ЮKassa не называет срок жизни платежа с `confirmation_token`. Ошибка в меньшую сторону безопасна: поздняя оплата берёт использование обратно.
+- В админке «ожидают оплаты» считает только заказы, которые ещё удерживают использование.
 - TG и Web Push: для бесплатного заказа «✅ PDF выдан автоматически», для оплачиваемого — код и «ожидает оплаты».
 
 **Выдача из админки** (`/admin/`, вкладка «Промокоды»; API: `POST/GET /api/admin/promo`, `POST /api/admin/promo/{code}/active`):
@@ -750,7 +756,10 @@ GS замокан в `conftest.py` — тесты работают без Ghosts
 | `download_limit` | 10 req/min/IP | 3 | `GET /api/download/*` |
 | `promo_limit` | 20 req/min/IP | 10 | `POST /api/promo/check` (проверка кода при вводе; защита от перебора) |
 
-> ⚠️ Применена (`limit_req` в `default.conf`) только `promo_limit`. Зоны `preview_limit`, `order_limit` и `download_limit` объявлены в `nginx.conf`, но ни один `location` их пока не использует.
+> ⚠️ Применены (`limit_req` в `default.conf`, точные `location =` до общего `/api/`) только `promo_limit` (`/api/promo/check`) и `order_limit` (`/api/order`). `order_limit` не распространяется на `/api/order/{id}/amend` и `/api/order/{id}/abandon`: abandon возвращает использование промокода, его нельзя душить. Зоны `preview_limit` и `download_limit` объявлены в `nginx.conf`, но ни один `location` их пока не использует.
+>
+> Превышение лимита даёт `429`. Сайт показывает при этом понятное сообщение («Слишком много попыток оформить заказ…»), а не «Ошибка сервера 429».
+> `nginx.conf` и `default.conf` смонтированы в контейнер одиночными файлами: после `git pull` нужен перезапуск контейнера nginx, а не только reload.
 
 `/admin/` обслуживается отдельным `location /admin/` с `alias /app/frontend/admin/`. Rate limit не применяется — защита на уровне `ADMIN_TOKEN`. `sw.js`, `manifest.json` и иконки PWA отдаются тем же `location`, менять nginx не нужно.
 
@@ -929,6 +938,7 @@ curl -sS -m 15 -X POST "$TG_API_BASE/bot$TG_NOTIFY_TOKEN/getWebhookInfo" -H 'con
 - [x] `tg_message_id` в `web_orders`: после webhook редактируется TG-сообщение («💳 Оплачено»)
 - [x] Миграция БД: колонки `yookassa_payment_id` и `tg_message_id`
 - [x] Промокоды: таблица `promo_codes`, флоу бесплатной выдачи, TG-уведомление с кодом
+- [x] Промокоды: автовозврат неоплаченных использований (abandon, TTL 60 мин, поздняя оплата берёт использование обратно), `order_limit` на `POST /api/order`
 - [x] Тариф **Trial**: `api_plans`, `corp_api.py` (HTTP 402), `admin/index.html` (бейдж + select)
 - [x] `scale` int (50–100) в API, float (0–1) в рендерере — конвертация в роутерах
 - [x] Боевые ключи ЮКасса установлены — автоматический флоу оплаты полностью работает

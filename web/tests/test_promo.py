@@ -15,14 +15,23 @@ test_promo.py
   - миграция: коды, добавленные вручную до админки, продолжают работать
   - peek() и POST /api/promo/check: скидка и цена без списания, те же причины отказа,
     что у заказа, цена совпадает с суммой реального заказа
+  - возврат неоплаченных использований: release_stale (по возрасту заказа), POST
+    /api/order/{id}/abandon, фоновый cleanup; поздняя оплата берёт использование обратно
+    (reclaim_for_order из FSM); возврат не затрагивает оплаченные заказы, в том числе
+    при гонке с оплатой
 """
 
+import asyncio
+import json
+import logging
 import sqlite3
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from conftest import make_yookassa_succeeded_payment
 
 from web.api.db import init_db
 from web.api.services import promo_store
@@ -77,12 +86,13 @@ def _orders(db_path: str) -> list[sqlite3.Row]:
     return rows
 
 
-def _insert_order(db_path: str, order_id: str, promo_code: str | None, status: str = "token_issued") -> None:
+def _insert_order(db_path: str, order_id: str, promo_code: str | None, status: str = "token_issued",
+                  created_at: str | None = None) -> None:
     conn = _db(db_path)
     conn.execute(
         "INSERT INTO web_orders (id, amount_rub, size_key, promo_code, config_json, status, created_at) "
         "VALUES (?, 209, '1x0.5', ?, '{}', ?, ?)",
-        (order_id, promo_code, status, _iso()),
+        (order_id, promo_code, status, created_at or _iso()),
     )
     conn.commit()
     conn.close()
@@ -687,3 +697,365 @@ class TestCheckEndpoint:
         code = created.json()["code"]
         body = (await client.post("/api/promo/check", json={"code": code})).json()
         assert body["valid"] is True and body["final_price"] == 239   # 299 * 80 // 100
+
+
+# ---------------------------------------------------------------------------
+# Возврат неоплаченных использований
+# ---------------------------------------------------------------------------
+
+def _order(db_path: str, order_id: str) -> sqlite3.Row:
+    conn = _db(db_path)
+    row = conn.execute("SELECT * FROM web_orders WHERE id = ?", (order_id,)).fetchone()
+    conn.close()
+    return row
+
+
+def _reserved_order(db_path: str, order_id: str, code: str, *, status: str = "pending",
+                    age: timedelta = timedelta()) -> None:
+    """Заказ, как его оставляет create_order: использование списано, заказ создан `age` назад."""
+    promo_store.reserve(code)
+    _insert_order(db_path, order_id, code, status=status, created_at=_iso(-age))
+
+
+class TestReleaseStale:
+
+    def test_returns_only_old_unpaid_orders_with_a_held_use(self, init_test_db):
+        _add_promo(init_test_db, "SALE", uses_left=6, uses_total=6)
+        hour = promo_store.RESERVE_TTL_MINUTES
+        old = timedelta(minutes=hour + 1)
+        _reserved_order(init_test_db, "old-pending", "SALE", age=old)                       # вернуть
+        _reserved_order(init_test_db, "new-pending", "SALE", age=timedelta(minutes=5))      # ещё ждём оплату
+        _reserved_order(init_test_db, "old-paid", "SALE", status="paid", age=old)           # оплачен
+        _reserved_order(init_test_db, "old-issued", "SALE", status="token_issued", age=old)  # PDF выдан
+        _insert_order(init_test_db, "old-nopromo", None, status="pending", created_at=_iso(-old))
+        assert _uses_left(init_test_db, "SALE") == 2
+
+        assert promo_store.release_stale() == 1
+
+        assert _uses_left(init_test_db, "SALE") == 3
+        assert _order(init_test_db, "old-pending")["promo_released_at"] is not None
+        for oid in ("new-pending", "old-paid", "old-issued", "old-nopromo"):
+            assert _order(init_test_db, oid)["promo_released_at"] is None, oid
+
+    def test_is_idempotent(self, init_test_db):
+        _add_promo(init_test_db, "SALE", uses_left=3)
+        _reserved_order(init_test_db, "o1", "SALE", age=timedelta(hours=3))
+        assert promo_store.release_stale() == 1
+        assert promo_store.release_stale() == 0
+        assert _uses_left(init_test_db, "SALE") == 3
+
+    def test_already_released_order_is_not_counted_twice(self, init_test_db):
+        _add_promo(init_test_db, "SALE", uses_left=3)
+        _reserved_order(init_test_db, "o1", "SALE", age=timedelta(hours=3))
+        assert promo_store.release_for_order("o1") is True        # клиент закрыл окно оплаты
+        assert promo_store.release_stale() == 0                   # а таймер уже ничего не вернёт
+        assert _uses_left(init_test_db, "SALE") == 3
+
+    def test_boundary_is_the_ttl(self, init_test_db):
+        _add_promo(init_test_db, "SALE", uses_left=3)
+        ttl = promo_store.RESERVE_TTL_MINUTES
+        _reserved_order(init_test_db, "young", "SALE", age=timedelta(minutes=ttl - 1))
+        _reserved_order(init_test_db, "stale", "SALE", age=timedelta(minutes=ttl + 1))
+        assert promo_store.release_stale() == 1
+        assert _order(init_test_db, "young")["promo_released_at"] is None
+        assert _order(init_test_db, "stale")["promo_released_at"] is not None
+
+    def test_custom_threshold(self, init_test_db):
+        _add_promo(init_test_db, "SALE", uses_left=3)
+        _reserved_order(init_test_db, "o1", "SALE", age=timedelta(minutes=30))
+        assert promo_store.release_stale(older_than_minutes=60) == 0
+        assert promo_store.release_stale(older_than_minutes=10) == 1
+
+    def test_never_raises_the_counter_above_the_issued_limit(self, init_test_db):
+        # код выдан на 1 использование, счётчик уже на максимуме (его могли поправить руками)
+        _add_promo(init_test_db, "ONE", uses_left=1, uses_total=1)
+        _insert_order(init_test_db, "o1", "ONE", status="pending", created_at=_iso(-timedelta(hours=3)))
+        promo_store.release_stale()
+        assert _uses_left(init_test_db, "ONE") == 1
+
+    def test_ttl_is_not_shorter_than_an_hour(self):
+        # ЮKassa не называет срок жизни платежа; в меньшую сторону ошибаться безопасно
+        # (поздняя оплата берёт использование обратно), но не короче времени на оплату
+        assert promo_store.RESERVE_TTL_MINUTES >= 60
+
+
+class TestReleaseForOrderOnlyUnpaid:
+
+    @pytest.mark.parametrize("status", ["paid", "token_issued", "expired"])
+    def test_non_pending_order_keeps_its_use(self, init_test_db, status):
+        _add_promo(init_test_db, "SALE", uses_left=3)
+        _reserved_order(init_test_db, "o1", "SALE", status=status)
+        assert promo_store.release_for_order("o1") is False
+        assert _uses_left(init_test_db, "SALE") == 2
+        assert _order(init_test_db, "o1")["promo_released_at"] is None
+
+
+class TestReclaim:
+
+    def test_late_payment_takes_the_use_back(self, init_test_db):
+        from web.api.routers.order import transition
+        _add_promo(init_test_db, "SALE", uses_left=3)
+        _reserved_order(init_test_db, "o1", "SALE")
+        assert promo_store.release_for_order("o1") is True
+        assert _uses_left(init_test_db, "SALE") == 3
+
+        transition("o1", "webhook_paid")
+
+        assert _order(init_test_db, "o1")["status"] == "paid"
+        assert _order(init_test_db, "o1")["promo_released_at"] is None
+        assert _uses_left(init_test_db, "SALE") == 2
+
+    def test_normal_payment_does_not_charge_twice(self, init_test_db):
+        from web.api.routers.order import transition
+        _add_promo(init_test_db, "SALE", uses_left=3)
+        _reserved_order(init_test_db, "o1", "SALE")
+        transition("o1", "webhook_paid")
+        assert _uses_left(init_test_db, "SALE") == 2
+
+    def test_repeated_paid_event_does_not_charge_twice(self, init_test_db):
+        from web.api.routers.order import transition
+        _add_promo(init_test_db, "SALE", uses_left=3)
+        _reserved_order(init_test_db, "o1", "SALE")
+        promo_store.release_for_order("o1")
+        transition("o1", "webhook_paid")
+        transition("o1", "webhook_paid")      # ЮKassa повторяет webhook
+        assert _uses_left(init_test_db, "SALE") == 2
+
+    def test_exhausted_code_still_lets_the_paid_order_through(self, init_test_db, caplog):
+        from web.api.routers.order import transition
+        _add_promo(init_test_db, "LAST", uses_left=1, uses_total=1)
+        _reserved_order(init_test_db, "late", "LAST")
+        promo_store.release_for_order("late")                 # окно закрыли: использование вернулось
+        _reserved_order(init_test_db, "other", "LAST")        # его забрал другой клиент
+        assert _uses_left(init_test_db, "LAST") == 0
+
+        with caplog.at_level(logging.WARNING):
+            transition("late", "webhook_paid")
+
+        # деньги получены, заказ оплачен; счётчик не уходит в минус
+        assert _order(init_test_db, "late")["status"] == "paid"
+        assert _uses_left(init_test_db, "LAST") == 0
+        assert _order(init_test_db, "late")["promo_released_at"] is not None
+        assert any("LAST" in r.message and "late" in r.message and r.levelno == logging.WARNING
+                   for r in caplog.records)
+
+    def test_reclaim_failure_does_not_break_the_payment(self, init_test_db, caplog):
+        from web.api.routers.order import transition
+        _add_promo(init_test_db, "SALE", uses_left=3)
+        _reserved_order(init_test_db, "o1", "SALE")
+        with patch.object(promo_store, "reclaim_for_order", side_effect=RuntimeError("db locked")), \
+                caplog.at_level(logging.ERROR):
+            assert transition("o1", "webhook_paid") == "paid"
+        assert _order(init_test_db, "o1")["status"] == "paid"
+        assert any("o1" in r.message for r in caplog.records if r.levelno >= logging.ERROR)
+
+    def test_order_without_promo_is_untouched(self, init_test_db):
+        from web.api.routers.order import transition
+        _insert_order(init_test_db, "o1", None, status="pending")
+        assert transition("o1", "webhook_paid") == "paid"
+
+    def test_reclaim_for_order_edge_cases(self, init_test_db):
+        _add_promo(init_test_db, "SALE", uses_left=3)
+        _reserved_order(init_test_db, "o1", "SALE")
+        assert promo_store.reclaim_for_order("o1") is False         # использование не возвращали
+        assert promo_store.reclaim_for_order("no-such") is False
+        _insert_order(init_test_db, "o2", None, status="pending")
+        assert promo_store.reclaim_for_order("o2") is False
+        promo_store.release_for_order("o1")
+        assert promo_store.reclaim_for_order("o1") is True
+        assert promo_store.reclaim_for_order("o1") is False         # второй раз ничего не берёт
+        assert _uses_left(init_test_db, "SALE") == 2
+
+    def test_abandon_racing_with_payment_never_loses_or_doubles_a_use(self, init_test_db):
+        from web.api.routers.order import transition
+        rounds = 15
+        _add_promo(init_test_db, "RACE", uses_left=rounds, uses_total=rounds)
+        for i in range(rounds):
+            _reserved_order(init_test_db, f"r{i}", "RACE")
+
+        def release_and_pay(i: int) -> None:
+            gate = threading.Barrier(2)
+
+            def pay():
+                gate.wait()
+                transition(f"r{i}", "webhook_paid")
+
+            def abandon():
+                gate.wait()
+                promo_store.release_for_order(f"r{i}")
+
+            threads = [threading.Thread(target=pay), threading.Thread(target=abandon)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        for i in range(rounds):
+            release_and_pay(i)
+
+        # при любом порядке оплаченный заказ держит своё использование ровно один раз
+        assert _uses_left(init_test_db, "RACE") == 0
+        for i in range(rounds):
+            row = _order(init_test_db, f"r{i}")
+            assert row["status"] == "paid" and row["promo_released_at"] is None, i
+
+
+class TestAbandonEndpoint:
+
+    @staticmethod
+    async def _order_with(client, code: str) -> str:
+        resp = await client.post("/api/order", json={**PAYLOAD, "promo_code": code})
+        assert resp.status_code == 200, resp.text
+        return resp.json()["order_id"]
+
+    @pytest.mark.asyncio
+    async def test_abandon_returns_the_use(self, client, init_test_db):
+        _add_promo(init_test_db, "SALE30", uses_left=3, discount=30)
+        order_id = await self._order_with(client, "SALE30")
+        assert _uses_left(init_test_db, "SALE30") == 2
+
+        resp = await client.post(f"/api/order/{order_id}/abandon")
+
+        assert resp.status_code == 200 and resp.json() == {"released": True}
+        assert _uses_left(init_test_db, "SALE30") == 3
+        assert _order(init_test_db, order_id)["promo_released_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_repeated_abandon_is_harmless(self, client, init_test_db):
+        _add_promo(init_test_db, "SALE30", uses_left=3, discount=30)
+        order_id = await self._order_with(client, "SALE30")
+        assert (await client.post(f"/api/order/{order_id}/abandon")).json() == {"released": True}
+        for _ in range(3):
+            resp = await client.post(f"/api/order/{order_id}/abandon")
+            assert resp.status_code == 200 and resp.json() == {"released": False}
+        assert _uses_left(init_test_db, "SALE30") == 3
+
+    @pytest.mark.asyncio
+    async def test_single_use_code_can_be_used_again_after_abandon(self, client, init_test_db):
+        _add_promo(init_test_db, "ONCE", uses_left=1, discount=50)
+        first = await self._order_with(client, "ONCE")
+        blocked = await client.post("/api/order", json={**PAYLOAD, "promo_code": "ONCE"})
+        assert blocked.status_code == 422                       # единственное использование занято
+
+        await client.post(f"/api/order/{first}/abandon")
+
+        again = await client.post("/api/order", json={**PAYLOAD, "promo_code": "ONCE"})
+        assert again.status_code == 200 and again.json()["amount_rub"] == 149
+
+    @pytest.mark.asyncio
+    async def test_abandon_touches_only_its_own_order(self, client, init_test_db):
+        _add_promo(init_test_db, "SALE30", uses_left=3, discount=30)
+        a = await self._order_with(client, "SALE30")
+        b = await self._order_with(client, "SALE30")
+        assert _uses_left(init_test_db, "SALE30") == 1
+
+        await client.post(f"/api/order/{a}/abandon")
+
+        assert _uses_left(init_test_db, "SALE30") == 2
+        assert _order(init_test_db, b)["promo_released_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_paid_order_keeps_its_use(self, client, init_test_db):
+        _add_promo(init_test_db, "SALE30", uses_left=3, discount=30)
+        order_id = await self._order_with(client, "SALE30")
+        from web.api.routers.order import transition
+        transition(order_id, "webhook_paid")
+
+        resp = await client.post(f"/api/order/{order_id}/abandon")
+
+        assert resp.status_code == 200 and resp.json() == {"released": False}
+        assert _uses_left(init_test_db, "SALE30") == 2
+
+    @pytest.mark.asyncio
+    async def test_order_without_promo(self, client, init_test_db):
+        resp = await client.post("/api/order", json=PAYLOAD)
+        order_id = resp.json()["order_id"]
+        resp = await client.post(f"/api/order/{order_id}/abandon")
+        assert resp.status_code == 200 and resp.json() == {"released": False}
+
+    @pytest.mark.asyncio
+    async def test_unknown_order_is_404(self, client):
+        resp = await client.post("/api/order/no-such-order/abandon")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_is_not_allowed(self, client):
+        assert (await client.get("/api/order/some-id/abandon")).status_code == 405
+
+    @pytest.mark.asyncio
+    async def test_late_payment_after_abandon_reaches_the_customer(self, client, init_test_db):
+        """Окно закрыли, но человек успел оплатить: PDF выдаётся, использование снова за заказом."""
+        _add_promo(init_test_db, "SALE30", uses_left=3, discount=30)
+        order_id = await self._order_with(client, "SALE30")
+        await client.post(f"/api/order/{order_id}/abandon")
+        assert _uses_left(init_test_db, "SALE30") == 3
+
+        body = json.dumps({
+            "type": "notification", "event": "payment.succeeded",
+            "object": {"id": "yk-late", "status": "succeeded", "metadata": {"order_id": order_id}},
+        }).encode()
+        verified = AsyncMock(return_value=make_yookassa_succeeded_payment(order_id, "yk-late", 209))
+        with patch("web.api.routers.payment.verify_yookassa_payment", verified):
+            resp = await client.post("/api/payment/callback", content=body,
+                                     headers={"Content-Type": "application/json"})
+
+        assert resp.status_code == 200
+        assert _order(init_test_db, order_id)["status"] == "token_issued"
+        assert _order(init_test_db, order_id)["promo_released_at"] is None
+        assert _uses_left(init_test_db, "SALE30") == 2
+
+
+class TestCleanupLoop:
+
+    @pytest.mark.asyncio
+    async def test_background_cleanup_returns_stale_uses(self, client, init_test_db, monkeypatch):
+        from web.api import main
+        _add_promo(init_test_db, "SALE", uses_left=3)
+        _reserved_order(init_test_db, "stale", "SALE", age=timedelta(hours=3))
+        _reserved_order(init_test_db, "fresh", "SALE", age=timedelta(minutes=2))
+        monkeypatch.setattr(main, "CLEANUP_INTERVAL", 0)
+        monkeypatch.setattr(main.batch_worker, "cleanup_old_batches", lambda: 0)
+
+        task = asyncio.create_task(main._cleanup_loop())
+        try:
+            for _ in range(100):
+                await asyncio.sleep(0.02)
+                if _order(init_test_db, "stale")["promo_released_at"] is not None:
+                    break
+        finally:
+            task.cancel()
+            await task    # цикл гасит CancelledError сам
+
+        assert _order(init_test_db, "stale")["promo_released_at"] is not None
+        assert _order(init_test_db, "fresh")["promo_released_at"] is None
+        assert _uses_left(init_test_db, "SALE") == 2             # 3 − 2 резерва + 1 возврат
+
+    @pytest.mark.asyncio
+    async def test_loop_survives_a_failing_release(self, client, init_test_db, monkeypatch):
+        from web.api import main
+        _add_promo(init_test_db, "SALE", uses_left=3)
+        _reserved_order(init_test_db, "stale", "SALE", age=timedelta(hours=3))
+        monkeypatch.setattr(main, "CLEANUP_INTERVAL", 0)
+        monkeypatch.setattr(main.batch_worker, "cleanup_old_batches", lambda: 0)
+        real = promo_store.release_stale
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise sqlite3.OperationalError("database is locked")
+            return real()
+
+        monkeypatch.setattr(promo_store, "release_stale", flaky)
+        task = asyncio.create_task(main._cleanup_loop())
+        try:
+            for _ in range(150):
+                await asyncio.sleep(0.02)
+                if _order(init_test_db, "stale")["promo_released_at"] is not None:
+                    break
+        finally:
+            task.cancel()
+            await task
+
+        assert calls["n"] >= 2
+        assert _order(init_test_db, "stale")["promo_released_at"] is not None
