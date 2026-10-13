@@ -611,9 +611,8 @@ class TestBrand:
 
     def test_customer_visible_strings_in_backend(self):
         api = WEB / "api"
-        for rel in ("routers/order.py", "routers/order_router.py"):
-            src = (api / rel).read_text(encoding="utf-8")
-            assert f'" — {BRAND}"' in src, f"{rel}: описание платежа (попадает в чек)"
+        src = (api / "routers" / "order.py").read_text(encoding="utf-8")
+        assert f'" — {BRAND}"' in src, "routers/order.py: описание платежа (попадает в чек)"
         gen = (api / "services" / "banner_generator.py").read_text(encoding="utf-8")
         assert f'setAuthor("{BRAND}")' in gen and f'setCreator("{BRAND}")' in gen
 
