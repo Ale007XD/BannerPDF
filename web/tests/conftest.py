@@ -40,7 +40,6 @@ def set_env(tmp_db_path, monkeypatch):
     monkeypatch.setenv("SITE_BASE_URL", "https://bannerprintbot.ru")
     monkeypatch.setenv("YOOKASSA_SHOP_ID", "test_shop_id")
     monkeypatch.setenv("YOOKASSA_SECRET_KEY", "test_secret_key")
-    monkeypatch.setenv("SELFWORK_API_KEY", "test_secret_key")  # запасной провайдер, см. test_hmac.py
     monkeypatch.setenv("ADMIN_TOKEN", "test_admin_token_32bytes_padding_x")
     monkeypatch.setenv("BOT_INTERNAL_SECRET", "test_bot_secret")
     monkeypatch.setenv("ALLOWED_ORIGINS", "http://testserver")

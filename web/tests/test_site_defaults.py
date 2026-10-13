@@ -25,7 +25,7 @@ def _defaults(rel: str, var: str) -> list[str]:
 
 class TestSiteBaseUrlDefaults:
     def test_url_modules_share_one_default(self):
-        for rel in ("services/payment.py", "services/payment_selfwork_service.py", "services/tg_notify.py"):
+        for rel in ("services/payment.py", "services/tg_notify.py"):
             assert _defaults(rel, "SITE_BASE_URL") == [CANONICAL], rel
 
     def test_watermark_module_default_resolves_to_the_same_host(self):

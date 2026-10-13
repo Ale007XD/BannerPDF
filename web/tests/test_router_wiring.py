@@ -14,9 +14,9 @@ from pathlib import Path
 API = Path(__file__).parent.parent / "api"
 MAIN = (API / "main.py").read_text(encoding="utf-8")
 
-# Запасные модули: лежат в репозитории намеренно и в main.py не подключены
-# (README, «Переключение на Selfwork (запасной провайдер)»).
-RESERVE = {"payment_selfwork_router"}
+# Запасные модули: лежат в репозитории намеренно и в main.py не подключены. Сейчас таких нет:
+# запасной провайдер Selfwork удалён (его роутер не импортировался, а фронт умел только виджет ЮKassa).
+RESERVE: set[str] = set()
 
 
 def _router_modules() -> list[str]:

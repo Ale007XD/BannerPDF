@@ -53,8 +53,7 @@
 | База данных | SQLite WAL — `banner_web.db` (отдельная от `banner_bot.db`) |
 | Прокси | Nginx 1.25 в Docker — реверс-прокси + статика + rate limits, порты 80/443 |
 | Деплой | GitHub Actions → SCP → Docker Compose |
-| Оплата (активная) | ЮКасса — embedded-виджет, верификация через GET `/v3/payments/{id}` |
-| Оплата (запасная) | Сам.Эквайринг (selfwork.ru) — SHA256 в теле, `*_selfwork.py` |
+| Оплата | ЮКасса — embedded-виджет, верификация через GET `/v3/payments/{id}` |
 | Бот | python-telegram-bot 21 (async), Python 3.11+ |
 
 ---
@@ -146,8 +145,7 @@ BannerPDF/
 │   │   ├── routers/
 │   │   │   ├── preview.py        # POST /api/preview
 │   │   │   ├── order.py          # FSM + POST /api/order (создаёт платёж ЮКасса)
-│   │   │   ├── payment.py        # POST /api/payment/callback (ЮКасса, активный)
-│   │   │   ├── payment_selfwork.py  # POST /api/payment/callback (Selfwork, запасной)
+│   │   │   ├── payment.py        # POST /api/payment/callback (ЮКасса)
 │   │   │   ├── download.py       # GET /api/download/{token}
 │   │   │   ├── admin.py          # stats|orders|funnel + force_token + order audit + промокоды
 │   │   │   ├── promo.py          # POST /api/promo/check — скидка и цена по коду без списания
@@ -163,7 +161,6 @@ BannerPDF/
 │   │       ├── sanitizer.py         # sanitize_text_lines(), validate_banner_config()
 │   │       ├── config.py            # FONTS, COLORS, BANNER_SIZES
 │   │       ├── payment.py           # ЮКасса: create_payment(), verify_yookassa_payment()
-│   │       ├── payment_selfwork.py  # Selfwork: compute_init_signature(), verify_selfwork_callback()
 │   │       ├── token_store.py       # create_token(), consume_token() — SQLite
 │   │       ├── order_store.py       # save_pending(), get_pending() — SQLite
 │   │       ├── push_notify.py       # Web Push (VAPID) админу: push_new_order(), push_order_paid()
@@ -344,8 +341,6 @@ docker exec bannerprint_nginx nginx -s reload
 | `UVICORN_WORKERS` | Количество воркеров (строго 1) | `1` |
 | `VAPID_PRIVATE_KEY` | Приватный ключ Web Push (VAPID). Пусто — push в админку выключен | `genkey`, см. «Web Push» |
 | `VAPID_SUBJECT` | Контакт в VAPID-токене (`mailto:` или `https://`) | по умолчанию `SITE_BASE_URL` |
-
-> Selfwork-переменные (`SELFWORK_SHOP_ID`, `SELFWORK_API_KEY`) нужны только при переключении на запасной провайдер.
 
 ---
 
@@ -581,18 +576,6 @@ api_key:    bp_live_<32 chars base64url>
 |---|---|
 | `5555 5555 5555 4477` | Успешная оплата |
 | `5555 5555 5555 4592` | Отказ |
-
-**Переключение на Selfwork (запасной провайдер):**
-
-```python
-# routers/order.py:
-from ..services.payment_selfwork import create_payment
-# main.py:
-from .routers import payment_selfwork as payment
-# .env:
-SELFWORK_SHOP_ID=...
-SELFWORK_API_KEY=...
-```
 
 ---
 
@@ -932,7 +915,7 @@ curl -sS -m 15 -X POST "$TG_API_BASE/bot$TG_NOTIFY_TOKEN/getWebhookInfo" -H 'con
 - [x] `banner_generator.py`: пропорциональный layout (uniform scale), PDF y_pos через ReportLab
 - [x] `banner_generator.py`: вотермарка на JPEG-превью
 - [x] Переключение на ЮКасса: `services/payment.py` + `routers/payment.py`
-- [x] Selfwork сохранён как запасной провайдер (`*_selfwork.py`)
+- [x] Запасной провайдер Selfwork удалён: роутер не импортировался (функция проверки подписи лежала в другом модуле), фронт умел только виджет ЮКасса, инструкция переключения называла несуществующие модули. Код остаётся в истории git
 - [x] `app.js` v12: модалка `#modal-pay` с виджетом ЮКасса, очистка контейнера
 - [x] E2E флоу: превью → заказ → виджет ЮКасса → webhook → PDF скачан ✅
 - [x] TG-уведомления о новых заказах (`@BannerBotInfo_bot` + inline-кнопка «Выдать PDF»)
