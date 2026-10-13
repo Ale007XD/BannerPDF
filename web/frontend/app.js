@@ -26,6 +26,8 @@ const API = {
 };
 
 const PREVIEW_DEBOUNCE_MS  = 500;
+// Паузы перед повтором превью, если nginx ответил 429 (лимит пополняется по 1 запросу в 2 с)
+const PREVIEW_RETRY_DELAYS_MS = [2500, 5000, 10000];
 const POLL_INTERVAL_MS     = 2500;
 const POLL_MAX_ATTEMPTS    = 240;   // ~600 сек (10 мин) — время ручной обработки
 const CUSTOM_SIZE_MIN      = 100;   // мм
@@ -484,13 +486,19 @@ function bindFonts() {
    ПРЕВЬЮ
    ===================================================================== */
 let _previewTimer = null;
+let _previewSeq   = 0;   // номер последнего запроса превью: ответы на устаревшие игнорируем
 
 function schedulePreview() {
   clearTimeout(_previewTimer);
-  _previewTimer = setTimeout(fetchPreview, PREVIEW_DEBOUNCE_MS);
+  _previewTimer = setTimeout(() => fetchPreview(), PREVIEW_DEBOUNCE_MS);
 }
 
-async function fetchPreview() {
+/**
+ * @param {number} retry — сколько раз уже повторяли после 429 (повтор берёт актуальный конфиг;
+ *                         любая новая правка макета отменяет ожидающий повтор через schedulePreview)
+ */
+async function fetchPreview(retry = 0) {
+  const seq = ++_previewSeq;
   const lines = getTextLines();
   if (lines.length === 0) {
     showPlaceholder();
@@ -510,6 +518,22 @@ async function fetchPreview() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(buildConfig()),
     });
+    if (seq !== _previewSeq) return;   // пока ждали ответ, запросили более свежее превью
+
+    // 429 отдаёт nginx (HTML, не JSON): ждём и повторяем, загрузчик остаётся на экране
+    if (resp.status === 429) {
+      if (retry < PREVIEW_RETRY_DELAYS_MS.length) {
+        clearTimeout(_previewTimer);
+        _previewTimer = setTimeout(() => fetchPreview(retry + 1), PREVIEW_RETRY_DELAYS_MS[retry]);
+        el.previewMeta.textContent = "Много запросов подряд, обновим превью через несколько секунд…";
+        syncBottomSheetPreview();
+        return;
+      }
+      hideLoader();
+      el.previewMeta.textContent = "Слишком много запросов. Подождите минуту и измените макет, превью обновится.";
+      syncBottomSheetPreview();
+      return;
+    }
 
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
@@ -517,9 +541,11 @@ async function fetchPreview() {
     }
 
     const data = await resp.json();
+    if (seq !== _previewSeq) return;
     showPreview(data.preview_base64, data.width_mm, data.height_mm);
     if (typeof ym !== 'undefined') ym(108388194, 'reachGoal', 'preview_generated');
   } catch (e) {
+    if (seq !== _previewSeq) return;
     hideLoader();
     el.previewMeta.textContent = "Не удалось загрузить превью";
   }
@@ -1334,10 +1360,14 @@ async function downloadPdf(token) {
       return;
     }
 
-    // Сбой генерации или сети: сервер не расходует ссылку — можно повторить
+    // Сбой генерации или сети: сервер не расходует ссылку — можно повторить.
+    // 429 отдаёт nginx до API: ссылка тоже цела, нужно только подождать.
+    const rateLimited = e.status === 429;
     showError(
-      "Не удалось скачать файл",
-      `${e.message}. Оплата не потеряна: ссылка действует 15 минут, нажмите «Скачать ещё раз».`,
+      rateLimited ? "Слишком много запросов" : "Не удалось скачать файл",
+      rateLimited
+        ? "Подождите минуту и нажмите «Скачать ещё раз». Оплата не потеряна: ссылка действует 15 минут."
+        : `${e.message}. Оплата не потеряна: ссылка действует 15 минут, нажмите «Скачать ещё раз».`,
       () => {
         hideModal(el.modalError);
         showModal(el.modalWait);

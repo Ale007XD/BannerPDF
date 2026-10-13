@@ -160,6 +160,48 @@ class TestNginx:
         used = set(re.findall(r"limit_req zone=(\w+)", NGINX))
         assert used <= declared, f"в default.conf применены необъявленные зоны: {used - declared}"
 
+    def test_every_declared_limit_zone_is_applied_exactly_once(self):
+        # объявленная, но не применённая зона ничего не ограничивает (так было с preview/order/download)
+        conf = (WEB / "nginx" / "nginx.conf").read_text(encoding="utf-8")
+        declared = re.findall(r"limit_req_zone [^;]*zone=(\w+):", conf)
+        assert sorted(declared) == ["download_limit", "order_limit", "preview_limit", "promo_limit"]
+        for zone in declared:
+            assert len(re.findall(rf"limit_req zone={zone}\b", NGINX)) == 1, zone
+
+    def test_preview_is_rate_limited_with_the_same_proxy_settings(self):
+        preview = _location_block(NGINX, "location = /api/preview {")
+        api = _location_block(NGINX, "location /api/ {")
+        assert "limit_req zone=preview_limit burst=10 nodelay;" in preview
+        assert "limit_req_status 429;" in preview
+        proxy = lambda block: sorted(re.findall(r"^\s*(proxy_\w+ [^;]+);", block, flags=re.M))  # noqa: E731
+        assert proxy(preview) == proxy(api)
+
+    def test_download_is_rate_limited_with_the_same_proxy_settings(self):
+        download = _location_block(NGINX, "location /api/download/ {")
+        api = _location_block(NGINX, "location /api/ {")
+        assert "limit_req zone=download_limit burst=3 nodelay;" in download
+        assert "limit_req_status 429;" in download
+        proxy = lambda block: sorted(re.findall(r"^\s*(proxy_\w+ [^;]+);", block, flags=re.M))  # noqa: E731
+        assert proxy(download) == proxy(api)
+
+    def test_regex_locations_cannot_take_over_limited_api_paths(self):
+        # regex-location побеждает обычный префиксный: проверяем, что ни один не ловит лимитируемые пути
+        for pattern in re.findall(r"^\s*location\s+~\*?\s+(\S+)\s*\{", NGINX, flags=re.M):
+            for path in ("/api/preview", "/api/download/abc", "/api/order", "/api/promo/check"):
+                assert not re.search(pattern, path), f"{pattern} перехватывает {path}"
+
+    def test_download_limit_does_not_touch_neighbour_paths(self):
+        assert not re.search(r"location\s+[~^=]*\s*/api/(v1|order|payment|admin)", NGINX.replace("location = /api/order {", ""))
+        # префикс ровно /api/download/, а не /api/download или /api/d: иначе заденет чужие пути
+        assert "location /api/download/ {" in NGINX
+        assert not re.search(r"location\s+/api/d\w*\s*\{", NGINX.replace("location /api/download/ {", ""))
+
+    def test_preview_and_download_zone_rates_allow_a_human(self):
+        conf = (WEB / "nginx" / "nginx.conf").read_text(encoding="utf-8")
+        rate = lambda zone: int(re.search(rf"zone={zone}:\d+m rate=(\d+)r/m;", conf).group(1))  # noqa: E731
+        assert rate("preview_limit") >= 30      # правки макета идут подряд, дебаунс на сайте 500 мс
+        assert rate("download_limit") >= 6      # скачивание одно, плюс «Скачать ещё раз» после сбоя
+
 
     def test_http2_enabled_on_every_tls_server(self):
         servers = _server_blocks()
@@ -632,7 +674,7 @@ class TestPaymentPathLatency:
 
     def test_loader_style_exists_and_assets_bumped(self):
         assert ".pay-loading" in CSS
-        assert "app.js?v=22" in INDEX
+        assert "app.js?v=23" in INDEX
 
 
 class TestPromoCheckWiring:
@@ -702,6 +744,30 @@ class TestPromoCheckWiring:
         assert "resp.status === 429" in order
         assert "Слишком много попыток оформить заказ" in order
         assert order.index("resp.status === 429") < order.index("resp.json()")   # nginx отдаёт HTML, не JSON
+
+    def test_preview_retries_on_429_and_ignores_stale_responses(self):
+        body = _function_body(APP_JS, "async function fetchPreview(")
+        assert "const seq = ++_previewSeq;" in body
+        assert body.index("++_previewSeq") < body.index("showPlaceholder()")        # стёртый текст тоже отменяет старый ответ
+        assert body.count("seq !== _previewSeq") == 3                              # после fetch, после json, в catch
+        assert "resp.status === 429" in body and "PREVIEW_RETRY_DELAYS_MS" in body
+        assert "retry < PREVIEW_RETRY_DELAYS_MS.length" in body
+        assert "fetchPreview(retry + 1)" in body
+        assert body.index("resp.status === 429") < body.index("resp.json()")        # nginx отдаёт HTML, не JSON
+        assert "clearTimeout(_previewTimer)" in _function_body(APP_JS, "function schedulePreview(")
+
+    def test_first_preview_retry_waits_for_the_nginx_limit_to_refill(self):
+        delays = [int(x) for x in re.search(r"PREVIEW_RETRY_DELAYS_MS = \[([\d, ]+)\]", APP_JS).group(1).split(",")]
+        conf = (WEB / "nginx" / "nginx.conf").read_text(encoding="utf-8")
+        rate = int(re.search(r"zone=preview_limit:\d+m rate=(\d+)r/m;", conf).group(1))
+        assert delays[0] >= 60_000 / rate        # раньше следующий токен не появится: повтор был бы снова 429
+        assert delays == sorted(delays) and len(delays) >= 2
+
+    def test_download_429_gets_its_own_message_and_keeps_retry(self):
+        body = _function_body(APP_JS, "async function downloadPdf(")
+        assert "e.status === 429" in body
+        assert "Слишком много запросов" in body and "Скачать ещё раз" in body
+        assert body.index("e.status === 404") < body.index("e.status === 429")      # 404 по-прежнему без повтора
 
     def test_price_markup_kept_for_seo_and_old_price_style_exists(self):
         assert f'<span class="buy-price">{PRICE} ₽</span>' in INDEX   # JSON-LD/описание берут цену отсюда

@@ -3,7 +3,8 @@ preview.py
 ~~~~~~~~~~
 POST /api/preview — генерация JPEG-превью баннера.
 
-Ограничение Nginx: 30 req/min/IP, burst=5.
+Ограничение Nginx: 30 req/min/IP, burst=10 (location = /api/preview в default.conf);
+при 429 сайт повторяет запрос сам.
 Превью генерируется синхронно (Pillow, не CPU-bound на уровне GIL).
 Результат: base64-строка в JSON (data:image/jpeg;base64,... на фронтенде).
 """

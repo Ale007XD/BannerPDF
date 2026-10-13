@@ -356,13 +356,13 @@ docker exec bannerprint_nginx nginx -s reload
 ```
 GET  /api/health                   — Healthcheck
 GET  /api/templates                — Размеры, шрифты, цвета
-POST /api/preview                  — JPEG-превью баннера (30 RPM/IP)
+POST /api/preview                  — JPEG-превью баннера (30 RPM/IP, burst 10; при 429 сайт повторяет запрос сам)
 POST /api/order                    — Создание заказа → {order_id, confirmation_token, amount_rub, payment_id} (5 RPM/IP, burst 2)
 POST /api/order/{id}/abandon       — Заказ не оплачен (окно оплаты закрыли): вернуть использование промокода → {released: bool}
 POST /api/promo/check              — Проверка промокода → {valid, discount, price, final_price, free} | {valid:false, message}
 GET  /api/payment/status/{id}      — Статус заказа (поллинг)
 POST /api/payment/callback         — Webhook от ЮКасса (verify_yookassa_payment() ПЕРВЫМ)
-GET  /api/download/{token}         — Скачать PDF (10 RPM/IP, одноразовый токен TTL 15 мин)
+GET  /api/download/{token}         — Скачать PDF (10 RPM/IP, burst 3, одноразовый токен TTL 15 мин; 429 токен не расходует)
 GET  /api/referral/stats/{code}    — Статистика реферального кода
 ```
 
@@ -751,14 +751,17 @@ GS замокан в `conftest.py` — тесты работают без Ghosts
 
 | Зона | Лимит | Burst | Эндпоинт |
 |---|---|---|---|
-| `preview_limit` | 30 req/min/IP | 5 | `POST /api/preview` |
+| `preview_limit` | 30 req/min/IP | 10 | `POST /api/preview` (правки макета идут подряд; при 429 сайт сам повторяет запрос) |
 | `order_limit` | 5 req/min/IP | 2 | `POST /api/order` |
 | `download_limit` | 10 req/min/IP | 3 | `GET /api/download/*` |
 | `promo_limit` | 20 req/min/IP | 10 | `POST /api/promo/check` (проверка кода при вводе; защита от перебора) |
 
-> ⚠️ Применены (`limit_req` в `default.conf`, точные `location =` до общего `/api/`) только `promo_limit` (`/api/promo/check`) и `order_limit` (`/api/order`). `order_limit` не распространяется на `/api/order/{id}/amend` и `/api/order/{id}/abandon`: abandon возвращает использование промокода, его нельзя душить. Зоны `preview_limit` и `download_limit` объявлены в `nginx.conf`, но ни один `location` их пока не использует.
+> Все четыре зоны применены в `default.conf` точными `location` до общего `/api/`: `location = /api/preview`, `location = /api/order`, `location = /api/promo/check` и префиксный `location /api/download/`. Точный или более длинный location не наследует настройки `/api/`, поэтому прокси-заголовки в каждом повторены целиком (тест сверяет их с общим блоком).
 >
-> Превышение лимита даёт `429`. Сайт показывает при этом понятное сообщение («Слишком много попыток оформить заказ…»), а не «Ошибка сервера 429».
+> Зоны не распространяются на `/api/order/{id}/amend`, `/api/order/{id}/abandon` (он возвращает использование промокода, его нельзя душить), `/api/payment/*`, `/api/v1/*` (корпоративный API и batch считаются по ключам, а не по IP) и админку.
+>
+> Превышение лимита даёт `429`, ответ HTML от nginx. Сайт показывает понятные сообщения: при заказе «Слишком много попыток оформить заказ…», при скачивании «Слишком много запросов» с кнопкой «Скачать ещё раз», превью повторяется само через 2,5 / 5 / 10 секунд (новая правка макета отменяет ожидающий повтор).
+> Лимит считается по `$binary_remote_addr`. Если домен проксируется Cloudflare (оранжевое облако), nginx увидит адреса Cloudflare и лимит станет общим для всех посетителей одного узла: тогда нужен `real_ip_header CF-Connecting-IP` с `set_real_ip_from` для диапазонов Cloudflare. Проверка: `curl -sI https://bannerbot.ru | grep -i cf-ray` не должна ничего выводить.
 > `nginx.conf` и `default.conf` смонтированы в контейнер одиночными файлами: после `git pull` нужен перезапуск контейнера nginx, а не только reload.
 
 `/admin/` обслуживается отдельным `location /admin/` с `alias /app/frontend/admin/`. Rate limit не применяется — защита на уровне `ADMIN_TOKEN`. `sw.js`, `manifest.json` и иконки PWA отдаются тем же `location`, менять nginx не нужно.
