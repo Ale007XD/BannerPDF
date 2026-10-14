@@ -1,3 +1,12 @@
+/* Шрифты отдаём со своего сервера (латиница + кириллица): внешние запросы к Google при загрузке страницы не нужны. */
+@font-face { font-family: 'Unbounded'; src: url('/fonts/Unbounded-var.woff2') format('woff2'); font-weight: 200 900; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Onest'; src: url('/fonts/Onest-var.woff2') format('woff2'); font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Golos Text'; src: url('/fonts/GolosText-Bold.woff2') format('woff2'); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Fira Sans Condensed'; src: url('/fonts/FiraSansCondensed-ExtraBold.woff2') format('woff2'); font-weight: 800; font-style: normal; font-display: swap; }
+@font-face { font-family: 'PT Sans Narrow'; src: url('/fonts/PTSansNarrow-Bold.woff2') format('woff2'); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Tenor Sans'; src: url('/fonts/TenorSans-Regular.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Caveat'; src: url('/fonts/Caveat-Bold.woff2') format('woff2'); font-weight: 700; font-style: normal; font-display: swap; }
+
 /* =====================================================================
    BannerPrint — style.css
    Вариант Б: mobile-first конструктор

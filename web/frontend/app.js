@@ -543,7 +543,7 @@ async function fetchPreview(retry = 0) {
     const data = await resp.json();
     if (seq !== _previewSeq) return;
     showPreview(data.preview_base64, data.width_mm, data.height_mm);
-    if (typeof ym !== 'undefined') ym(108388194, 'reachGoal', 'preview_generated');
+    if (typeof track === 'function') track('preview_generated');
   } catch (e) {
     if (seq !== _previewSeq) return;
     hideLoader();
@@ -977,7 +977,7 @@ function addConfirmMeta(label, value) {
 /** Показывает итоговый текст и параметры макета; оплата доступна только после отметки. */
 function openConfirm() {
   pendingConfig = buildConfig();
-  loadYooKassaSdk().catch(() => {});   // если при загрузке страницы не вышло — пробуем заранее
+  loadYooKassaSdk().catch(() => {});   // SDK грузим, только когда человек открыл экран проверки
 
   // Текст — только через textContent (ввод пользователя, не HTML)
   el.confirmLines.replaceChildren(
@@ -1023,7 +1023,7 @@ el.confirmOpenTerms.addEventListener("click", () => openModal("modal-terms"));
 el.confirmPay.addEventListener("click", () => {
   if (!el.confirmCheck.checked || !pendingConfig) return;
   hideModal(el.modalConfirm);
-  createOrder({ ...pendingConfig, accept_terms: true });
+  createOrder({ ...pendingConfig, accept_terms: true, entry: typeof trackEntry === "function" ? trackEntry() : "" });
 });
 
 async function createOrder(payload) {
@@ -1034,7 +1034,7 @@ async function createOrder(payload) {
   el.buyBtn.disabled = true;
   el.buyBtn.textContent = "Создаём заказ...";
   syncBuyButtons();
-  if (typeof ym !== 'undefined') ym(108388194, 'reachGoal', 'start_order');
+  if (typeof track === 'function') track('start_order');
 
   // Окно оплаты с индикатором — сразу: пока сервер создаёт платёж в ЮKassa, пользователь
   // видит, что процесс идёт (раньше был виден только текст на кнопке под затемнением).
@@ -1130,8 +1130,8 @@ function loadYooKassaSdk() {
   return ykSdkPromise;
 }
 
-// Грузим SDK заранее, как только страница готова, и ещё раз при открытии экрана проверки
-window.addEventListener("load", () => loadYooKassaSdk().catch(() => {}));
+// SDK не грузим при открытии страницы: сторонний сервис вызывается, только если человек
+// собрался платить (openConfirm и нажатие «Оплатить»). Пока он проверяет текст, SDK успевает загрузиться.
 
 /** Окно «Оплата» с индикатором: показывается сразу после нажатия «Оплатить». */
 function showPayLoading(text = "Готовим оплату…") {
@@ -1243,7 +1243,7 @@ async function openYooKassaWidget(confirmationToken, orderId, attempt, usedPromo
   };
 
   checkout.render("yookassa-widget-form");
-  if (typeof ym !== 'undefined') ym(108388194, 'reachGoal', 'payment_started');
+  if (typeof track === 'function') track('payment_started');
 }
 
 // Если пользователь вернулся на страницу с ?order_id= в URL (после redirect),
@@ -1336,7 +1336,7 @@ async function downloadPdf(token) {
       : state.sizeKey}_${Date.now()}.pdf`;
     document.body.appendChild(a);
     a.click();
-    if (typeof ym !== 'undefined') ym(108388194, 'reachGoal', 'download_success');
+    if (typeof track === 'function') track('download_success');
     setTimeout(() => {
       URL.revokeObjectURL(url);
       a.remove();
@@ -1604,7 +1604,7 @@ function applyUrlPrefill() {
     schedulePreview();
     applied = true;
   }
-  if (applied && typeof ym === "function") ym(108388194, "reachGoal", "prefill");
+  if (applied && typeof track === "function") track("prefill");
 }
 
 async function init() {

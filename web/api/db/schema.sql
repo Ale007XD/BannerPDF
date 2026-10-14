@@ -170,3 +170,18 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
     created_at  TEXT    NOT NULL,
     last_ok_at  TEXT
 );
+
+-- ------------------------------------------------------------
+-- Статистика посещений и действий (services/stat_store.py).
+-- Только суммарные счётчики за день: без cookie, IP, User-Agent и иных
+-- идентификаторов, связать события одного посетителя нельзя.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS stat_counters (
+    day    TEXT    NOT NULL,                -- YYYY-MM-DD, UTC
+    event  TEXT    NOT NULL,                -- pageview, prefill, example_click, ...
+    page   TEXT    NOT NULL,                -- путь страницы без параметров
+    source TEXT    NOT NULL,                -- direct | yandex | google | internal | other
+    detail TEXT    NOT NULL DEFAULT '',     -- id примера, канал связи или страница-источник
+    n      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, event, page, source, detail)
+);

@@ -19,7 +19,6 @@
 <meta name="twitter:description" content="Что должно быть в файле баннера для типографии: CMYK, шрифты в кривых, масштаб 1:1, поля. Что в PDF из конструктора есть, а чего нет."><meta name="twitter:image" content="https://bannerbot.ru/static/og/og-image.jpg">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"BannerBot","item":"https://bannerbot.ru/"},{"@type":"ListItem","position":2,"name":"Требования к макету баннера для печати","item":"https://bannerbot.ru/trebovaniya-k-maketu/"}]}</script>
 <style>body{margin:0;background:#f2f0eb;color:#1a1a1a;font:16px/1.6 system-ui,sans-serif}main{max-width:760px;margin:0 auto;padding:16px 20px 40px}a{color:#ff3c00}h1{font-size:28px;line-height:1.2}h2{margin-top:32px}.tw{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border:1px solid #d8d4cc;padding:6px 10px;text-align:left}.btn{display:inline-block;background:#ff3c00;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600}li{margin:14px 0}small{color:#5a5650}.ex{font-weight:600}.calc label{display:block;margin:8px 0}input,select{font-size:16px;padding:4px}.bc{font-size:14px}details{margin:8px 0}</style>
-<script>(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};m[i].l=1*new Date();k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})(window,document,"script","https://mc.yandex.ru/metrika/tag.js","ym");ym(108388194,"init",{clickmap:true,trackLinks:true,accurateTrackBounce:true});</script>
 </head>
 <body><main>
 <p class="bc"><a href="/">BannerBot</a> › Требования к макету баннера для печати</p>
@@ -27,9 +26,9 @@
 <p>Типография принимает PDF, если цвет в CMYK, шрифты в кривых, а размер страницы равен размеру баннера. Чек-лист ниже, с пометкой, что из этого есть в файле конструктора.</p>
 <h2>Чек-лист</h2><div class="tw"><table><tr><th>Требование</th><th>В файле конструктора</th></tr><tr><td>Цвет CMYK, без RGB</td><td>Да</td></tr><tr><td>Шрифты в кривых</td><td>Да</td></tr><tr><td>Масштаб 1:1</td><td>Да, размер страницы равен размеру баннера</td></tr><tr><td>Поля безопасности</td><td>30 мм от края</td></tr><tr><td>Припуск под подгиб</td><td>Нет</td></tr><tr><td>Встроенный цветовой профиль</td><td>Нет</td></tr></table></div><h2>Чего в файле нет</h2><p>Припусков под подгиб и обрезку, встроенного цветового профиля, растровых картинок. Значения красок заданы напрямую, цветопередачу определяет RIP типографии. Требования у типографий разные: сверьте этот список со своей.</p><h2>Как проверить PDF</h2><p>Шрифты: команда pdffonts выдаст пустую таблицу, если текст переведён в кривые. Размер: в Acrobat откройте свойства документа и сравните с размером баннера.</p>
 <h2>Частые вопросы</h2><details><summary>Нужен ли PDF/X?</summary><p>Требования зависят от типографии. Спросите, какой формат она принимает.</p></details>
-<p style="margin-top:32px"><a class="btn" href="/">Собрать макет — 299 ₽</a></p>
+<p style="margin-top:32px"><a class="btn" data-track="cta_click" href="/">Собрать макет — 299 ₽</a></p>
 <p class="bc">Читайте также: <a href="/pechat-po-gotovomu-pdf/">Как заказать печать баннера по готовому PDF</a> · <a href="/vysota-shrifta/">Высота шрифта на баннере по расстоянию</a> · <a href="/lyuversy-i-podgib/">Люверсы и подгиб баннера</a></p>
-<p class="bc"><a href="/requisites.html">Реквизиты и оплата</a></p>
+<p class="bc"><a href="/requisites.html">Реквизиты и оплата</a> · <a href="/privacy/">Политика обработки персональных данных</a></p>
 </main>
-<script>document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest("a[data-contact],a[data-ex],a.btn");if(!a||typeof ym!=="function")return;var ex=a.getAttribute("data-ex"),ch=a.getAttribute("data-contact");ym(108388194,"reachGoal",ch?"custom_contact_click":ex?"example_click":"cta_click",{example:ex||"",channel:ch||"",page:location.pathname});});</script>
+<script src="/kit.js?v=1" defer></script>
 </body></html>

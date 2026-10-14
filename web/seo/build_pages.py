@@ -113,15 +113,6 @@ CHECK = table(["Требование", "В файле конструктора"]
                ["Поля безопасности", "30 мм от края"], ["Припуск под подгиб", "Нет"], ["Встроенный цветовой профиль", "Нет"]])
 TOK["{{CHECK}}"] = lambda: CHECK
 
-METRIKA = ('<script>(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};'
-           'm[i].l=1*new Date();k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,'
-           'a.parentNode.insertBefore(k,a)})(window,document,"script","https://mc.yandex.ru/metrika/tag.js","ym");'
-           'ym(108388194,"init",{clickmap:true,trackLinks:true,accurateTrackBounce:true});</script>')
-GOALS = ('<script>document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest("a[data-contact],a[data-ex],a.btn");'
-         'if(!a||typeof ym!=="function")return;var ex=a.getAttribute("data-ex"),ch=a.getAttribute("data-contact");'
-         'ym(108388194,"reachGoal",ch?"custom_contact_click":ex?"example_click":"cta_click",'
-         '{example:ex||"",channel:ch||"",page:location.pathname});});</script>')
-
 CSS = ("body{margin:0;background:#f2f0eb;color:#1a1a1a;font:16px/1.6 system-ui,sans-serif}main{max-width:760px;margin:0 auto;padding:16px 20px 40px}"
        "a{color:#ff3c00}h1{font-size:28px;line-height:1.2}h2{margin-top:32px}.tw{overflow-x:auto}table{border-collapse:collapse;width:100%}"
        "td,th{border:1px solid #d8d4cc;padding:6px 10px;text-align:left}.btn{display:inline-block;background:#ff3c00;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600}"
@@ -262,7 +253,7 @@ def examples_html(groups=None, target=TARGET_CAP_MM, font=None):
             meta = (f"{max(len(x) for x in e['lines'])} знаков в длинной строке · {LABELS[e['key']]} · "
                     f"читается с ~{round(e['cap'] * 0.12)} м")
             html += (f'<li><strong>{text}</strong><br><small>{meta}</small> '
-                     f'<a class="ex" data-ex="{e["id"]}" href="{e["href"]}">Использовать этот текст →</a></li>')
+                     f'<a class="ex" data-track="example_click" data-track-detail="{e["id"]}" href="{e["href"]}">Использовать этот текст →</a></li>')
         html += "</ul>"
     return html
 
@@ -408,7 +399,7 @@ CONTACTS = {
 
 
 def contacts_html():
-    links = " ".join(f'<a class="btn" data-contact="{key}" href="{url}" target="_blank" rel="noopener">{name}</a>'
+    links = " ".join(f'<a class="btn" data-track="custom_contact_click" data-track-detail="{key}" href="{url}" target="_blank" rel="noopener">{name}</a>'
                      for key, (name, url) in CONTACTS.items())
     return f'<p class="contacts">{links}</p>'
 
@@ -435,6 +426,54 @@ PAGES.append(dict(
     faq=[("Чем это отличается от конструктора?", "Конструктор за 299 ₽ делает текстовый баннер быстро и без общения. Заказ нужен, когда требуется картинка, логотип или нестандартная вёрстка."),
          ("Можно ли использовать мой логотип или фото?", "Да, присылайте. Права на изображения остаются на вас."),
          ("Вы печатаете баннеры?", "Нет, мы делаем только макет. Как заказать печать по готовому файлу, написано на отдельной странице.")]))
+
+
+ORDER_RETENTION_DAYS = 14  # должно совпадать с config.ORDER_PII_RETENTION_DAYS (проверяет тест)
+POLICY_DATE = "13 октября 2026"
+N = ORDER_RETENTION_DAYS
+
+PRIVACY_TABLE = table(
+    ["Данные", "Зачем", "Основание", "Срок хранения"],
+    [["Номер заказа, размер, сумма, даты; текст макета, цвета и шрифт, которые вы ввели",
+      "Изготовить и выдать PDF, исправить текст в течение суток, рассмотреть обращение",
+      "Исполнение договора (пользовательское соглашение)",
+      f"Содержимое макета: {N} дней после оплаты; неоплаченные заказы: 30 минут. Номер, сумма и даты остаются как учётные данные заказа без текста"],
+     ["Время принятия условий, версия условий, IP-адрес и User-Agent",
+      "Подтвердить, что условия приняты; защитить права при споре",
+      "Исполнение договора, законный интерес оператора",
+      f"IP-адрес и User-Agent: {N} дней после оплаты; время и версия условий остаются без адреса"],
+     ["Номер платежа ЮKassa и сумма", "Учёт оплат и возвраты", "Исполнение договора, требования закона об учёте",
+      "Как учётные данные заказа; данные вашей карты у нас не хранятся"],
+     ["Электронная почта клиента API", "Выдача ключа и связь по договору", "Исполнение договора",
+      "Пока действует договор; удаляется по запросу"],
+     ["Переписка по заказу макета с картинкой: имя или ник, контакты, сообщения, присланные изображения",
+      "Согласовать и выполнить заказ", "Ваше обращение и исполнение договора", f"До завершения заказа и {N} дней после него"],
+     ["Журнал сервера: адрес страницы, время, код ответа, User-Agent и сеть IP-адреса (последний октет обнулён)",
+      "Работа и безопасность сайта", "Законный интерес оператора", f"{N} дней, затем журнал удаляется"],
+     ["Счётчик посещений и действий (в том числе число оплат и скачиваний): суммарные числа за день с меткой страницы-источника", "Понять, какие страницы нужны",
+      "Это не персональные данные: IP, cookie и идентификаторы не сохраняются", "Без ограничения срока"]])
+
+PAGES.append(dict(
+    slug="privacy", title="Политика обработки персональных данных — BannerBot",
+    desc="Какие данные собирает сервис BannerBot, зачем, как долго хранит и как их удалить: заказы, журнал сервера, cookie и счётчики.",
+    h1="Политика обработки персональных данных", related=[], nocta=True,
+    lead=f"Редакция от {POLICY_DATE}. Документ описывает, какие данные собирает сервис BannerBot (bannerbot.ru), зачем, как долго хранит и как их удалить. Регистрации на сайте нет, имя, телефон и адрес не запрашиваются.",
+    sections=[
+        ("Оператор", ["Деловеров Алексей Тагирович, самозанятый. ИНН и контакты указаны на странице <a href=\"/requisites.html\">«Реквизиты и оплата»</a>. По вопросам данных пишите на электронную почту из этого раздела."]),
+        ("Какие данные обрабатываем", [PRIVACY_TABLE]),
+        ("Cookie, счётчики, шрифты", [
+            "Сайт не использует cookie и не подключает сторонние счётчики (Яндекс.Метрику, Google Analytics) и внешние шрифты: шрифты отдаются с нашего сервера. Посещения считает собственный счётчик, который хранит только суммарные числа. Он не считает роботов и посетителей с включёнными «Не отслеживать» (DNT) и Global Privacy Control.",
+            "В браузере (localStorage) хранятся номер последнего оплаченного заказа и время оплаты, чтобы показать кнопку «Исправить текст» в течение суток. Эти данные остаются на вашем устройстве и удаляются после правки или по истечении срока. Если счётчик отключают в браузере (адрес с параметром notrack=1), там же сохраняется флаг nt: он говорит счётчику не считать визиты.",
+            "Полный IP-адрес используется только в памяти сервера для ограничения частоты запросов и в журнал доступа не записывается."]),
+        ("Кому передаём данные", [
+            "<ul><li>ЮKassa: платёжный сервис. При оплате ваш браузер загружает его виджет, платёжные данные вводятся там, нам они не передаются.</li>"
+            "<li>Хостинг hostland.ru: серверы с данными заказов находятся в России.</li>"
+            "<li>Telegram, Max, Авито: если вы пишете нам по заказу макета с картинкой, переписка идёт по правилам этих сервисов.</li></ul>",
+            "Уведомления о заказах приходят оператору в Telegram и содержат номер заказа, размер, шрифт, сумму и промокод, без текста макета и адресов. Данные не продаются и не используются для рекламы."]),
+        ("Ваши права", ["Вы можете запросить сведения о своих данных, потребовать их уточнить или удалить, отозвать согласие, если обработка основана на нём. Напишите на почту из раздела «Реквизиты и оплата», указав номер заказа. Ответим в сроки, установленные законом."]),
+        ("Безопасность", ["Соединение защищено HTTPS, доступ к данным заказов есть только у оператора, срок хранения ограничен автоматическим удалением."])],
+    faq=[("Сохраняется ли текст моего баннера?", f"Да, {N} дней после оплаты: чтобы выдать файл и исправить текст. Потом он стирается автоматически."),
+         ("Как удалить данные раньше срока?", "Напишите на почту из раздела «Реквизиты и оплата» с номером заказа.")]))
 
 
 # Ссылки в конструктор с предзаполнением (см. frontend/prefill.js). Слова-заглушки
@@ -465,6 +504,9 @@ def render(p):
     faq = "".join(f"<details><summary>{q}</summary><p>{a}</p></details>" for q, a in p["faq"])
     rel = " · ".join(f'<a href="/{s}/">{title_by_slug[s]}</a>' for s in p["related"])
     url = f"{SITE}/{p['slug']}/"
+    cta_html = "" if p.get("nocta") else (
+        f'<p style="margin-top:32px"><a class="btn" data-track="cta_click" href="{cta_href(p["slug"])}">Собрать макет — 299 ₽</a></p>')
+    rel_html = f'<p class="bc">Читайте также: {rel}</p>' if p["related"] else ""
     ld = ('{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":['
           f'{{"@type":"ListItem","position":1,"name":"BannerBot","item":"{SITE}/"}},'
           f'{{"@type":"ListItem","position":2,"name":"{p["h1"]}","item":"{url}"}}]}}')
@@ -489,7 +531,6 @@ def render(p):
 <meta name="twitter:description" content="{p['desc']}"><meta name="twitter:image" content="{SITE}/static/og/og-image.jpg">
 <script type="application/ld+json">{ld}</script>
 <style>{CSS}</style>
-{METRIKA}
 </head>
 <body><main>
 <p class="bc"><a href="/">BannerBot</a> › {p['h1']}</p>
@@ -497,11 +538,11 @@ def render(p):
 <p>{p['lead']}</p>
 {body}
 <h2>Частые вопросы</h2>{faq}
-<p style="margin-top:32px"><a class="btn" href="{cta_href(p['slug'])}">Собрать макет — 299 ₽</a></p>
-<p class="bc">Читайте также: {rel}</p>
-<p class="bc"><a href="/requisites.html">Реквизиты и оплата</a></p>
+{cta_html}
+{rel_html}
+<p class="bc"><a href="/requisites.html">Реквизиты и оплата</a> · <a href="/privacy/">Политика обработки персональных данных</a></p>
 </main>
-{GOALS}
+<script src="/kit.js?v=1" defer></script>
 </body></html>
 """
 

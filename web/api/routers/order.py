@@ -33,8 +33,9 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..db import get_db
-from ..services import promo_store
+from ..services import promo_store, stat_store
 from ..services.config import BANNER_SIZES
+from ..services.conversions import record_order_event
 from ..services.order_store import save_pending
 from ..services.payment import create_payment
 from ..services.push_notify import push_new_order
@@ -133,6 +134,9 @@ def transition(order_id: str, event: str) -> OrderStatus:
     # Оплата пришла по заказу, у которого использование промокода уже вернули: берём его обратно.
     # Вне транзакции выше (у reclaim своё соединение); сбой сюда не пробрасываем: заказ уже оплачен.
     if to_status == OrderStatus.PAID:
+        with get_db() as conn:
+            paid_row = conn.execute("SELECT config_json FROM web_orders WHERE id = ?", (order_id,)).fetchone()
+        record_order_event("order_paid", paid_row["config_json"] if paid_row else None)
         try:
             promo_store.reclaim_for_order(order_id)
         except Exception:
@@ -169,6 +173,13 @@ class OrderRequest(BaseModel):
     promo_code: Optional[str] = None
     # Явный акцепт на экране проверки макета (чекбокс «проверил(а), принимаю условия»)
     accept_terms: bool = False
+    # Метка входа для статистики (страница сайта или yandex / google / direct), не персональные данные
+    entry: str = ""
+
+    @field_validator("entry", mode="before")
+    @classmethod
+    def clean_entry(cls, v):
+        return stat_store.clean_label(v)  # некорректную метку отбрасываем, заказ не блокируем
 
     @model_validator(mode="after")
     def check_size_xor(self):
@@ -331,6 +342,7 @@ async def create_order(
 
     # Санитайзим строки перед сохранением
     config["text_lines"] = sanitize_text_lines(config["text_lines"])
+    config["entry"] = req.entry
 
     # --- Промокод: атомарно резервируем одно использование (скидка любого размера) ---
     promo_discount = 0

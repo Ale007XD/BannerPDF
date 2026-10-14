@@ -964,3 +964,23 @@ curl -sS -m 15 -X POST "$TG_API_BASE/bot$TG_NOTIFY_TOKEN/getWebhookInfo" -H 'con
 - [ ] Structured JSON logging
 - [ ] Перенос домена на `bannerprintbot.ru` + порт 443
 - [ ] Postman-коллекция из `/api/docs`
+
+---
+
+## Персональные данные, счётчики, журналы
+
+Принцип: не собирать лишнего и хранить как можно меньше. Публичный документ: `/privacy/` (генерируется из `web/seo/build_pages.py`); тесты `test_privacy.py` следят, чтобы он не расходился с кодом.
+
+| Что | Где | Срок |
+|---|---|---|
+| Текст макета, IP и User-Agent оплаченного заказа | `web_orders` | `ORDER_PII_RETENTION_DAYS` (14 дней после оплаты), стирает фоновый цикл `services/retention.py` |
+| Неоплаченный заказ | `pending_orders` | 30 минут |
+| Журнал nginx | `/var/log/nginx/access.log`, IP сокращён до сети /24 | 14 дней, ротация `web/ops/logrotate-bannerbot` |
+| Статистика посещений | таблица `stat_counters` (только суммарные числа за день) | без ограничения, это не персональные данные |
+
+- **Cookie нет, сторонних счётчиков (Метрика, Google) и внешних шрифтов нет.** Шрифты в `web/frontend/fonts` (латиница и кириллица, лицензии OFL рядом). SDK ЮKassa грузится только при открытии экрана проверки.
+- **Собственный счётчик:** `web/frontend/kit.js` шлёт `POST /api/beat` (событие, страница, категория источника, метка). nginx не передаёт приложению IP этого запроса и не пишет его в журнал. Имена `kit.js` и `/api/beat` выбраны нейтральными: `stat.js` и `/api/stat` попадают под правила блокировщиков (EasyPrivacy). Счётчик не считает роботов (по User-Agent и `navigator.webdriver`) и посетителей с DNT / GPC; владелец отключает его у себя, открыв любую страницу с `?notrack=1` (в `localStorage` сохраняется флаг `nt`).
+- **Конверсии считает сервер:** вместе с заказом приходит метка входа `entry` (страница сайта или `yandex` / `google` / `direct`, не персональные данные), хранится в `config_json` и используется для событий `order_paid` (оплата, `transition`) и `file_downloaded` (выдача файла, `download.py`) с источником `server`. Они не зависят от блокировщиков, перезагрузки и редиректа оплаты (3DS, СБП). События браузера: `pageview`, `prefill`, `preview_generated`, `start_order`, `payment_started`, `download_success`, `example_click`, `cta_click`, `custom_contact_click`, `custom_link_click`; серверные: `order_paid`, `file_downloaded`. Новые добавляются в `stat_store.EVENTS`.
+- **Чтение статистики:** `curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://bannerbot.ru/api/admin/events?days=30"`. Подвоз с поисковиков: события `pageview` с `source` = `yandex` / `google`; конверсии воронки несут в `detail` страницу, с которой человек пришёл.
+- **Ротация журналов (один раз на сервере, нужен root):** `sudo cp web/ops/logrotate-bannerbot /etc/logrotate.d/bannerbot && sudo logrotate -d /etc/logrotate.d/bannerbot`.
+- Меняете срок хранения: правьте `ORDER_PII_RETENTION_DAYS` (env), `ORDER_RETENTION_DAYS` в генераторе, `rotate` в logrotate и текст в окне «Конфиденциальность» и п. 6 соглашения; тест сверит совпадение.

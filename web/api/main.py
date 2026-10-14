@@ -33,10 +33,12 @@ from .routers import (
     preview,
     promo,
     referral,
+    stat,
     tg_webhook,
 )
 from .services import batch_worker, promo_store, renderer
 from .services.order_store import cleanup_expired as cleanup_orders
+from .services.retention import purge_order_pii
 from .services.token_store import cleanup_expired as cleanup_tokens
 
 logger = logging.getLogger(__name__)
@@ -58,8 +60,11 @@ async def _cleanup_loop():
             p = cleanup_orders()
             b = batch_worker.cleanup_old_batches()
             r = promo_store.release_stale()
-            if t or p or b or r:
-                logger.info("Cleanup: токены=%d pending=%d batch_zips=%d промокоды=%d", t, p, b, r)
+            w = purge_order_pii()
+            if t or p or b or r or w:
+                logger.info(
+                    "Cleanup: токены=%d pending=%d batch_zips=%d промокоды=%d стёрты_данные_заказов=%d", t, p, b, r, w
+                )
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -131,6 +136,7 @@ app.include_router(payment.router,  prefix="/api")
 app.include_router(promo.router,    prefix="/api")
 app.include_router(download.router, prefix="/api")
 app.include_router(admin.router,    prefix="/api")
+app.include_router(stat.router,     prefix="/api")
 app.include_router(referral.router, prefix="/api")
 app.include_router(corp_api.router, prefix="/api")
 app.include_router(batch.router,    prefix="/api")

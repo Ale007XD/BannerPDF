@@ -147,13 +147,13 @@ def test_every_example_link_prefills_exactly():
         assert (out["bg"], out["color"]) == (e["bg"], e["color"]), e["id"]
 
 
-def test_metrika_goals_on_generated_pages():
+def test_tracking_attributes_on_generated_pages():
     bp = _build_pages()
     html = (WEB / "frontend" / "chto-napisat-na-bannere" / "index.html").read_text(encoding="utf-8")
-    assert "ym(108388194,\"init\"" in html
-    assert html.count("data-ex=") == len(bp.examples())
-    assert "example_click" in html and "cta_click" in html
-    assert "webvisor" not in html
+    assert '<script src="/kit.js' in html
+    assert html.count('data-track="example_click"') == len(bp.examples())
+    assert 'data-track="cta_click"' in html
+    assert "mc.yandex" not in html and "ym(" not in html
 
 
 def test_birthday_library_is_consistent():
@@ -167,7 +167,7 @@ def test_birthday_library_is_consistent():
         assert e["bg"] in OPTS["colorNames"] and e["color"] in OPTS["colorNames"] and e["bg"] != e["color"]
         assert all(0 < len(line) <= 120 for line in e["lines"])
     html = (WEB / "frontend" / "baner-na-den-rozhdeniya" / "index.html").read_text(encoding="utf-8")
-    assert html.count("data-ex=") == len(ex)
+    assert html.count('data-track="example_click"') == len(ex)
 
 
 @needs_node

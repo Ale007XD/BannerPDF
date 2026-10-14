@@ -1,16 +1,6 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <!-- Яндекс.Метрика -->
-    <script type="text/javascript">
-       (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
-       m[i].l=1*new Date();
-       for(var j=0;j<document.scripts.length;j++){if(document.scripts[j].src===r){return;}}
-       k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})(
-       window,document,"script","https://mc.yandex.ru/metrika/tag.js","ym");
-       ym(108388194,"init",{clickmap:true,trackLinks:true,accurateTrackBounce:true,webvisor:true});
-    </script>
-    <!-- /Яндекс.Метрика -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Соберите макет баннера онлайн: размер от 100 до 3000 мм, текст, шрифт, цвета. Готовый PDF в CMYK, шрифты в кривых, масштаб 1:1. 299 ₽ за файл, без регистрации.">
@@ -72,12 +62,8 @@
   "inLanguage": "ru"
 }
   </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <!-- SDK виджета ЮKassa подгружает app.js (loadYooKassaSdk); соединение открываем заранее -->
-  <link rel="preconnect" href="https://yookassa.ru">
-  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Onest:wght@400;500;600&family=Golos+Text:wght@700&family=Tenor+Sans&family=Fira+Sans+Condensed:wght@800&family=PT+Sans+Narrow:wght@700&family=Caveat:wght@700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=19">
+  <link rel="stylesheet" href="style.css?v=20">
   <style>
     /* ---- Кастомный размер ---- */
     .custom-size-block {
@@ -278,9 +264,6 @@
   </style>
 </head>
 <body>
-    <!-- Яндекс.Метрика noscript -->
-    <noscript><div><img src="https://mc.yandex.ru/watch/108388194" style="position:absolute;left:-9999px;" alt=""/></div></noscript>
-    <!-- /Яндекс.Метрика noscript -->
 
   <!-- ===================== ШАПКА ===================== -->
   <header class="site-header">
@@ -393,7 +376,7 @@
           <div class="promo-status" id="promo-status"></div>
         </div>
         <button class="buy-btn" id="buy-btn">Получить PDF</button>
-        <a class="custom-link" href="/zakaz-banner-s-kartinkoy/" onclick="window.ym&&ym(108388194,'reachGoal','custom_link_click',{from:'constructor'})"><span>Нужна картинка или логотип?</span><strong>Макет под заказ от 999 ₽ →</strong></a>
+        <a class="custom-link" href="/zakaz-banner-s-kartinkoy/" data-track="custom_link_click" data-track-detail="constructor"><span>Нужна картинка или логотип?</span><strong>Макет под заказ от 999 ₽ →</strong></a>
       </div>
 
     </div><!-- /settings-col -->
@@ -460,7 +443,7 @@
         <button class="footer-link" id="open-terms">Соглашение</button>
         <button class="footer-link" id="open-privacy">Конфиденциальность</button>
         <button class="footer-link hidden" id="open-amend">Исправить текст в заказе</button>
-        <a class="footer-link" href="/requisites.html">Реквизиты и оплата</a> <a href="/razmery-bannerov/">Размеры баннеров</a> <a href="/vysota-shrifta/">Высота шрифта</a> <a href="/trebovaniya-k-maketu/">Требования к макету</a> <a href="/chto-napisat-na-bannere/">Что написать на баннере</a> <a href="/baner-na-den-rozhdeniya/">Баннер на день рождения</a> <a href="/pechat-po-gotovomu-pdf/">Как заказать печать</a> <a href="/iz-chego-delayut-bannery/">Из чего делают баннеры</a> <a href="/zakaz-banner-s-kartinkoy/">Макет под заказ</a>
+        <a class="footer-link" href="/requisites.html">Реквизиты и оплата</a> <a href="/razmery-bannerov/">Размеры баннеров</a> <a href="/vysota-shrifta/">Высота шрифта</a> <a href="/trebovaniya-k-maketu/">Требования к макету</a> <a href="/chto-napisat-na-bannere/">Что написать на баннере</a> <a href="/baner-na-den-rozhdeniya/">Баннер на день рождения</a> <a href="/pechat-po-gotovomu-pdf/">Как заказать печать</a> <a href="/iz-chego-delayut-bannery/">Из чего делают баннеры</a> <a href="/zakaz-banner-s-kartinkoy/">Макет под заказ</a> <a href="/privacy/">Политика обработки данных</a>
         <a class="footer-link" href="https://t.me/ale007xd" target="_blank" rel="noopener">Связаться</a>
         <a class="footer-link" href="/api/docs" target="_blank" rel="noopener">API</a>
       </nav>
@@ -549,7 +532,7 @@
         <p><strong>3.</strong> Перед оплатой Пользователь проверяет итоговый текст и размер на экране проверки и подтверждает их. PDF формируется строго по подтверждённым данным. Перед отправкой в печать Пользователь проверяет готовый PDF.</p>
         <p><strong>4.</strong> Сервис не гарантирует коммерческий результат (продажи, отклики и т.д.).</p>
         <p><strong>5.</strong> Услуга является цифровой и считается оказанной, когда PDF выдан Пользователю. Ссылка на файл действует 15 минут и допускает до 3 скачиваний. В течение 24 часов после оплаты Пользователь может один раз бесплатно изменить текст строк макета (размер, шрифт, цвета и число строк не меняются); исправленный файл выдаётся на тех же условиях. За корректно оказанную услугу, в том числе при ошибке во введённом тексте, возврат не производится. Если файл не получен или повреждён, Сервис повторно предоставит его либо вернёт деньги — <a href="/requisites.html#refund">условия возврата</a>.</p>
-        <p><strong>6.</strong> При оформлении заказа фиксируются время принятия условий, IP-адрес и данные браузера (User-Agent) — подробнее в разделе «Конфиденциальность».</p>
+        <p><strong>6.</strong> При оформлении заказа фиксируются время принятия условий, IP-адрес и данные браузера (User-Agent). Текст макета, IP-адрес и User-Agent хранятся 14 дней после оплаты и затем удаляются — подробнее в <a href="/privacy/">Политике обработки персональных данных</a>.</p>
         <p><strong>7.</strong> Ставя отметку на экране проверки и переходя к оплате, Пользователь принимает условия данного соглашения.</p>
       </div>
       <button class="modal-btn" id="terms-close">Понятно</button>
@@ -562,10 +545,10 @@
       <div class="modal-title">Конфиденциальность</div>
       <div class="modal-doc-body">
         <p>Оператор: Деловеров Алексей Тагирович (самозанятый), контакты — на странице <a href="/requisites.html">«Реквизиты и оплата»</a>. Регистрация на сайте не требуется, имя, телефон и адрес пользователя не запрашиваются.</p>
-        <p>При оформлении заказа сохраняются: номер заказа, размер, сумма, введённый текст макета, а также время принятия условий соглашения, IP-адрес и User-Agent браузера. Они нужны для выполнения заказа и подтверждения того, что условия были приняты, и хранятся вместе с данными заказа.</p>
+        <p>При оформлении заказа сохраняются: номер заказа, размер, сумма, введённый текст макета, а также время принятия условий соглашения, IP-адрес и User-Agent браузера. Они нужны для выполнения заказа и подтверждения принятия условий. Текст макета, IP-адрес и User-Agent удаляются через 14 дней после оплаты.</p>
         <p>Оплата проводится через ЮKassa: платёжные данные вводятся на стороне платёжного сервиса и на сайт не передаются.</p>
-        <p>На сайте работает Яндекс.Метрика (в том числе Вебвизор): она использует cookie и собирает данные о посещениях и действиях на странице. Данные обрабатываются ООО «Яндекс» на условиях сервиса.</p>
-        <p>Запросить сведения об обработке своих данных или их удаление можно письмом на электронную почту из раздела «Реквизиты и оплата».</p>
+        <p>Сайт не использует cookie и не подключает сторонние счётчики и шрифты. Посещения считает собственный счётчик: он хранит только суммарные числа за день и не сохраняет IP-адрес.</p>
+        <p>Запросить сведения об обработке своих данных или их удаление можно письмом на электронную почту из раздела «Реквизиты и оплата». Подробности — в <a href="/privacy/">Политике обработки персональных данных</a>.</p>
       </div>
       <button class="modal-btn" id="privacy-close">Понятно</button>
     </div>
@@ -643,7 +626,8 @@
     </div>
   </div>
 
+  <script src="kit.js?v=1"></script>
   <script src="prefill.js?v=1"></script>
-  <script src="app.js?v=23"></script>
+  <script src="app.js?v=25"></script>
 </body>
 </html>

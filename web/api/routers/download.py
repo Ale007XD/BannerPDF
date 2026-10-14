@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
 from ..db import get_db
+from ..services.conversions import record_order_event
 from ..services.renderer import get_executor, render_pdf_sync
 from ..services.token_store import peek_token, record_download
 
@@ -56,6 +57,9 @@ async def download_pdf(token: str):
         raise HTTPException(status_code=404, detail="Заказ не найден")
 
     import json
+    if not row["config_json"]:
+        # Данные заказа стёрты по истечении срока хранения (см. services/retention.py)
+        raise HTTPException(status_code=410, detail="Данные заказа удалены по истечении срока хранения")
     try:
         config = json.loads(row["config_json"])
     except Exception:
@@ -84,6 +88,8 @@ async def download_pdf(token: str):
     # исчерпан параллельными запросами, пока шёл рендер.
     if not record_download(token):
         raise HTTPException(status_code=404, detail=_TOKEN_INVALID_DETAIL)
+
+    record_order_event("file_downloaded", row["config_json"])
 
     size_key = row["size_key"].replace(".", "_")
     filename = f"banner_{size_key}_{order_id[:8]}.pdf"

@@ -164,7 +164,7 @@ class TestNginx:
         # объявленная, но не применённая зона ничего не ограничивает (так было с preview/order/download)
         conf = (WEB / "nginx" / "nginx.conf").read_text(encoding="utf-8")
         declared = re.findall(r"limit_req_zone [^;]*zone=(\w+):", conf)
-        assert sorted(declared) == ["download_limit", "order_limit", "preview_limit", "promo_limit"]
+        assert sorted(declared) == ["beat_limit", "download_limit", "order_limit", "preview_limit", "promo_limit"]
         for zone in declared:
             assert len(re.findall(rf"limit_req zone={zone}\b", NGINX)) == 1, zone
 
@@ -287,7 +287,7 @@ class TestIndexHtml:
                 assert word not in html, f"{name}: заявление «{word}» не подтверждено файлом"
 
     def test_css_version_bumped_for_new_rules(self):
-        assert "style.css?v=19" in INDEX
+        assert "style.css?v=20" in INDEX
 
 
 # ---------------------------------------------------------------------------
@@ -642,11 +642,15 @@ class TestPaymentPathLatency:
         assert "script.async = true" in loader
         assert "ykSdkPromise = null" in loader  # после сбоя следующая попытка грузит заново
 
-    def test_connection_to_yookassa_opened_early(self):
-        assert '<link rel="preconnect" href="https://yookassa.ru">' in INDEX
+    def test_yookassa_is_not_contacted_on_page_load(self):
+        # Без намерения платить сторонний сервис не вызывается (ни preconnect, ни SDK)
+        assert "yookassa.ru" not in INDEX
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+        assert not re.search(r'addEventListener\("load",[^)]*loadYooKassaSdk', app)
 
-    def test_sdk_prefetched_on_load_and_on_confirm_screen(self):
-        assert re.search(r'addEventListener\("load",\s*\(\)\s*=>\s*loadYooKassaSdk\(\)', APP_JS)
+    def test_sdk_loaded_on_confirm_screen_not_on_page_load(self):
+        # Сторонний сервис вызываем, только когда человек собрался платить
+        assert not re.search(r'addEventListener\("load",[^)]*loadYooKassaSdk', APP_JS)
         assert "loadYooKassaSdk()" in _function_body(APP_JS, "function openConfirm()")
 
     def test_pay_window_opens_before_the_server_answers(self):
@@ -673,7 +677,7 @@ class TestPaymentPathLatency:
 
     def test_loader_style_exists_and_assets_bumped(self):
         assert ".pay-loading" in CSS
-        assert "app.js?v=23" in INDEX
+        assert "app.js?v=25" in INDEX
 
 
 class TestPromoCheckWiring:
