@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Статистика событий — BannerBot Админ</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="BB Статистика">
+  <style>
+    :root {
+      --bg:       #f2f0eb;
+      --card:     #ffffff;
+      --ink:      #1a1a1a;
+      --muted:    #5a5650;
+      --line:     #d8d4cc;
+      --accent:   #ff3c00;
+      --accent-hover: #e03500;
+      --success:  #0f766e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 20px;
+    }
+    .wrap {
+      max-width: 1080px;
+      margin: 0 auto;
+    }
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 24px;
+    }
+    .nav-links a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .nav-links a:hover { text-decoration: underline; }
+    
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+    .btn-group {
+      display: flex;
+      gap: 6px;
+    }
+    button.period-btn {
+      background: var(--bg);
+      border: 1px solid var(--line);
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      color: var(--ink);
+      transition: 0.15s;
+    }
+    button.period-btn.active, button.period-btn:hover {
+      background: var(--ink);
+      color: #fff;
+      border-color: var(--ink);
+    }
+    .filter-select {
+      padding: 7px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-size: 14px;
+      background: var(--card);
+      color: var(--ink);
+    }
+    
+    /* Сводка (Totals) */
+    .totals-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .total-card {
+      background: #faf9f6;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      text-align: center;
+    }
+    .total-card .val {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 2px;
+    }
+    .total-card .lbl {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    /* Таблица */
+    h2 {
+      font-size: 18px;
+      margin: 0 0 12px;
+    }
+    .table-wrap {
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 12px;
+      text-align: left;
+    }
+    th {
+      background: #faf9f6;
+      font-weight: 600;
+    }
+    tr:hover td {
+      background: #fbfbfa;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      background: #eee;
+    }
+    .badge-yandex { background: #fef3c7; color: #92400e; }
+    .badge-google { background: #e0f2fe; color: #0369a1; }
+    .badge-server { background: #fce7f3; color: #9d174d; }
+    .badge-direct { background: #f3f4f6; color: #374151; }
+
+    .loading, .error {
+      text-align: center;
+      padding: 40px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .error { color: var(--accent); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top-bar">
+    <h1>📊 Статистика BannerBot</h1>
+    <div class="nav-links">
+      <a href="/admin/">← Назад в панель заказов</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="controls">
+      <div class="btn-group" id="periodButtons">
+        <button class="period-btn" data-days="7">7 дней</button>
+        <button class="period-btn active" data-days="30">30 дней</button>
+        <button class="period-btn" data-days="90">90 дней</button>
+        <button class="period-btn" data-days="365">Год</button>
+      </div>
+      <div>
+        <label for="sourceFilter" style="font-size:13px; color:var(--muted); margin-right:6px;">Источник:</label>
+        <select id="sourceFilter" class="filter-select" onchange="renderTable()">
+          <option value="">Все источники</option>
+          <option value="yandex">Yandex</option>
+          <option value="google">Google</option>
+          <option value="direct">Direct</option>
+          <option value="server">Server (конверсии)</option>
+          <option value="internal">Internal</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="contentArea">
+      <div class="loading">Загрузка аналитики...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let currentDays = 30;
+  let rawData = null;
+
+  // Инициализация при загрузке
+  document.addEventListener("DOMContentLoaded", () => {
+    setupPeriodButtons();
+    loadStats(currentDays);
+  });
+
+  function setupPeriodButtons() {
+    document.querySelectorAll('.period-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        currentDays = parseInt(e.target.getAttribute('data-days'), 10);
+        loadStats(currentDays);
+      });
+    });
+  }
+
+  async function getAdminToken() {
+    // Автоматический поиск токена в хранилищах админки
+    let token = localStorage.getItem('bb_admin_token') || 
+                localStorage.getItem('admin_token') || 
+                sessionStorage.getItem('bb_admin_token');
+    
+    if (!token) {
+      token = prompt('Введите ADMIN_TOKEN для доступа к статистике:');
+      if (token) {
+        localStorage.setItem('bb_admin_token', token);
+      }
+    }
+    return token;
+  }
+
+  async function loadStats(days) {
+    const area = document.getElementById('contentArea');
+    area.innerHTML = '<div class="loading">Загрузка данных за ' + days + ' дн...</div>';
+
+    const token = await getAdminToken();
+    if (!token) {
+      area.innerHTML = '<div class="error">Требуется токен администратора для просмотра статистики.</div>';
+      return;
+    }
+
+    try {
+      const resp = await fetch('/api/admin/events?days=' + days, {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+
+      if (resp.status === 401 || resp.status === 403) {
+        localStorage.removeItem('bb_admin_token');
+        area.innerHTML = '<div class="error">Неверный токен администратора. Перезагрузите страницу и попробуйте снова.</div>';
+        return;
+      }
+
+      if (!resp.ok) {
+        throw new Error('Ошибка сервера: ' + resp.status);
+      }
+
+      rawData = await resp.json();
+      renderDashboard();
+    } catch (err) {
+      console.error(err);
+      area.innerHTML = '<div class="error">Не удалось загрузить статистику: ' + err.message + '</div>';
+    }
+  }
+
+  function renderDashboard() {
+    if (!rawData) return;
+    const area = document.getElementById('contentArea');
+
+    let html = `
+      <p style="margin: 0 0 16px; font-size:13px; color:var(--muted);">
+        Период: с <b>${rawData.since}</b> (за последние ${rawData.days} дн.)
+      </p>
+
+      <h2>📈 Итоги по событиям (Totals)</h2>
+      <div class="totals-grid">
+    `;
+
+    const totals = rawData.totals || {};
+    const eventsOrder = ['pageview', 'prefill', 'preview_generated', 'start_order', 'payment_started', 'order_paid', 'file_downloaded', 'download_success', 'example_click', 'cta_click'];
+    
+    // Сначала выводим приоритетные, затем остальные
+    const keys = Object.keys(totals).sort((a, b) => {
+      let ia = eventsOrder.indexOf(a), ib = eventsOrder.indexOf(b);
+      if (ia === -1) ia = 999;
+      if (ib === -1) ib = 999;
+      return ia - ib || totals[b] - totals[a];
+    });
+
+    if (keys.length === 0) {
+      html += '<div style="grid-column: 1/-1; color:var(--muted); font-size:14px; padding:10px 0;">За выбранный период событий пока не зафиксировано.</div>';
+    } else {
+      for (const ev of keys) {
+        html += `
+          <div class="total-card">
+            <div class="val">${totals[ev].toLocaleString()}</div>
+            <div class="lbl">${ev}</div>
+          </div>
+        `;
+      }
+    }
+
+    html += `
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin: 24px 0 12px; flex-wrap:wrap; gap:10px;">
+        <h2 style="margin:0;">🔍 Детализация (Rows)</h2>
+      </div>
+      <div class="table-wrap">
+        <table id="rowsTable">
+          <thead>
+            <tr>
+              <th>Событие</th>
+              <th>Страница (Page)</th>
+              <th>Источник</th>
+              <th>Метка (Detail)</th>
+              <th style="text-align:right;">Кол-во (n)</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <!-- Заполняется JS -->
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    area.innerHTML = html;
+    renderTable();
+  }
+
+  function renderTable() {
+    if (!rawData || !rawData.rows) return;
+    const tbody = document.getElementById('tableBody');
+    const selectedSource = document.getElementById('sourceFilter').value;
+
+    const filtered = rawData.rows.filter(r => {
+      if (selectedSource && r.source !== selectedSource) return false;
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--muted); padding:20px;">Нет данных, соответствующих выбранному фильтру.</td></tr>';
+      return;
+    }
+
+    let rowsHtml = '';
+    for (const r of filtered) {
+      let badgeClass = 'badge-direct';
+      if (r.source === 'yandex') badgeClass = 'badge-yandex';
+      else if (r.source === 'google') badgeClass = 'badge-google';
+      else if (r.source === 'server') badgeClass = 'badge-server';
+
+      rowsHtml += `
+        <tr>
+          <td><b>${escapeHtml(r.event)}</b></td>
+          <td><code>${escapeHtml(r.page)}</code></td>
+          <td><span class="badge ${badgeClass}">${escapeHtml(r.source)}</span></td>
+          <td>${r.detail ? `<code>${escapeHtml(r.detail)}</code>` : '<span style="color:#999">—</span>'}</td>
+          <td style="text-align:right; font-weight:600;">${r.n.toLocaleString()}</td>
+        </tr>
+      `;
+    }
+    tbody.innerHTML = rowsHtml;
+  }
+
+  function escapeHtml(str) {
+    return (str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+</script>
+</body>
+</html>
