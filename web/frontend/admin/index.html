@@ -180,7 +180,7 @@
       display: flex;
       gap: 8px;
     }
-    .filter-btn {
+    .filter-btn, .promo-view-btn {
       font-family: 'Unbounded', sans-serif;
       font-size: 10px;
       font-weight: 700;
@@ -192,7 +192,7 @@
       cursor: pointer;
       transition: all 0.15s;
     }
-    .filter-btn.active {
+    .filter-btn.active, .promo-view-btn.active {
       background: var(--ink);
       border-color: var(--ink);
       color: #fff;
@@ -416,6 +416,42 @@
     .promo-actions { display: flex; gap: 8px; margin-top: 10px; }
     .promo-actions .btn { width: auto; flex: 1; margin-top: 0; padding: 10px; font-size: 11px; }
 
+    /* ---- Отчёт по промокодам ---- */
+    .promo-views { display: flex; gap: 8px; margin: 12px 0; }
+    .promo-report { display: flex; flex-direction: column; gap: 12px; }
+    .promo-report .stats-row + .stats-row { margin-top: 8px; }
+    .promo-report .stat-item { padding: 12px 4px; min-width: 0; }
+    .promo-report .stat-value { font-size: 17px; overflow-wrap: anywhere; }
+    .promo-heading {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--ink-3);
+      padding: 6px 4px 0;
+    }
+    .promo-note { font-size: 12px; color: var(--ink-3); line-height: 1.5; margin-top: 12px; }
+    .promo-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .promo-tag {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      padding: 6px 12px;
+      border: 1.5px solid var(--accent);
+      border-radius: 20px;
+      background: var(--surface);
+      color: var(--ink);
+      cursor: pointer;
+    }
+    .promo-tag--dead { border-color: var(--border); background: var(--bg); color: var(--ink-3); }
+    .key-card--unused { border-left-color: var(--accent); }
+    .promo-st--unused { background: #fff3cc; color: #8a6000; }
+    .promo-head-tags { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .promo-filter { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); padding: 0 4px; }
+    .promo-filter .btn { width: auto; margin-top: 0; padding: 6px 12px; font-size: 10px; }
+
     /* ---- Toast ---- */
     .toast {
       position: fixed;
@@ -549,6 +585,14 @@
     <!-- ======= ВКЛАДКА: ПРОМОКОДЫ ======= -->
     <div id="pane-promo" style="display:none;">
 
+      <div class="promo-views">
+        <button class="promo-view-btn active" data-view="codes" id="promo-view-codes-btn">Коды</button>
+        <button class="promo-view-btn" data-view="report" id="promo-view-report-btn">Отчёт</button>
+      </div>
+
+      <!-- ---- Коды: выдача и список ---- -->
+      <div id="promo-view-codes">
+
       <!-- Выдать промокод -->
       <div class="card">
         <div class="card-label">Выдать промокод</div>
@@ -598,6 +642,29 @@
       <div class="orders-list" id="promo-list">
         <div class="empty-state">Загрузка...</div>
       </div>
+
+      </div><!-- /promo-view-codes -->
+
+      <!-- ---- Отчёт: сколько ушло на скидки, кто и когда применил, что не использовано ---- -->
+      <div id="promo-view-report" class="promo-report" style="display:none;">
+        <div class="card">
+          <div class="card-label">Итоги</div>
+          <div id="promo-report-summary"><div class="empty-state">Загрузка...</div></div>
+        </div>
+
+        <div class="card" id="promo-report-unused-card" style="display:none;">
+          <div class="card-label" id="promo-report-unused-label">Не использованы</div>
+          <div id="promo-report-unused"></div>
+        </div>
+
+        <div class="promo-heading">По кодам</div>
+        <div class="orders-list" id="promo-report-codes"></div>
+
+        <div class="promo-heading" id="promo-report-recent-head">Кто и когда применил</div>
+        <div class="promo-filter" id="promo-report-filter" style="display:none;"></div>
+        <div class="orders-list" id="promo-report-recent"></div>
+        <div id="promo-report-more"></div>
+      </div><!-- /promo-view-report -->
 
     </div><!-- /pane-promo -->
 
@@ -833,7 +900,7 @@ async function loadOrders() {
 }
 
 async function refresh() {
-  await Promise.all([loadStats(), loadOrders(), ...(_activeTab === "promo" ? [loadPromos()] : [])]);
+  await Promise.all([loadStats(), loadOrders(), ...(_activeTab === "promo" ? [loadPromoView()] : [])]);
   el.refreshLabel.textContent = "обновлено " + new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
 }
 
@@ -953,7 +1020,7 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     elPromo.pane.style.display  = _activeTab === "promo"  ? "" : "none";
     el.paneKeys.style.display   = _activeTab === "keys"   ? "" : "none";
 
-    if (_activeTab === "promo") loadPromos();
+    if (_activeTab === "promo") loadPromoView();
     if (_activeTab === "keys") loadKeys();
   });
 });
@@ -1292,6 +1359,238 @@ async function setPromoActive(code, active, btn) {
     if (btn) btn.disabled = false;
   }
 }
+
+/* =====================================================================
+   ОТЧЁТ ПО ПРОМОКОДАМ (GET /api/admin/promo/report)
+   ===================================================================== */
+const elReport = {
+  viewBtns:    document.querySelectorAll(".promo-view-btn"),
+  codesView:   $("promo-view-codes"),
+  reportView:  $("promo-view-report"),
+  summary:     $("promo-report-summary"),
+  unusedCard:  $("promo-report-unused-card"),
+  unusedLabel: $("promo-report-unused-label"),
+  unused:      $("promo-report-unused"),
+  codes:       $("promo-report-codes"),
+  recentHead:  $("promo-report-recent-head"),
+  filter:      $("promo-report-filter"),
+  recent:      $("promo-report-recent"),
+  more:        $("promo-report-more"),
+};
+
+const PROMO_REPORT_PAGE = 50;    // шаг «Показать ещё»
+const PROMO_REPORT_MAX  = 200;   // потолок limit на сервере
+// Состояние заказа с кодом (поле state из отчёта) → подпись и цвет карточки из вкладки «Заказы»
+const PROMO_STATE = {
+  applied:  { label: "Оплачен",     status: "token_issued" },
+  reserved: { label: "Ждёт оплаты", status: "pending" },
+  released: { label: "Не оплачен",  status: "expired" },
+};
+
+let _promoView        = "codes";
+let _promoReportCode  = null;                  // только заказы с этим кодом
+let _promoReportLimit = PROMO_REPORT_PAGE;
+let _promoReportSeq   = 0;                     // ответ на устаревший запрос не должен затирать свежий
+let _promoReportShown = false;                 // отчёт уже показан: ошибка загрузки его не стирает
+
+const rub = (n) => Number(n || 0).toLocaleString("ru-RU");
+
+function loadPromoView() { return _promoView === "report" ? loadPromoReport() : loadPromos(); }
+
+function setPromoView(view) {
+  _promoView = view === "report" ? "report" : "codes";
+  elReport.viewBtns.forEach((b) => b.classList.toggle("active", b.dataset.view === _promoView));
+  elReport.codesView.style.display  = _promoView === "codes"  ? "" : "none";
+  elReport.reportView.style.display = _promoView === "report" ? "" : "none";
+  loadPromoView();
+}
+elReport.viewBtns.forEach((b) => b.addEventListener("click", () => setPromoView(b.dataset.view)));
+
+function promoReportFailed(status) {
+  if (_promoReportShown) return;
+  elReport.summary.innerHTML =
+    `<div class="empty-state">Не удалось загрузить отчёт${status ? ` (HTTP ${status})` : ""}</div>`;
+}
+
+async function loadPromoReport() {
+  const seq = ++_promoReportSeq;
+  const qs  = new URLSearchParams({ limit: String(_promoReportLimit) });
+  if (_promoReportCode) qs.set("code", _promoReportCode);
+  try {
+    const resp = await fetch(`${API_BASE}/admin/promo/report?${qs}`, { headers: authHeaders() });
+    if (seq !== _promoReportSeq) return;
+    if (!resp.ok) { promoReportFailed(resp.status); return; }
+    const data = await resp.json();
+    if (seq !== _promoReportSeq) return;
+    renderPromoReport(data);
+  } catch {
+    if (seq === _promoReportSeq) promoReportFailed();
+  }
+}
+
+function statTile(value, label, mod) {
+  return `<div class="stat-item"><div class="stat-value${mod ? ` stat-value--${mod}` : ""}">${esc(value)}</div>` +
+         `<div class="stat-label">${esc(label)}</div></div>`;
+}
+
+function renderPromoReport(data) {
+  _promoReportShown = true;
+  const t = data.totals;
+  const approx = t.estimated > 0 ? "≈" : "";
+
+  elReport.summary.innerHTML = `
+    <div class="stats-row">
+      ${statTile(approx + rub(t.discount_rub), "скидок, ₽", "accent")}
+      ${statTile(t.applied, "заказов с кодом", "ok")}
+      ${statTile(rub(t.revenue_rub), "выручка по ним, ₽", "")}
+    </div>
+    <div class="stats-row">
+      ${statTile(t.free, "бесплатных", "")}
+      ${statTile(t.reserved, "ждут оплаты", "")}
+      ${statTile(`${t.unused} из ${t.codes}`, "кодов не использовано", "")}
+    </div>
+    <div class="promo-note">
+      Считаются оплаченные и бесплатные заказы. Заказы, ожидающие оплаты, и вернувшиеся (окно оплаты закрыли)
+      в рубли не входят.${t.estimated > 0
+        ? ` У ${t.estimated} заказов, оформленных до появления отчёта, скидка посчитана по текущей цене ${rub(data.price_rub)} ₽: сумма приблизительная.`
+        : ""}
+    </div>`;
+
+  renderPromoUnused(data.codes);
+  renderPromoCodes(data.codes);
+  renderPromoRecent(data);
+}
+
+function renderPromoUnused(codes) {
+  elReport.unusedCard.style.display = codes.length ? "" : "none";
+  const unused = codes.filter((c) => c.unused);
+  // Сначала те, что ещё можно раздать
+  unused.sort((a, b) => (b.status === "active") - (a.status === "active"));
+  const alive = unused.filter((c) => c.status === "active").length;
+  elReport.unusedLabel.textContent = `Не использованы (${unused.length})`;
+
+  if (unused.length === 0) {
+    elReport.unused.innerHTML = `<div class="promo-note" style="margin-top:0;">Каждый код хотя бы раз применяли или он ждёт оплаты.</div>`;
+    return;
+  }
+  const tags = unused.map((c) => {
+    const live = c.status === "active";
+    const text = `${c.code} · ${promoDiscountText(c)}${live ? "" : ` · ${PROMO_STATUS_LABEL[c.status] || c.status}`}`;
+    return `<button type="button" class="promo-tag${live ? "" : " promo-tag--dead"}" data-code="${esc(c.code)}">${esc(text)}</button>`;
+  }).join("");
+  const hint = alive
+    ? `Нажмите на код, чтобы скопировать.${alive < unused.length ? " Серые применить уже нельзя." : ""}`
+    : "Все они уже недействительны: истекли, отключены или исчерпаны.";
+  elReport.unused.innerHTML = `<div class="promo-tags">${tags}</div><div class="promo-note">${esc(hint)}</div>`;
+}
+elReport.unused.addEventListener("click", (e) => {
+  const tag = e.target.closest(".promo-tag");
+  if (tag) copyText(tag.dataset.code);
+});
+
+function renderPromoCodes(codes) {
+  if (codes.length === 0) {
+    elReport.codes.innerHTML = `<div class="empty-state">Промокодов нет — выдайте первый на вкладке «Коды»</div>`;
+    return;
+  }
+  elReport.codes.innerHTML = "";
+  codes.forEach((c) => {
+    const live = c.status === "active";
+    const card = document.createElement("div");
+    // подсветка: неиспользованный действующий код; приглушены только пропавшие впустую
+    card.className = "key-card" + (c.unused && live ? " key-card--unused" : "") + (c.unused && !live ? " key-card--inactive" : "");
+
+    const lines = [
+      `<strong>${esc(promoDiscountText(c))}</strong> · использовано ${c.used}${c.uses_total ? ` из ${c.uses_total}` : ""}`,
+      `Скидок на ${c.estimated ? "≈" : ""}${rub(c.discount_rub)} ₽ · выручка ${rub(c.revenue_rub)} ₽`,
+      c.last_used_at ? `Последнее применение: ${formatDate(c.last_used_at)}` : "Ещё не применяли",
+      (c.reserved || c.abandoned) ? `Ждут оплаты: ${c.reserved} · не оплачены: ${c.abandoned}` : "",
+      c.note ? esc(c.note) : "",
+    ].filter(Boolean);
+
+    const hasOrders = c.used + c.reserved + c.abandoned > 0;
+    card.innerHTML = `
+      <div class="key-head">
+        <span class="promo-code">${esc(c.code)}</span>
+        <span class="promo-head-tags">
+          ${c.unused ? `<span class="key-plan promo-st--unused">Не использован</span>` : ""}
+          <span class="key-plan promo-st--${esc(c.status)}">${esc(PROMO_STATUS_LABEL[c.status] || c.status)}</span>
+        </span>
+      </div>
+      <div class="key-meta">${lines.join("<br>")}</div>
+      ${hasOrders ? `<div class="promo-actions"><button class="btn btn--ghost" data-act="orders">Заказы с этим кодом</button></div>` : ""}
+    `;
+    const btn = card.querySelector('[data-act="orders"]');
+    if (btn) btn.addEventListener("click", async () => {
+      _promoReportCode  = c.code;
+      _promoReportLimit = PROMO_REPORT_PAGE;
+      await loadPromoReport();
+      if (elReport.recentHead.scrollIntoView) elReport.recentHead.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    elReport.codes.appendChild(card);
+  });
+}
+
+function renderPromoRecent(data) {
+  if (_promoReportCode) {
+    elReport.filter.style.display = "";
+    elReport.filter.innerHTML =
+      `<span>Код: <strong>${esc(_promoReportCode)}</strong></span><button class="btn btn--ghost" data-act="clear">Показать все</button>`;
+  } else {
+    elReport.filter.style.display = "none";
+    elReport.filter.innerHTML = "";
+  }
+
+  const recent = data.recent;
+  if (recent.length === 0) {
+    elReport.recent.innerHTML =
+      `<div class="empty-state">${_promoReportCode ? "С этим кодом заказов нет" : "Заказов с промокодом пока нет"}</div>`;
+  } else {
+    elReport.recent.innerHTML = "";
+    recent.forEach((r) => {
+      const free = r.amount_rub === 0;
+      const st   = PROMO_STATE[r.state] || { label: r.state, status: "expired" };
+      const label = r.state === "applied" && free ? "Бесплатно" : st.label;
+      const card = document.createElement("div");
+      card.className = `order-card order-card--${st.status}`;
+      card.innerHTML = `
+        <div class="order-head">
+          <span class="order-id">#${esc(String(r.order_id).slice(0, 6).toUpperCase())}</span>
+          <span class="order-status status--${st.status}">${esc(label)}</span>
+        </div>
+        <div class="order-meta">
+          <strong>${esc(r.code)}</strong> · ${r.state === "applied" ? "скидка" : "скидка при оплате"} ${rub(r.discount_rub)} ₽ ·
+          ${free ? "бесплатно" : `к оплате ${rub(r.amount_rub)} ₽`}<br>
+          Оформлен: ${formatDate(r.created_at)}<br>
+          ${r.paid_at && !free ? `Оплачен: ${formatDate(r.paid_at)}<br>` : ""}
+          ${esc(r.size_key || "—")}${r.ref_code ? ` · реферал ${esc(r.ref_code)}` : ""}<br>
+          <span style="font-size:11px;color:var(--ink-3);">${esc(r.order_id)}</span>
+        </div>`;
+      elReport.recent.appendChild(card);
+    });
+  }
+
+  // Список упёрся в limit: можно показать больше
+  elReport.more.innerHTML = "";
+  if (recent.length >= data.recent_limit) {
+    if (data.recent_limit < PROMO_REPORT_MAX) {
+      elReport.more.innerHTML = `<button class="btn btn--ghost" data-act="more">Показать ещё</button>`;
+    } else {
+      elReport.more.innerHTML = `<div class="promo-note">Показаны последние ${data.recent_limit} заказов.${_promoReportCode ? "" : " Чтобы увидеть остальные, выберите код."}</div>`;
+    }
+  }
+}
+elReport.filter.addEventListener("click", (e) => {
+  if (!e.target.closest('[data-act="clear"]')) return;
+  _promoReportCode  = null;
+  _promoReportLimit = PROMO_REPORT_PAGE;
+  loadPromoReport();
+});
+elReport.more.addEventListener("click", (e) => {
+  if (!e.target.closest('[data-act="more"]')) return;
+  _promoReportLimit = Math.min(PROMO_REPORT_MAX, _promoReportLimit + PROMO_REPORT_PAGE);
+  loadPromoReport();
+});
 
 /* =====================================================================
    УВЕДОМЛЕНИЯ НА УСТРОЙСТВЕ (Web Push, service worker /admin/sw.js)

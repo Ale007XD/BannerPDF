@@ -57,6 +57,7 @@ _COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("web_orders", "amended_at", "TEXT"),
     ("web_orders", "original_config_json", "TEXT"),
     ("web_orders", "promo_released_at", "TEXT"),
+    ("web_orders", "discount_rub", "INTEGER"),
     ("promo_codes", "uses_total", "INTEGER"),
     ("promo_codes", "created_at", "TEXT"),
     ("promo_codes", "note", "TEXT"),

@@ -359,8 +359,8 @@ async def create_order(
                 """
                 INSERT INTO web_orders
                   (id, amount_rub, size_key, ref_code, promo_code, config_json, status, created_at,
-                   offer_version, accepted_at, accepted_ip, accepted_ua)
-                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+                   offer_version, accepted_at, accepted_ip, accepted_ua, discount_rub)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     order_id,
@@ -374,6 +374,8 @@ async def create_order(
                     now_iso,
                     _client_ip(request),
                     request.headers.get("user-agent", "")[:_MAX_UA_LEN],
+                    # цена фиксируется в заказе: отчёт по промокодам не зависит от будущей смены цены
+                    max(0, SITE_PDF_PRICE - amount_rub),
                 ),
             )
     except Exception:

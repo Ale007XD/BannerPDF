@@ -66,7 +66,10 @@ CREATE TABLE IF NOT EXISTS web_orders (
     amended_at          TEXT,                 -- UTC; NOT NULL = правка использована
     original_config_json TEXT,                -- config_json до правки (для разбора споров)
     -- Использование промокода возвращено (платёж создать не удалось); защита от двойного возврата
-    promo_released_at   TEXT
+    promo_released_at   TEXT,
+    -- Сколько рублей скидки получил заказ: цена сайта на момент заказа минус amount_rub.
+    -- NULL у заказов до отчёта по промокодам: там скидка считается по текущей цене (promo_store.promo_report)
+    discount_rub        INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_orders_status  ON web_orders(status);

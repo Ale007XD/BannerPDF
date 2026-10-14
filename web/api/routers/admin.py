@@ -21,7 +21,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
 from ..db import get_db
-from ..routers.order import AMEND_WINDOW_HOURS, OrderStatus, transition
+from ..routers.order import AMEND_WINDOW_HOURS, SITE_PDF_PRICE, OrderStatus, transition
 from ..services import promo_store
 from ..services.api_key_store import create_api_key, deactivate_key, list_keys
 
@@ -394,6 +394,18 @@ async def admin_create_promo(body: CreatePromoRequest):
 async def admin_list_promos():
     """Все промокоды: остаток, оплаченные и ожидающие использования, статус."""
     return {"promos": promo_store.list_promos()}
+
+
+@router.get("/admin/promo/report", dependencies=[Depends(require_admin)])
+async def admin_promo_report(
+    code:  str | None = Query(None, max_length=20, description="Только заказы с этим кодом"),
+    limit: int        = Query(50, ge=1, le=200, description="Сколько последних заказов вернуть"),
+):
+    """
+    Отчёт по промокодам: итоги, рубли скидок, неиспользованные коды, последние заказы с кодом.
+    """
+    code = code.strip().upper() if code and code.strip() else None
+    return promo_store.promo_report(list_price_rub=SITE_PDF_PRICE, code=code, limit=limit)
 
 
 @router.post("/admin/promo/{code}/active", dependencies=[Depends(require_admin)])

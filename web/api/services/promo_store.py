@@ -300,22 +300,25 @@ def list_promos() -> list[dict]:
     Все коды, новые выше. `used` — оплаченные заказы с этим кодом,
     `reserved` — заказы, ожидающие оплаты, у которых использование не возвращено.
     """
-    now_iso = _now().isoformat()
     with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT p.code, p.discount, p.uses_left, p.uses_total, p.expires_at, p.active,
-                   p.note, p.created_at,
-                   (SELECT COUNT(*) FROM web_orders o
-                     WHERE o.promo_code = p.code
-                       AND o.status IN ('paid', 'token_issued')) AS used,
-                   (SELECT COUNT(*) FROM web_orders o
-                     WHERE o.promo_code = p.code AND o.status = 'pending'
-                       AND o.promo_released_at IS NULL) AS reserved
-            FROM promo_codes p
-            ORDER BY (p.created_at IS NULL), p.created_at DESC, p.code
-            """
-        ).fetchall()
+        return _promo_rows(conn, _now().isoformat())
+
+
+def _promo_rows(conn: sqlite3.Connection, now_iso: str) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT p.code, p.discount, p.uses_left, p.uses_total, p.expires_at, p.active,
+               p.note, p.created_at,
+               (SELECT COUNT(*) FROM web_orders o
+                 WHERE o.promo_code = p.code
+                   AND o.status IN ('paid', 'token_issued')) AS used,
+               (SELECT COUNT(*) FROM web_orders o
+                 WHERE o.promo_code = p.code AND o.status = 'pending'
+                   AND o.promo_released_at IS NULL) AS reserved
+        FROM promo_codes p
+        ORDER BY (p.created_at IS NULL), p.created_at DESC, p.code
+        """
+    ).fetchall()
 
     return [
         {
@@ -336,6 +339,145 @@ def list_promos() -> list[dict]:
         }
         for r in rows
     ]
+
+
+_REPORT_MAX_LIMIT = 200
+
+
+def promo_report(*, list_price_rub: int, code: str | None = None, limit: int = 50) -> dict:
+    """
+    Отчёт по промокодам для админки: итоги, цифры по каждому коду, последние заказы.
+
+    «Применён» — заказ оплачен (paid / token_issued): только такие идут в рубли скидок
+    и выручку. Заказ в ожидании оплаты (`reserved`) держит использование, но денег ещё нет.
+    Остальные заказы с кодом (`abandoned`) — окно оплаты закрыли или прошёл час,
+    использование вернулось.
+
+    Рубли скидки берутся из web_orders.discount_rub (цена сайта на момент заказа).
+    У заказов до появления колонки она NULL: для них скидка считается как
+    `list_price_rub - amount_rub` по сегодняшней цене, таких заказов столько,
+    сколько в `totals.estimated` — если цена менялась, их рубли приблизительные.
+
+    Заказы анонимны (аккаунтов нет), поэтому «кто» — это заказ: id, размер, реф-код.
+    IP и User-Agent есть только в аудите конкретного заказа (/admin/order/{id}/audit).
+
+    `code` сужает список `recent` до одного кода; на цифры по кодам не влияет.
+    Возвращает {price_rub, totals, codes, recent, recent_limit}.
+    """
+    limit = max(1, min(int(limit), _REPORT_MAX_LIMIT))
+    now_iso = _now().isoformat()
+    # Заказ «применён», если оплачен; цена скидки одна и та же во всех запросах ниже
+    discount_sql = "MAX(0, COALESCE(discount_rub, :price - amount_rub))"
+    params = {"price": list_price_rub}
+
+    with get_db() as conn:
+        promos = _promo_rows(conn, now_iso)
+
+        agg = {
+            r["promo_code"]: r
+            for r in conn.execute(
+                f"""
+                SELECT promo_code,
+                       SUM(CASE WHEN status IN ('paid', 'token_issued') THEN 1 ELSE 0 END)
+                           AS used,
+                       SUM(CASE WHEN status IN ('paid', 'token_issued') AND amount_rub = 0
+                                THEN 1 ELSE 0 END) AS free,
+                       SUM(CASE WHEN status = 'pending' AND promo_released_at IS NULL
+                                THEN 1 ELSE 0 END) AS reserved,
+                       SUM(CASE WHEN status IN ('paid', 'token_issued') THEN amount_rub
+                                ELSE 0 END) AS revenue_rub,
+                       SUM(CASE WHEN status IN ('paid', 'token_issued') THEN {discount_sql}
+                                ELSE 0 END) AS discount_rub,
+                       SUM(CASE WHEN status IN ('paid', 'token_issued') AND discount_rub IS NULL
+                                THEN 1 ELSE 0 END) AS estimated,
+                       COUNT(*) AS total,
+                       MAX(CASE WHEN status IN ('paid', 'token_issued')
+                                THEN COALESCE(paid_at, created_at) END) AS last_used_at
+                FROM web_orders
+                WHERE promo_code IS NOT NULL
+                GROUP BY promo_code
+                """,
+                params,
+            )
+        }
+
+        recent_params = {**params, "limit": limit}
+        recent_where = ""
+        if code:
+            recent_where = "AND promo_code = :code"
+            recent_params["code"] = code
+        recent_rows = conn.execute(
+            f"""
+            SELECT id, promo_code, status, amount_rub, size_key, ref_code, created_at, paid_at,
+                   promo_released_at, {discount_sql} AS discount_rub
+            FROM web_orders
+            WHERE promo_code IS NOT NULL {recent_where}
+            ORDER BY created_at DESC, id
+            LIMIT :limit
+            """,
+            recent_params,
+        ).fetchall()
+
+    codes = []
+    for p in promos:
+        a = agg.get(p["code"])
+        used = a["used"] if a else 0
+        reserved = a["reserved"] if a else 0
+        total = a["total"] if a else 0
+        codes.append({
+            **p,
+            "free":         a["free"] if a else 0,
+            "abandoned":    total - used - reserved,
+            "revenue_rub":  a["revenue_rub"] if a else 0,
+            "discount_rub": a["discount_rub"] if a else 0,
+            "estimated":    a["estimated"] if a else 0,
+            "last_used_at": a["last_used_at"] if a else None,
+            # не использован: ни оплаты, ни заказа, который сейчас держит использование
+            "unused":       used == 0 and reserved == 0,
+        })
+
+    totals = {
+        "codes":         len(codes),
+        "active":        sum(1 for c in codes if c["status"] == "active"),
+        "unused":        sum(1 for c in codes if c["unused"]),
+        "unused_active": sum(1 for c in codes if c["unused"] and c["status"] == "active"),
+        "applied":       sum(c["used"] for c in codes),
+        "free":          sum(c["free"] for c in codes),
+        "reserved":      sum(c["reserved"] for c in codes),
+        "abandoned":     sum(c["abandoned"] for c in codes),
+        "revenue_rub":   sum(c["revenue_rub"] for c in codes),
+        "discount_rub":  sum(c["discount_rub"] for c in codes),
+        "estimated":     sum(c["estimated"] for c in codes),
+    }
+
+    recent = []
+    for r in recent_rows:
+        if r["status"] in ("paid", "token_issued"):
+            state = "applied"
+        elif r["status"] == "pending" and r["promo_released_at"] is None:
+            state = "reserved"
+        else:
+            state = "released"
+        recent.append({
+            "order_id":     r["id"],
+            "code":         r["promo_code"],
+            "state":        state,
+            "status":       r["status"],
+            "amount_rub":   r["amount_rub"],
+            "discount_rub": r["discount_rub"],
+            "size_key":     r["size_key"],
+            "ref_code":     r["ref_code"],
+            "created_at":   r["created_at"],
+            "paid_at":      r["paid_at"],
+        })
+
+    return {
+        "price_rub":    list_price_rub,
+        "totals":       totals,
+        "codes":        codes,
+        "recent":       recent,
+        "recent_limit": limit,
+    }
 
 
 def set_active(code: str, active: bool) -> bool:

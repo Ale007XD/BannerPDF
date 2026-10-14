@@ -341,6 +341,7 @@ class TestAdminAuth:
         for method, url, body in [
             ("POST", "/api/admin/promo", {"discount": 30, "uses": 1}),
             ("GET",  "/api/admin/promo", None),
+            ("GET",  "/api/admin/promo/report", None),
             ("POST", "/api/admin/promo/ANY/active", {"active": False}),
         ]:
             resp = await client.request(method, url, json=body)
