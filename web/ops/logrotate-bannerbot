@@ -1,0 +1,17 @@
+# Хранение журналов nginx: 14 дней (как в политике обработки данных, см. /privacy/).
+# Установка на сервере (нужен root):
+#   sudo cp web/ops/logrotate-bannerbot /etc/logrotate.d/bannerbot
+#   sudo logrotate -d /etc/logrotate.d/bannerbot     # пробный прогон без изменений
+# В access.log адреса уже сокращены до сети /24 (см. nginx.conf: map $remote_addr_anon).
+/var/log/nginx/access.log /var/log/nginx/error.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    sharedscripts
+    postrotate
+        docker kill --signal=USR1 bannerprint_nginx >/dev/null 2>&1 || true
+    endscript
+}
