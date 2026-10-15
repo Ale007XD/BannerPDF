@@ -33,7 +33,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..db import get_db
-from ..services import promo_store, stat_store
+from ..services import partner_store, promo_store, stat_store
 from ..services.config import BANNER_SIZES
 from ..services.conversions import record_order_event
 from ..services.order_store import save_pending
@@ -142,6 +142,15 @@ def transition(order_id: str, event: str) -> OrderStatus:
         except Exception:
             logger.exception("Не удалось взять обратно использование промокода по заказу %s", order_id)
 
+    # Вознаграждение партнёра-типографии за оплаченный заказ. Здесь, а не в webhook: сюда приходят
+    # и оплата ЮKassa, и ручная выдача (force_token), и бесплатный заказ (у него сумма 0, начислять нечего).
+    # Идемпотентно (UNIQUE order_id); сбой не пробрасываем: заказ уже оплачен, начисление можно досчитать.
+    if to_status == OrderStatus.PAID:
+        try:
+            partner_store.accrue_for_order(order_id)
+        except Exception:
+            logger.exception("Не удалось начислить вознаграждение партнёру по заказу %s", order_id)
+
     logger.info("FSM %s: %s → %s (событие=%s)", order_id, from_status, to_status, event)
     return OrderStatus(to_status)
 
@@ -171,6 +180,9 @@ class OrderRequest(BaseModel):
     height_mm:  Optional[int] = Field(None, ge=100, le=3000)
     ref_code:   Optional[str] = None
     promo_code: Optional[str] = None
+    # Партнёр-типография (брендированная страница ?partner=<code>). Неизвестный или отключённый
+    # партнёр не ошибка: заказ проходит как обычный
+    partner_code: Optional[str] = None
     # Явный акцепт на экране проверки макета (чекбокс «проверил(а), принимаю условия»)
     accept_terms: bool = False
     # Метка входа для статистики (страница сайта или yandex / google / direct), не персональные данные
@@ -197,6 +209,12 @@ class OrderRequest(BaseModel):
         if not re.match(r"^[A-Z0-9]{8}$", v):
             raise ValueError("ref_code должен содержать 8 символов A-Z0-9")
         return v
+
+    @field_validator("partner_code")
+    @classmethod
+    def validate_partner_code(cls, v):
+        # Мусор вместо кода не должен ломать покупку: просто не считаем заказ партнёрским
+        return partner_store.normalize_code(v)
 
     @field_validator("promo_code")
     @classmethod
@@ -344,6 +362,12 @@ async def create_order(
     config["text_lines"] = sanitize_text_lines(config["text_lines"])
     config["entry"] = req.entry
 
+    # --- Партнёр-типография: только действующий. У одной оплаты один получатель вознаграждения,
+    # поэтому при партнёрском заказе реферальный код бота в заказ не пишем ---
+    partner = partner_store.get_active_partner(req.partner_code)
+    partner_code = partner["code"] if partner else None
+    ref_code = None if partner_code else req.ref_code
+
     # --- Промокод: атомарно резервируем одно использование (скидка любого размера) ---
     promo_discount = 0
     applied_promo: Optional[str] = None
@@ -371,14 +395,14 @@ async def create_order(
                 """
                 INSERT INTO web_orders
                   (id, amount_rub, size_key, ref_code, promo_code, config_json, status, created_at,
-                   offer_version, accepted_at, accepted_ip, accepted_ua, discount_rub)
-                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
+                   offer_version, accepted_at, accepted_ip, accepted_ua, discount_rub, partner_code)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     order_id,
                     amount_rub,
                     req.size_key or "custom",
-                    req.ref_code,
+                    ref_code,
                     applied_promo,
                     config_str,
                     now_iso,
@@ -388,6 +412,7 @@ async def create_order(
                     request.headers.get("user-agent", "")[:_MAX_UA_LEN],
                     # цена фиксируется в заказе: отчёт по промокодам не зависит от будущей смены цены
                     max(0, SITE_PDF_PRICE - amount_rub),
+                    partner_code,
                 ),
             )
     except Exception:

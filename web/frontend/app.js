@@ -1027,7 +1027,13 @@ el.confirmOpenTerms.addEventListener("click", () => openModal("modal-terms"));
 el.confirmPay.addEventListener("click", () => {
   if (!el.confirmCheck.checked || !pendingConfig) return;
   hideModal(el.modalConfirm);
-  createOrder({ ...pendingConfig, accept_terms: true, entry: typeof trackEntry === "function" ? trackEntry() : "" });
+  createOrder({
+    ...pendingConfig,
+    accept_terms: true,
+    entry: typeof trackEntry === "function" ? trackEntry() : "",
+    // типография-партнёр (partner.js): только когда её брендинг получен и уведомление на этом экране показано
+    partner_code: window.Partner ? window.Partner.orderCode() : undefined,
+  });
 });
 
 async function createOrder(payload) {
@@ -1349,6 +1355,7 @@ async function downloadPdf(token) {
     hideModal(el.modalWait);
     rememberPaidOrder();
     el.amendOpen.classList.toggle("hidden", !state.orderId || state.amendUsed);
+    if (window.Partner) window.Partner.decorateSuccess(state.orderId);   // «копия ушла в типографию, номер заказа …»
     showModal(el.modalSuccess);
   } catch (e) {
     hideModal(el.modalWait);

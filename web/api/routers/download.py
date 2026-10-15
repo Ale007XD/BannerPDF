@@ -14,11 +14,12 @@ GS вызывается через ProcessPoolExecutor (CPU-bound).
 import asyncio
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import Response
 
 from ..db import get_db
 from ..services.conversions import record_order_event
+from ..services.partner_delivery import deliver_order_pdf
 from ..services.renderer import get_executor, render_pdf_sync
 from ..services.token_store import peek_token, record_download
 
@@ -30,7 +31,7 @@ _TOKEN_INVALID_DETAIL = "Ссылка недействительна, истек
 
 
 @router.get("/download/{token}")
-async def download_pdf(token: str):
+async def download_pdf(token: str, background: BackgroundTasks):
     """
     Выдаёт PDF по download-токену.
 
@@ -38,6 +39,8 @@ async def download_pdf(token: str):
     2. Достаёт config_json из web_orders (постоянное хранилище)
     3. Рендерит PDF через ProcessPoolExecutor (Ghostscript)
     4. Фиксирует выдачу (record_download) и отдаёт как attachment
+    5. Партнёрский заказ: после ответа клиенту отправляет этот же PDF на почту типографии
+       (services/partner_delivery.py; сбой отправки клиента не затрагивает)
 
     Если шаг 3 упал — токен остаётся действительным, клиент может повторить.
     """
@@ -48,7 +51,7 @@ async def download_pdf(token: str):
     # Читаем конфиг из web_orders (постоянное хранение)
     with get_db() as conn:
         row = conn.execute(
-            "SELECT config_json, size_key FROM web_orders WHERE id = ?",
+            "SELECT config_json, size_key, partner_code FROM web_orders WHERE id = ?",
             (order_id,),
         ).fetchone()
 
@@ -95,6 +98,12 @@ async def download_pdf(token: str):
     filename = f"banner_{size_key}_{order_id[:8]}.pdf"
 
     logger.info("PDF выдан: заказ=%s размер=%s bytes=%d", order_id, row["size_key"], len(pdf_bytes))
+
+    if row["partner_code"]:
+        background.add_task(
+            deliver_order_pdf,
+            order_id, row["partner_code"], row["size_key"], row["config_json"], pdf_bytes,
+        )
 
     return Response(
         content=pdf_bytes,

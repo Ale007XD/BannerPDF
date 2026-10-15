@@ -69,7 +69,10 @@ CREATE TABLE IF NOT EXISTS web_orders (
     promo_released_at   TEXT,
     -- Сколько рублей скидки получил заказ: цена сайта на момент заказа минус amount_rub.
     -- NULL у заказов до отчёта по промокодам: там скидка считается по текущей цене (promo_store.promo_report)
-    discount_rub        INTEGER
+    discount_rub        INTEGER,
+    -- Партнёр-типография, с чьей брендированной страницы пришёл заказ (partners.code); NULL = обычный заказ.
+    -- Не путать с ref_code: тот — 8-символьный код реферальной программы бота (15% от суммы)
+    partner_code        TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_orders_status  ON web_orders(status);
@@ -155,6 +158,50 @@ CREATE TABLE IF NOT EXISTS referrals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id);
+
+-- ------------------------------------------------------------
+-- Партнёры-типографии (services/partner_store.py)
+-- Брендированная страница конструктора: bannerbot.ru/?partner=<code>.
+-- Типография получает фиксированное вознаграждение за каждый оплаченный заказ
+-- и копию готового PDF на свою почту. Клиенты по-прежнему анонимны.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS partners (
+    code       TEXT    PRIMARY KEY,         -- slug a-z0-9-, 2..32 символа; уходит в ссылку
+    name       TEXT    NOT NULL,            -- название для шапки страницы
+    email      TEXT    NOT NULL,            -- служебный адрес типографии (юрлицо/ИП), куда уходит макет; на сайт не отдаётся
+    logo_url   TEXT,                        -- /partners/<файл> (web/frontend/partners/); NULL = в шапке название текстом
+    accent     TEXT,                        -- #rrggbb основного цвета интерфейса; NULL = цвет сайта
+    reward_rub INTEGER NOT NULL DEFAULT 100,-- вознаграждение за оплаченный заказ (не больше суммы заказа)
+    active     INTEGER NOT NULL DEFAULT 1,  -- 0 = страница не брендируется, макеты не отправляются
+    created_at TEXT    NOT NULL
+);
+
+-- Начисления: одна строка на оплаченный заказ (UNIQUE = идемпотентность).
+-- Баланс не хранится, а считается как SUM по строкам с paid_out_at IS NULL: расхождение невозможно.
+CREATE TABLE IF NOT EXISTS partner_accruals (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    partner_code TEXT    NOT NULL REFERENCES partners(code),
+    order_id     TEXT    NOT NULL UNIQUE,
+    order_amount INTEGER NOT NULL,          -- сколько заплатил клиент
+    reward_rub   INTEGER NOT NULL,          -- сколько начислено партнёру
+    created_at   TEXT    NOT NULL,          -- момент оплаты (месяц отчёта)
+    paid_out_at  TEXT                       -- NULL = ещё не выплачено
+);
+
+CREATE INDEX IF NOT EXISTS idx_partner_accruals_partner ON partner_accruals(partner_code, paid_out_at);
+
+-- Отправка макета на почту партнёра: одна строка на (заказ, версия макета).
+-- После бесплатной правки текста версия другая, и типография получает исправленный файл.
+CREATE TABLE IF NOT EXISTS partner_deliveries (
+    order_id     TEXT NOT NULL,
+    config_hash  TEXT NOT NULL,             -- sha256 config_json
+    partner_code TEXT NOT NULL,
+    created_at   TEXT NOT NULL,             -- когда занято право на отправку
+    sent_at      TEXT,                      -- NULL = отправка идёт или не удалась
+    error        TEXT,                      -- причина последнего сбоя; NOT NULL при sent_at IS NULL = сбой, повтор возможен
+    attempts     INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (order_id, config_hash)
+);
 
 -- ------------------------------------------------------------
 -- Подписки Web Push: устройства админа, на которые уходят уведомления о заказах

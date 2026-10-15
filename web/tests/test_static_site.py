@@ -287,7 +287,7 @@ class TestIndexHtml:
                 assert word not in html, f"{name}: заявление «{word}» не подтверждено файлом"
 
     def test_css_version_bumped_for_new_rules(self):
-        assert "style.css?v=20" in INDEX
+        assert "style.css?v=21" in INDEX
 
 
 # ---------------------------------------------------------------------------
@@ -677,7 +677,7 @@ class TestPaymentPathLatency:
 
     def test_loader_style_exists_and_assets_bumped(self):
         assert ".pay-loading" in CSS
-        assert "app.js?v=26" in INDEX
+        assert "app.js?v=27" in INDEX
 
 
 class TestPromoCheckWiring:

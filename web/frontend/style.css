@@ -93,6 +93,56 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* ---- Брендирование под типографию-партнёра (partner.js, ?partner=…) ---- */
+/* Пока идёт запрос брендинга, логотип BannerBot скрыт: иначе он мигает перед логотипом типографии */
+html.partner-pending .site-header .logo { visibility: hidden; }
+
+/* Логотип партнёра на белой плашке: читается на тёмной шапке при любых цветах логотипа */
+.logo--partner {
+  display: inline-flex;
+  align-items: center;
+  max-width: 62vw;
+  padding: 4px 12px;
+  background: #fff;
+  border-radius: 8px;
+}
+.logo--partner img {
+  display: block;
+  max-height: 28px;
+  max-width: 100%;
+  width: auto;
+}
+.logo--partner .logo-name {
+  color: var(--ink);
+  font-size: 14px;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Кто продавец: страница типографии, а платёж принимает BannerBot */
+.partner-strip {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 20px 8px;
+  font-family: 'Onest', system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #d8d6d0;
+}
+.partner-strip a { color: #fff; text-decoration: underline; }
+
+.confirm-partner {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--accent2);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 /* ---- Заголовок страницы (H1): компактная строка под шапкой ---- */
 .page-title {
   max-width: 960px;

@@ -29,6 +29,7 @@ from .routers import (
     corp_api,
     download,
     order,
+    partner,
     payment,
     preview,
     promo,
@@ -134,6 +135,7 @@ app.include_router(preview.router,  prefix="/api")
 app.include_router(order.router,    prefix="/api")
 app.include_router(payment.router,  prefix="/api")
 app.include_router(promo.router,    prefix="/api")
+app.include_router(partner.router,  prefix="/api")
 app.include_router(download.router, prefix="/api")
 app.include_router(admin.router,    prefix="/api")
 app.include_router(stat.router,     prefix="/api")

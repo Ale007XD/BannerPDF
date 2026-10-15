@@ -1,0 +1,168 @@
+"""
+partner.py
+~~~~~~~~~~
+Партнёры-типографии: брендированная страница конструктора, вознаграждение, отправка макета.
+
+Публичное:
+  GET  /api/partner/{code}  — название, логотип и цвет для брендирования (без почты и ставки)
+
+Админка (Bearer ADMIN_TOKEN):
+  POST /api/admin/partners                                  — создать партнёра
+  GET  /api/admin/partners                                  — список с суммами к выплате
+  POST /api/admin/partners/{code}/active                    — включить / отключить
+  GET  /api/admin/partners/report?month=ГГГГ-ММ             — сводка за месяц
+  POST /api/admin/partners/{code}/payout                    — отметить выплаченным (всё или до конца месяца)
+  POST /api/admin/partners/deliveries/{order_id}/resend     — повторить отправку макета на почту партнёра
+
+Ссылка для типографии: https://bannerbot.ru/?partner=<code>
+"""
+
+import asyncio
+import json
+import logging
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import BaseModel
+
+from ..db import get_db
+from ..routers.admin import require_admin
+from ..services import mailer, partner_delivery, partner_store
+from ..services.renderer import get_executor, render_pdf_sync
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+_PAID_STATUSES = ("paid", "token_issued")
+
+
+def _http_error(e: partner_store.PartnerError) -> HTTPException:
+    if isinstance(e, partner_store.PartnerNotFound):
+        return HTTPException(status_code=404, detail=str(e))
+    if isinstance(e, partner_store.PartnerExists):
+        return HTTPException(status_code=409, detail=str(e))
+    return HTTPException(status_code=422, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Публичное
+# ---------------------------------------------------------------------------
+@router.get("/partner/{code}")
+async def partner_branding(code: str, response: Response):
+    """
+    Данные для брендирования страницы конструктора.
+    404 для неизвестного или отключённого партнёра: страница остаётся обычной.
+    delivers — уходит ли макет на почту типографии (почта настроена на сервере).
+    """
+    data = partner_store.public_branding(code)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Партнёр не найден")
+    data["delivers"] = mailer.is_configured()
+    response.headers["Cache-Control"] = "public, max-age=300"
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Админка
+# ---------------------------------------------------------------------------
+class CreatePartnerRequest(BaseModel):
+    code:       str
+    name:       str
+    email:      str
+    logo_url:   Optional[str] = None
+    accent:     Optional[str] = None
+    reward_rub: int = partner_store.DEFAULT_REWARD_RUB
+
+
+class ActiveRequest(BaseModel):
+    active: bool
+
+
+class PayoutRequest(BaseModel):
+    # ГГГГ-ММ: выплатить начисления, созданные до конца этого месяца. Не задан = все невыплаченные
+    month: Optional[str] = None
+
+
+@router.post("/admin/partners", dependencies=[Depends(require_admin)])
+async def admin_create_partner(body: CreatePartnerRequest):
+    try:
+        partner = partner_store.create_partner(
+            body.code, body.name, body.email, body.logo_url, body.accent, body.reward_rub,
+        )
+    except partner_store.PartnerError as e:
+        raise _http_error(e) from None
+    return {**partner, "link": f"https://bannerbot.ru/?partner={partner['code']}"}
+
+
+@router.get("/admin/partners", dependencies=[Depends(require_admin)])
+async def admin_list_partners():
+    return {"mail_configured": mailer.is_configured(), "partners": partner_store.list_partners()}
+
+
+@router.get("/admin/partners/report", dependencies=[Depends(require_admin)])
+async def admin_partner_report(month: Optional[str] = None):
+    month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+    try:
+        return partner_store.month_report(month)
+    except partner_store.PartnerError as e:
+        raise _http_error(e) from None
+
+
+@router.post("/admin/partners/{code}/active", dependencies=[Depends(require_admin)])
+async def admin_set_partner_active(code: str, body: ActiveRequest):
+    norm = partner_store.normalize_code(code)
+    if norm is None or not partner_store.set_active(norm, body.active):
+        raise HTTPException(status_code=404, detail="Партнёр не найден")
+    return {"code": norm, "active": body.active}
+
+
+@router.post("/admin/partners/{code}/payout", dependencies=[Depends(require_admin)])
+async def admin_partner_payout(code: str, body: Optional[PayoutRequest] = None):
+    norm = partner_store.normalize_code(code)
+    if norm is None:
+        raise HTTPException(status_code=404, detail="Партнёр не найден")
+    try:
+        result = partner_store.mark_paid_out(norm, body.month if body else None)
+    except partner_store.PartnerError as e:
+        raise _http_error(e) from None
+    return {"code": norm, **result}
+
+
+@router.post("/admin/partners/deliveries/{order_id}/resend", dependencies=[Depends(require_admin)])
+async def admin_resend_delivery(order_id: str):
+    """
+    Заново рендерит оплаченный партнёрский заказ и отправляет макет на почту типографии.
+    Нужен, если письмо не ушло (почта была не настроена, сбой SMTP) или адрес партнёра сменился.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status, partner_code, size_key, config_json FROM web_orders WHERE id = ?",
+            (order_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Заказ не найден")
+    if not row["partner_code"]:
+        raise HTTPException(status_code=409, detail="Заказ не партнёрский")
+    if row["status"] not in _PAID_STATUSES:
+        raise HTTPException(status_code=409, detail="Заказ не оплачен")
+    if not row["config_json"]:
+        # services/retention.py стирает текст макета через ORDER_PII_RETENTION_DAYS после оплаты
+        raise HTTPException(status_code=410, detail="Данные заказа удалены по истечении срока хранения: макет не восстановить")
+    if not mailer.is_configured():
+        raise HTTPException(status_code=503, detail="Почта не настроена (SMTP_HOST, SMTP_FROM)")
+
+    try:
+        config = json.loads(row["config_json"])
+        loop = asyncio.get_running_loop()
+        pdf_bytes = await loop.run_in_executor(get_executor(), render_pdf_sync, config)
+    except Exception as e:
+        logger.error("resend: ошибка рендеринга PDF для заказа %s: %s", order_id, e)
+        raise HTTPException(status_code=500, detail="Не удалось сформировать PDF") from None
+
+    sent = await partner_delivery.deliver_order_pdf(
+        order_id, row["partner_code"], row["size_key"], row["config_json"], pdf_bytes, force=True,
+    )
+    if not sent:
+        raise HTTPException(status_code=502, detail="Письмо не отправлено: причина в логе и в списке партнёров")
+    return {"order_id": order_id, "sent": True}

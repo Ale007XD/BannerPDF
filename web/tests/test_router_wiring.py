@@ -45,8 +45,8 @@ def test_reserve_list_has_no_stale_entries():
 
 def test_wiring_detector_sees_every_active_router():
     # защита самого теста: детектор не должен считать «неподключённым» живой роутер
-    for module in ("admin", "batch", "corp_api", "download", "order", "payment", "preview", "promo", "push",
-                   "referral", "tg_webhook"):
+    for module in ("admin", "batch", "corp_api", "download", "order", "partner", "payment", "preview", "promo",
+                   "push", "referral", "tg_webhook"):
         assert _is_wired(module), module
 
 

@@ -63,7 +63,9 @@
 }
   </script>
   <!-- SDK виджета ЮKassa подгружает app.js (loadYooKassaSdk); соединение открываем заранее -->
-  <link rel="stylesheet" href="style.css?v=20">
+  <link rel="stylesheet" href="style.css?v=21">
+  <!-- Брендирование под типографию-партнёра (?partner=…): блокирующий и маленький, чтобы логотип BannerBot не мигал -->
+  <script src="partner.js?v=1"></script>
   <style>
     /* ---- Кастомный размер ---- */
     .custom-size-block {
@@ -268,9 +270,10 @@
   <!-- ===================== ШАПКА ===================== -->
   <header class="site-header">
     <div class="header-inner">
-      <span class="logo">Banner<span class="logo-accent">Bot</span></span>
+      <span class="logo" id="site-logo">Banner<span class="logo-accent">Bot</span></span>
       <span class="header-badge">PDF 299 ₽</span>
     </div>
+    <div class="partner-strip hidden" id="partner-strip"></div>
   </header>
 
   <h1 class="page-title">Макет баннера для типографии онлайн — готовый PDF в CMYK</h1>
@@ -485,7 +488,7 @@
     <div class="modal">
       <div class="modal-icon modal-icon--ok">✓</div>
       <div class="modal-title">Готово!</div>
-      <div class="modal-text">PDF-файл скачивается.<br>Откройте его и передайте в типографию.</div>
+      <div class="modal-text" id="success-text">PDF-файл скачивается.<br>Откройте его и передайте в типографию.</div>
       <button class="modal-btn modal-btn--ghost hidden" id="amend-open">Нашли опечатку? Исправить текст (1 раз бесплатно)</button>
       <button class="modal-btn modal-btn--accent" id="success-close">Создать ещё</button>
     </div>
@@ -500,6 +503,7 @@
         <div class="confirm-lines" id="confirm-lines"></div>
         <dl class="confirm-meta" id="confirm-meta"></dl>
       </div>
+      <div class="confirm-partner hidden" id="confirm-partner"></div>
       <label class="confirm-check">
         <input type="checkbox" id="confirm-check">
         <span>Я проверил(а) текст и размер и принимаю условия
@@ -547,6 +551,7 @@
         <p>Оператор: Деловеров Алексей Тагирович (самозанятый), контакты — на странице <a href="/requisites.html">«Реквизиты и оплата»</a>. Регистрация на сайте не требуется, имя, телефон и адрес пользователя не запрашиваются.</p>
         <p>При оформлении заказа сохраняются: номер заказа, размер, сумма, введённый текст макета, а также время принятия условий соглашения, IP-адрес и User-Agent браузера. Они нужны для выполнения заказа и подтверждения принятия условий. Текст макета, IP-адрес и User-Agent удаляются через 14 дней после оплаты.</p>
         <p>Оплата проводится через ЮKassa: платёжные данные вводятся на стороне платёжного сервиса и на сайт не передаются.</p>
+        <p>Если конструктор открыт по ссылке типографии-партнёра, готовый PDF с вашим текстом после скачивания отправляется на почту этой типографии для печати. IP-адрес, User-Agent и платёжные данные ей не передаются. Подробности — в <a href="/privacy/">Политике обработки персональных данных</a>.</p>
         <p>Сайт не использует cookie и не подключает сторонние счётчики и шрифты. Посещения считает собственный счётчик: он хранит только суммарные числа за день и не сохраняет IP-адрес.</p>
         <p>Запросить сведения об обработке своих данных или их удаление можно письмом на электронную почту из раздела «Реквизиты и оплата». Подробности — в <a href="/privacy/">Политике обработки персональных данных</a>.</p>
       </div>
@@ -628,6 +633,6 @@
 
   <script src="kit.js?v=1"></script>
   <script src="prefill.js?v=1"></script>
-  <script src="app.js?v=26"></script>
+  <script src="app.js?v=27"></script>
 </body>
 </html>
