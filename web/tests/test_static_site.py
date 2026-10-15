@@ -677,7 +677,7 @@ class TestPaymentPathLatency:
 
     def test_loader_style_exists_and_assets_bumped(self):
         assert ".pay-loading" in CSS
-        assert "app.js?v=25" in INDEX
+        assert "app.js?v=26" in INDEX
 
 
 class TestPromoCheckWiring:

@@ -487,6 +487,7 @@ function bindFonts() {
    ===================================================================== */
 let _previewTimer = null;
 let _previewSeq   = 0;   // номер последнего запроса превью: ответы на устаревшие игнорируем
+let _previewTracked = false;
 
 function schedulePreview() {
   clearTimeout(_previewTimer);
@@ -543,7 +544,10 @@ async function fetchPreview(retry = 0) {
     const data = await resp.json();
     if (seq !== _previewSeq) return;
     showPreview(data.preview_base64, data.width_mm, data.height_mm);
-    if (typeof track === 'function') track('preview_generated');
+    if (!_previewTracked && typeof track === 'function') {
+      _previewTracked = true;   // одно событие на загрузку страницы, не на каждую перерисовку
+      track('preview_generated');
+    }
   } catch (e) {
     if (seq !== _previewSeq) return;
     hideLoader();
