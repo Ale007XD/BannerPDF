@@ -287,7 +287,7 @@ class TestIndexHtml:
                 assert word not in html, f"{name}: заявление «{word}» не подтверждено файлом"
 
     def test_css_version_bumped_for_new_rules(self):
-        assert "style.css?v=21" in INDEX
+        assert "style.css?v=22" in INDEX
 
 
 # ---------------------------------------------------------------------------
