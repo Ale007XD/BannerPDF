@@ -108,9 +108,12 @@ html.partner-pending .site-header .logo { visibility: hidden; }
 }
 .logo--partner img {
   display: block;
-  max-height: 28px;
-  max-width: 100%;
+  /* Фиксированная высота, а не max-height: SVG из CorelDRAW задан в миллиметрах (13×3.8 мм ≈ 49×14 px),
+     и max-height такой логотип не увеличивает: он остаётся мелким и нечитаемым */
+  height: 28px;
   width: auto;
+  max-width: 100%;
+  object-fit: contain;
 }
 .logo--partner .logo-name {
   color: var(--ink);

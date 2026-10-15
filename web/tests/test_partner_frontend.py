@@ -138,6 +138,14 @@ class TestWiring:
         for sel in ("html.partner-pending .site-header .logo", ".logo--partner", ".partner-strip", ".confirm-partner"):
             assert sel in CSS, sel
 
+    def test_logo_is_scaled_to_a_fixed_height(self):
+        # max-height не увеличивает SVG с маленьким родным размером (CorelDRAW задаёт мм): логотип 49x14 px нечитаем
+        rule = CSS[CSS.index(".logo--partner img {"):]
+        rule = rule[: rule.index("}")]
+        assert re.search(r"(?<![-\w])height:\s*28px", rule), rule
+        assert "max-height" not in re.sub(r"/\*.*?\*/", "", rule, flags=re.S), rule
+        assert "object-fit: contain" in rule  # при max-width логотип не растягивается
+
     def test_nginx_caches_partner_js_like_other_static(self):
         assert re.search(r"location ~ \^/\([^)]*partner\\\.js[^)]*\)\$ \{", NGINX)
 
