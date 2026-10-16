@@ -146,6 +146,22 @@ class TestWiring:
         assert "max-height" not in re.sub(r"/\*.*?\*/", "", rule, flags=re.S), rule
         assert "object-fit: contain" in rule  # при max-width логотип не растягивается
 
+    def test_partner_svg_logos_are_utf8_and_inert(self):
+        # CorelDRAW сохраняет SVG в UTF-16: Chromium такой файл в <img> читает, остальные браузеры не обязаны
+        import xml.etree.ElementTree as ET
+        svgs = sorted((FRONT / "partners").glob("*.svg"))
+        assert svgs, "нет ни одного SVG-логотипа"
+        for path in svgs:
+            raw = path.read_bytes()
+            assert not raw.startswith((b"\xff\xfe", b"\xfe\xff", b"\xef\xbb\xbf")), f"{path.name}: BOM, нужен UTF-8 без BOM"
+            text = raw.decode("utf-8")
+            assert re.search(r'<\?xml[^>]*encoding="UTF-8"', text), f"{path.name}: в объявлении XML нет encoding=UTF-8"
+            ET.fromstring(raw)  # well-formed
+            low = text.lower()
+            for bad in ("<script", "<foreignobject", "<image", "javascript:", "href=", "data:"):
+                assert bad not in low, f"{path.name}: {bad}"
+            assert not re.search(r"\son\w+\s*=", low), f"{path.name}: обработчик on*"
+
     def test_nginx_caches_partner_js_like_other_static(self):
         assert re.search(r"location ~ \^/\([^)]*partner\\\.js[^)]*\)\$ \{", NGINX)
 
