@@ -37,7 +37,7 @@
 |---|---|
 | Готовность | **99%** — сайт запущен, принимает боевые платежи |
 | URL | `https://bannerbot.ru` |
-| Что готово | Весь бэкенд (P0 закрыты), фронтенд (превью, кастомный размер, шрифты в кнопках, ЮКасса-виджет, промокоды), FSM заказов, E2E флоу оплаты (ЮКасса → webhook → PDF) + бесплатный флоу по промокоду, TG-уведомления (`@BannerBotInfo_bot`), корп. API с тарифом Trial, adminка, боевые ключи ЮКасса |
+| Что готово | Весь бэкенд (P0 закрыты), фронтенд (превью, кастомный размер, шрифты в кнопках, ЮКасса-виджет, промокоды), FSM заказов, E2E флоу оплаты (ЮКасса → webhook → PDF) + бесплатный флоу по промокоду, TG-уведомления (`@BannerBotInfo_bot`), корп. API с тарифом Trial, adminка, боевые ключи ЮКасса, партнёрский конструктор для типографий (брендирование, 100 ₽ за заказ, макет на почту типографии) |
 | Что осталось | Реферальные команды бота · тесты корп. API |
 
 ---
@@ -150,6 +150,7 @@ BannerPDF/
 │   │   │   ├── download.py       # GET /api/download/{token}
 │   │   │   ├── admin.py          # stats|orders|funnel + force_token + order audit + промокоды (выдача, список, отчёт)
 │   │   │   ├── promo.py          # POST /api/promo/check — скидка и цена по коду без списания
+│   │   │   ├── partner.py        # Партнёры-типографии: GET /api/partner/{code} + админка /api/admin/partners*
 │   │   │   ├── push.py           # /api/admin/push/* — подписка устройств админа (Web Push)
 │   │   │   ├── referral.py       # Реферальная программа
 │   │   │   ├── corp_api.py       # Корп. API (Trial + платные тарифы)
@@ -167,6 +168,9 @@ BannerPDF/
 │   │       ├── push_notify.py       # Web Push (VAPID) админу: push_new_order(), push_order_paid()
 │   │       ├── promo_store.py       # промокоды: reserve() атомарно, calc_amount(), release_*, create_promo()
 │   │       ├── referral_store.py    # accrue_commission() 15%
+│   │       ├── partner_store.py     # партнёры: create_partner(), accrue_for_order() (100 ₽), отчёт, выплаты, учёт отправок
+│   │       ├── partner_delivery.py  # deliver_order_pdf(): письмо с макетом типографии
+│   │       ├── mailer.py            # SMTP (стандартная библиотека), SMTP_* из env
 │   │       ├── api_key_store.py     # generate_key(), verify_key()
 │   │       ├── batch_worker.py      # asyncio.Queue + ProcessPoolExecutor
 │   │       └── tg_notify.py         # notify_new_order() → message_id, notify_order_paid()
@@ -175,6 +179,9 @@ BannerPDF/
 │   │   ├── index.html            # Конструктор + модалка #modal-pay (ЮКасса embedded-виджет)
 │   │   ├── style.css             # v7: mobile-first, sticky превью, двухколонка ≥820px
 │   │   ├── app.js                # v13: openYooKassaWidget(), поллинг, FONT_CSS_MAP, промокоды
+│   │   ├── partner.js            # Брендирование под типографию (?partner=<code>), уведомление о передаче макета
+│   │   ├── prefill.js            # Предзаполнение конструктора из адреса (?size=&text1=&bg=&color=&font=)
+│   │   ├── partners/             # Логотипы типографий (SVG в UTF-8 / PNG), раздаются как /partners/<файл>
 │   │   └── admin/
 │   │       ├── index.html        # Adminка: заказы, корп. ключи (Trial бейдж), карточка «Уведомления»
 │   │       ├── sw.js             # Service worker: только Web Push, без кэша
@@ -182,8 +189,13 @@ BannerPDF/
 │   │       └── icons/            # 192/512 + maskable 512
 │   │
 │   ├── nginx/
-│   │   └── default.conf          # Server-блоки: 80→443 редирект, 443 HTTPS (включая /api/tg/callback)
+│   │   ├── default.conf          # Server-блоки: 80→443 редирект, 443 HTTPS (включая /api/tg/callback)
+│   │   └── partner-redirect.example.conf  # Шаблон: редирект домена типографии на ?partner=<code> (не подключается сам)
 │   │                             # ⚠️ nginx.conf и proxy_params НЕ монтировать
+│   │
+│   ├── ops/
+│   │   ├── logrotate-bannerbot   # Ротация журналов nginx (14 дней)
+│   │   └── partner_mail_check.py # Проверка почты партнёров из контейнера: вход SMTP/IMAP, тестовое письмо
 │   │
 │   ├── tools/
 │   │   └── cf-tg-relay.js        # Cloudflare Worker: релей Telegram ⇄ сайт (не входит в образ)
@@ -198,7 +210,9 @@ BannerPDF/
 │       ├── test_order_api.py
 │       ├── test_payment_webhook.py
 │       ├── test_preview_api.py
-│       └── test_renderer_preview.py
+│       ├── test_renderer_preview.py
+│       ├── test_partner.py             # Партнёры: начисления, письма, админка
+│       └── test_partner_frontend.py    # partner.js, проводка в index.html/app.js/nginx, SVG-логотипы, политика
 │
 └── bot/                          # Telegram-бот (отдельный контейнер)
     └── ...
@@ -366,6 +380,7 @@ GET  /api/payment/status/{id}      — Статус заказа (поллинг
 POST /api/payment/callback         — Webhook от ЮКасса (verify_yookassa_payment() ПЕРВЫМ)
 GET  /api/download/{token}         — Скачать PDF (10 RPM/IP, burst 3, одноразовый токен TTL 15 мин; 429 токен не расходует)
 GET  /api/referral/stats/{code}    — Статистика реферального кода
+GET  /api/partner/{code}           — Брендинг партнёра-типографии: название, логотип, цвет, delivers (кэш 5 мин; 404 — неизвестный или отключён)
 ```
 
 ### TG Webhook
@@ -405,6 +420,8 @@ GET        /api/admin/push/config            — Публичный VAPID-клю
 POST       /api/admin/push/subscribe         — Сохранить подписку устройства (PushSubscription)
 POST       /api/admin/push/unsubscribe       — Удалить подписку по endpoint
 POST       /api/admin/push/test              — Проверочное уведомление на все устройства
+POST/GET   /api/admin/partners               — Создать партнёра-типографию / список с суммами к выплате (подробнее: «Партнёры-типографии»)
+POST/GET   /api/admin/partners/{code}/active|payout, /report, /deliveries/{order_id}/resend — отключение, выплата, отчёт за месяц, повтор письма
 POST/GET/DELETE /api/v1/admin/keys           — Управление корп. ключами
 GET        /api/referral/admin/list          — Список рефереров
 POST       /api/referral/admin/payout/{code} — Вывод баланса
@@ -453,7 +470,8 @@ web_orders(
   accepted_ip TEXT, accepted_ua TEXT,    -- IP (X-Real-IP) и User-Agent (≤300 симв.) в момент акцепта
   amended_at TEXT, original_config_json TEXT, -- единственная бесплатная правка текста
   promo_released_at TEXT,           -- использование промокода возвращено (не оплачен / платёж не создан); NULL — удерживается
-  discount_rub INTEGER              -- скидка заказа в рублях: цена сайта на момент заказа − amount_rub; NULL у заказов до отчёта
+  discount_rub INTEGER,             -- скидка заказа в рублях: цена сайта на момент заказа − amount_rub; NULL у заказов до отчёта
+  partner_code TEXT                 -- партнёр-типография, с чьей страницы пришёл заказ; NULL — обычный заказ
 )
 
 download_tokens(token, order_id, expires_at, used)  -- TTL 15 мин
@@ -464,6 +482,9 @@ promo_codes(code, uses_left, expires_at, discount, uses_total, created_at, note,
 api_plans(id, name, pdf_limit, rpm_limit, price_rub)
 api_keys(id, key_hash, key_prefix, plan_id, label, email, active, pdf_used, period_start)
 batch_jobs(id, api_key_id, status, total, done, errors_json, expires_at, charged_at)  -- TTL 1 ч; лимит списывается один раз при первой выдаче ZIP
+partners(code PK, name, email, logo_url, accent, reward_rub, active, created_at)  -- типографии-партнёры; email на сайт не отдаётся
+partner_accruals(id, partner_code FK, order_id UNIQUE, order_amount, reward_rub, created_at, paid_out_at)  -- одно начисление на оплаченный заказ
+partner_deliveries(order_id, config_hash, partner_code, created_at, sent_at, error, attempts)  -- письмо с макетом: одна запись на версию макета
 referrers(ref_code, balance_rub, created_at)
 referrals(id, referrer_id, order_id, order_amount, commission, ...)
 ```
@@ -694,34 +715,165 @@ EOF
 
 ## Партнёры-типографии
 
-Типография ставит редирект со своего домена на `https://bannerbot.ru/?partner=<code>`. Клиент видит конструктор с логотипом типографии, платит полную цену (`SITE_PDF_PRICE`), скачивает PDF; **тот же файл** уходит на почту типографии, а ей начисляется **100 ₽** за каждый оплаченный заказ.
+Типография ставит редирект со своего домена на `https://bannerbot.ru/?partner=<code>`. Клиент видит конструктор в фирменной шапке типографии, платит полную цену (`SITE_PDF_PRICE`, сейчас 299 ₽) и скачивает PDF; **тот же файл** уходит на почту типографии, а ей начисляется **100 ₽** за каждый оплаченный заказ. Платёж принимает BannerBot, и страница об этом говорит прямо («Оплата и поддержка: BannerBot»).
+
+![Шапка обычной страницы и страницы партнёра](docs/partners/header-compare.png)
+
+Разделы: [как устроено](#как-устроено) · [визуальная часть](#визуальная-часть) · [логотип](#логотип-партнёра) · [ссылка с предзаполнением](#ссылка-с-предзаполнением) · [подключение](#подключение-типографии) · [почта](#почта-партнёрам) · [эксплуатация](#эксплуатация) · [если что-то не так](#если-что-то-не-так) · [где лежит код](#где-лежит-код)
+
+### Как устроено
 
 | Что | Как устроено |
 |---|---|
 | Партнёр | Таблица `partners`: `code` (slug `a-z0-9-`, 2–32 символа), название, почта, логотип, цвет, ставка (`reward_rub`, по умолчанию 100), `active`. Не путать с `ref_code` реферальной программы бота (8 символов, 15%): в партнёрском заказе `ref_code` не пишется, у одной оплаты один получатель |
 | Начисление | `services/partner_store.accrue_for_order` из `transition()` при переходе в `paid`: срабатывает и на вебхук ЮKassa, и на ручную выдачу (`force_token`). Сумма = `min(ставка, сколько заплатил клиент)`; бесплатный заказ (промокод 100%) ничего не начисляет; повтор идемпотентен (`UNIQUE order_id`). Баланс не хранится: это `SUM(reward_rub)` по строкам `partner_accruals` с `paid_out_at IS NULL` |
-| Отправка макета | При первом скачивании каждой версии макета (`routers/download.py`, после ответа клиенту, фоновой задачей): в письме тот же PDF, номер заказа (8 символов), размер и текст. После бесплатной правки текста уходит «Исправленный макет». Сбой SMTP клиента не касается, запись в `partner_deliveries.error`, следующее скачивание повторяет отправку |
-| Брендирование | `partner.js` берёт `?partner=` из адреса, запрашивает публичный `GET /api/partner/{code}` (название, логотип, цвет; почты и ставки там нет) и подменяет шапку. Заказ помечается партнёром только после того, как брендинг получен и на экране проверки макета показано уведомление «макет будет отправлен в типографию». Код хранится в `sessionStorage` на время вкладки |
-| Логотипы | Только файлы `web/frontend/partners/<файл>`, в партнёре указывается `/partners/<файл>`. Внешние адреса запрещены: браузер посетителя не должен обращаться к чужому хосту (`/privacy/`). Файл попадает на сервер через `git pull` |
+| Отправка макета | При первом скачивании каждой версии макета (`routers/download.py`, после ответа клиенту, фоновой задачей): в письме тот же PDF, номер заказа (8 символов), размер и текст. После бесплатной правки текста уходит «Исправленный макет». Сбой SMTP клиента не касается: ошибка пишется в `partner_deliveries.error`, следующее скачивание повторяет отправку |
+| Привязка заказа | `POST /api/order` принимает `partner_code`; неизвестный или отключённый код молча отбрасывается (заказ без партнёра). Фронтенд передаёт код только после того, как брендинг загружен (при настроенной почте клиент к этому моменту уже видел на экране проверки уведомление о передаче макета) |
 | Данные | Типография получает текст макета: это указано в политике `/privacy/` (получатель «Типография-партнёр») и в окне «Конфиденциальность». IP, User-Agent и платёжные данные ей не передаются. Через `ORDER_PII_RETENTION_DAYS` текст у нас стирается, повторная отправка (`resend`) после этого невозможна (410) |
+| Без почты | Если `SMTP_HOST`/`SMTP_FROM` не заданы, партнёр всё равно получает начисления, но письма не уходят, а уведомления для клиента на странице нет (`delivers: false`). Флаг `mail_configured` виден в `GET /api/admin/partners` |
+
+### Визуальная часть
+
+<p>
+  <img src="docs/partners/partner-desktop.png" width="640" alt="Страница партнёра на десктопе">
+  <img src="docs/partners/partner-mobile.png" width="200" alt="Страница партнёра на телефоне">
+</p>
+
+Что меняется на странице (всё делает `partner.js`, данные берутся из публичного `GET /api/partner/{code}`: название, логотип, цвет, `delivers`; почты и ставки там нет):
+
+| Элемент | Что видит клиент |
+|---|---|
+| Логотип | Вместо «BannerBot» логотип партнёра на белой плашке (скругление 8 px, отступы 4×12 px). Высота всегда 28 px, ширина по пропорциям, не шире 62% экрана. Нет логотипа или он не загрузился: название партнёра текстом на той же плашке |
+| Строка под шапкой | «Конструктор макетов для «Название». Оплата и поддержка: BannerBot, реквизиты» (ссылка на `/requisites.html`) |
+| Цвет | `accent` партнёра подменяет **вторичный** акцент интерфейса `--accent2` (по умолчанию синий): кнопка «+ строка», кнопки масштаба строки, обводка активных полей ввода, рамка уведомления, ссылки в SEO-блоке. Основной оранжевый BannerBot (кнопка оплаты, цена) не меняется намеренно: платит клиент BannerBot |
+| Экран проверки | Перед галочкой соглашения: «Готовый макет будет также отправлен в «Название» для печати. Другие данные мы типографии не передаём.» (если `delivers`) |
+| Окно после оплаты | «PDF-файл скачивается. Копия макета отправляется в «Название». Номер заказа: XXXXXXXX, назовите его в типографии.» (если `delivers`) |
+
+<img src="docs/partners/partner-confirm.png" width="640" alt="Экран проверки макета с уведомлением о передаче типографии">
+
+Не меняется: цена, шаблоны, футер, документы, ЮKassa. Поведение при загрузке:
+
+- Пока идёт запрос брендинга (не дольше 4 с), логотип BannerBot скрыт (`html.partner-pending`), чтобы он не мигал перед логотипом типографии.
+- Партнёра нет, он отключён, сеть недоступна или ответ не прошёл проверку: обычная страница BannerBot, заказ создаётся без партнёра, сохранённый код стирается.
+- `?partner=` убирается из адресной строки сразу после чтения (`history.replaceState`), остальные параметры (предзаполнение) остаются. Код хранится в `sessionStorage` (`bb_partner`) на время вкладки, поэтому после перезагрузки бренд остаётся; cookie нет. Чтобы увидеть обычный сайт после партнёрского, откройте новую вкладку.
+- Ответ `GET /api/partner/{code}` кэшируется браузером на 5 минут (`Cache-Control: public, max-age=300`): новые название, логотип и цвет видны не позже чем через 5 минут. У ответа 404 заголовка кэша нет.
+- Весь текст с сервера вставляется через `textContent` и атрибуты, `innerHTML` в `partner.js` нет (тест `TestSafety`).
+
+### Логотип партнёра
+
+- Файл лежит в `web/frontend/partners/<имя>`, в партнёре указывается `logo_url` = `/partners/<имя>` (формат `^/partners/[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$`). Внешние адреса запрещены: браузер посетителя не должен обращаться к чужому хосту (`/privacy/`).
+- На сервер файл попадает через `git pull`: каталог `frontend` смонтирован в nginx, пересборка не нужна.
+- SVG или PNG. В шапке высота всегда 28 px, поэтому размер SVG в файле не важен (CorelDRAW задаёт миллиметры: 13×3.8 мм без фикса высоты рисовались 49×14 px). У PNG берите высоту от 56 px (2×), иначе он размоется. Плашка белая: подходят любые цвета логотипа, в том числе тёмные.
+- **SVG только в UTF-8 без BOM.** CorelDRAW по умолчанию сохраняет UTF-16: Chromium такой файл в `<img>` показывает, остальные браузеры не обязаны. Перекодировать:
+  ```bash
+  iconv -f UTF-16 -t UTF-8 in.svg | sed '1s/UTF-16/UTF-8/' > web/frontend/partners/<имя>.svg
+  ```
+- **В SVG не должно быть скриптов.** В `<img>` они не исполняются, но тот же файл открывается по прямому адресу, и там скрипт выполнился бы на домене сайта. Тест `test_partner_svg_logos_are_utf8_and_inert` проверяет каждый SVG в каталоге: UTF-8 без BOM, well-formed XML, нет `<script`, `<foreignObject`, `<image`, `href=`, `data:`, `javascript:` и обработчиков `on*=`.
+
+### Ссылка с предзаполнением
+
+К партнёрской ссылке можно добавить параметры предзаполнения (`prefill.js`): конструктор откроется сразу с готовым макетом. Удобно для показа типографии и для рекламных ссылок.
+
+| Параметр | Значение |
+|---|---|
+| `size` | ключ размера из `templates.json` (`2x1`, `2x2`, `3x2`, `3x3`, `1.5x1`, `1x1`, `1.5x0.5`, `1x0.5`) или свой размер в мм вида `3000x1000` (100–3000) |
+| `text1`…`text6` | строки текста, до 120 знаков, управляющие символы удаляются |
+| `bg`, `color` | `Черный`, `Белый`, `Красный`, `Желтый`, `Синий`, `Зеленый` |
+| `font` | `PT Sans Narrow`, `Fira Sans Cond`, `Golos Text`, `Tenor Sans`, `Caveat` |
+
+Всё, чего нет в списках или вне диапазона, молча отбрасывается. Значения нужно кодировать в URL. Пример: баннер 2×1 м, красный фон, белый текст, строки «Реклама-Сити» и «тел. 90-20-55»:
+
+```
+https://bannerbot.ru/?partner=reklamasity&size=2x1&text1=%D0%A0%D0%B5%D0%BA%D0%BB%D0%B0%D0%BC%D0%B0-%D0%A1%D0%B8%D1%82%D0%B8&text2=%D1%82%D0%B5%D0%BB.%2090-20-55&bg=%D0%9A%D1%80%D0%B0%D1%81%D0%BD%D1%8B%D0%B9&color=%D0%91%D0%B5%D0%BB%D1%8B%D0%B9
+```
+
+Собрать ссылку из своих значений:
+
+```bash
+python3 - <<'PY'
+from urllib.parse import quote
+params = [("partner", "reklamasity"), ("size", "2x1"), ("text1", "Реклама-Сити"), ("text2", "тел. 90-20-55"),
+          ("bg", "Красный"), ("color", "Белый")]
+print("https://bannerbot.ru/?" + "&".join(f"{k}={quote(v, safe='')}" for k, v in params))
+PY
+```
+
+Код партнёра в ссылке должен совпадать с тем, что создан на сервере. Показывайте исходную ссылку: после загрузки `partner` пропадает из адресной строки.
 
 ### Подключение типографии
 
 ```bash
-# 1. Логотип в репо (web/frontend/partners/reklamacity.svg) и git pull на сервере.
-# 2. Партнёр (ссылка вернётся в поле link):
-curl -s -X POST https://bannerbot.ru/api/admin/partners \
+# 1. Логотип (см. выше) в репо: web/frontend/partners/reklamasity.svg, затем git pull на сервере.
+# 2. Партнёр (ссылка вернётся в поле link; 409: код занят; 422: текст ошибки в detail):
+curl -sS -w '\nHTTP %{http_code}\n' -X POST https://bannerbot.ru/api/admin/partners \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{"code":"reklamacity","name":"Реклама-Сити","email":"print@example.ru",
-       "logo_url":"/partners/reklamacity.svg","accent":"#e31e24","reward_rub":100}'
-# 3. Редирект с домена типографии на https://bannerbot.ru/?partner=reklamacity
+  -d '{"code":"reklamasity","name":"Реклама-Сити","email":"print@example.ru",
+       "logo_url":"/partners/reklamasity.svg","accent":"#e31e24","reward_rub":100}'
+# 3. Проверка: брендинг (в ответе "delivers": true, если почта настроена) и логотип (200, image/svg+xml).
+curl -s https://bannerbot.ru/api/partner/reklamasity
+curl -sI https://bannerbot.ru/partners/reklamasity.svg | grep -i -E '^HTTP|content-type|content-length'
+# 4. Тестовое письмо на почту типографии (раздел «Почта»).
+# 5. Редирект с домена типографии на https://bannerbot.ru/?partner=reklamasity
 #    (шаблон nginx: web/nginx/partner-redirect.example.conf; либо редирект у регистратора/DNS-провайдера).
-# 4. Проверка: открыть ссылку, собрать макет по промокоду на 100% и скачать; письмо должно прийти на почту типографии.
+# 6. Боевая проверка: открыть ссылку, собрать макет по промокоду на 100% и скачать, письмо должно прийти типографии.
+docker logs bannerprint_api --since 30m 2>&1 | grep "Макет заказа"      # «… отправлен партнёру …» или причина сбоя
 ```
 
-Почта: задайте `SMTP_*` в `.env` и пересоберите `api`. Если порты 465/587 с VPS закрыты, письма не уйдут (в логе `Макет заказа … не отправлен`); проверка без нового заказа: `POST /api/admin/partners/deliveries/{order_id}/resend` (заново рендерит оплаченный партнёрский заказ и шлёт письмо).
+Поля партнёра: `name` 1–80 символов; `email` проверяется только по синтаксису (на него уходят макеты); `accent` формата `#rrggbb`; `reward_rub` 0–1000. Редирект 302 и абсолютный: путь и параметры исходного адреса отбрасываются, любой адрес на домене типографии ведёт на одну страницу. Целевой адрес в редиректе может содержать и предзаполнение.
 
-### Админка (Bearer `ADMIN_TOKEN`)
+### Почта партнёрам
+
+Настройка в `web/.env` (список переменных в разделе «Переменные окружения»). `.env` читается **при создании контейнера**: после правки нужен `cd web && docker compose up -d api`, а `docker restart` значения не обновит. Для большинства провайдеров `SMTP_FROM` должен совпадать с логином ящика.
+
+Пример для Яндекса:
+
+```
+SMTP_HOST=smtp.yandex.ru
+SMTP_PORT=465
+SMTP_SECURITY=ssl
+SMTP_USER=ящик@yandex.ru
+SMTP_PASSWORD=<пароль приложения, 16 символов>
+SMTP_FROM=ящик@yandex.ru
+PARTNER_MAIL_BCC=<ваша почта: скрытая копия каждого письма>
+```
+
+Что нужно в самом ящике Яндекса ([инструкция Яндекса](https://yandex.ru/support/yandex-360/customers/mail/ru/mail-clients/others)):
+
+1. Почта → Настройки → «Почтовые программы»: включить «С сервера imap.yandex.ru по протоколу IMAP» и «Пароли приложений и OAuth-токены».
+2. Яндекс ID → пароли приложений: создать пароль для «Почта» (показывается один раз). В `SMTP_PASSWORD` идёт **пароль приложения**, не пароль от аккаунта.
+
+Если доступ почтовых программ выключен, вход отклоняется, хотя пароль верный: `SMTPAuthenticationError: (535, … 5.7.8 … This user does not have access rights to this service)` по SMTP и `[AUTHENTICATIONFAILED] … or IMAP is disabled` по IMAP.
+
+Проверка (скрипт `web/ops/partner_mail_check.py` запускается внутри контейнера, из каталога `web/`):
+
+```bash
+# вход на SMTP и IMAP; печатает длину и sha256[:6] пароля, который видит контейнер (сам пароль не печатается)
+docker exec -i bannerprint_api python3 - auth < ops/partner_mail_check.py
+# тестовое письмо с PDF на почту партнёра КОД тем же кодом, что шлёт боевые письма (копия уйдёт и на PARTNER_MAIL_BCC)
+docker exec -i bannerprint_api python3 - send КОД < ops/partner_mail_check.py
+```
+
+| Вывод | Что значит |
+|---|---|
+| `SMTP login: OK`, `ОТПРАВЛЕНО на …` | SMTP-сервер принял письмо; дошло ли оно, видно только в ящике (смотрите и «Спам») |
+| `SMTPAuthenticationError` | неверный логин или пароль, не пароль приложения, выключен доступ почтовых программ (см. выше) |
+| длина или `sha256[:6]` пароля отличаются от значений из `.env` (команда ниже) | контейнер не пересоздан: `docker compose up -d api` |
+| `TimeoutError`, `OSError` | порты 465/587 с VPS закрыты, попробуйте `SMTP_SECURITY=starttls` и порт 587 |
+| `SMTPSenderRefused` | `SMTP_FROM` не принадлежит аккаунту |
+| `SMTPRecipientsRefused` | провайдер отклонил адрес типографии |
+| `почта не настроена` | `SMTP_HOST` или `SMTP_FROM` пусты в контейнере |
+
+Хэш пароля из `.env` для сравнения с выводом `auth` (длина и `sha256[:6]` должны совпасть):
+
+```bash
+v=$(grep '^SMTP_PASSWORD=' .env | cut -d= -f2- | tr -d '\r\n'); printf 'в .env: длина=%s sha256[:6]=%s\n' "${#v}" "$(printf %s "$v" | sha256sum | cut -c1-6)"
+```
+
+Сбои боевых отправок: причина в логе (`Макет заказа … не отправлен`) и в `partner_deliveries.error`, число таких записей по партнёру видно в `failed_deliveries`; следующее скачивание того же заказа повторяет отправку, администратор может повторить вручную через `resend`. Если письма уходят на свой домен, у домена должны быть SPF и DKIM, иначе они попадут в спам.
+
+### Эксплуатация
+
+Админка пока только API (вкладки в панели нет). Все запросы с `Authorization: Bearer $ADMIN_TOKEN`.
 
 | Запрос | Что делает |
 |---|---|
@@ -730,9 +882,70 @@ curl -s -X POST https://bannerbot.ru/api/admin/partners \
 | `POST /api/admin/partners/{code}/active` `{"active":false}` | Отключить: страница без брендинга, макеты не уходят; уже заработанное остаётся |
 | `GET /api/admin/partners/report?month=2026-10` | Сводка за месяц по UTC: заказы, начислено, не выплачено |
 | `POST /api/admin/partners/{code}/payout` `{"month":"2026-10"}` | Отметить выплаченным всё начисленное до конца месяца (без тела: всё невыплаченное). Возвращает `{orders, paid_rub}` |
-| `POST /api/admin/partners/deliveries/{order_id}/resend` | Повторить отправку макета на почту партнёра |
+| `POST /api/admin/partners/deliveries/{order_id}/resend` | Заново отрендерить оплаченный партнёрский заказ и отправить его на почту партнёра |
 
 Налоги и способ выплаты в код не входят: сумма к выплате берётся из отчёта, перевод и оформление (договор, налог) делаются вне сервиса.
+
+**Править и удалять партнёра через API нельзя** (код, почта, название, логотип, цвет, ставка задаются при создании). Исправление идёт напрямую в базе, из каталога `web/` на сервере. Формат полей здесь не проверяется: следите сами (`accent` `#rrggbb`, `logo_url` `/partners/<файл>`, `reward_rub` целое). Изменения видны посетителям не позже чем через 5 минут (кэш ответа).
+
+```bash
+# изменить поле: name | email | logo_url | accent | reward_rub
+docker exec -i bannerprint_api python3 - КОД email new@example.ru <<'PY'
+import os, sqlite3, sys
+code, field, value = sys.argv[1:4]
+if field not in ("name", "email", "logo_url", "accent", "reward_rub"):
+    raise SystemExit("поле: name | email | logo_url | accent | reward_rub")
+c = sqlite3.connect(os.getenv("WEB_DB_PATH", "/app/data/banner_web.db"))
+n = c.execute(f"UPDATE partners SET {field}=? WHERE code=?", (value, code)).rowcount
+c.commit()
+print("изменено строк:", n)
+print(c.execute("SELECT code,name,email,logo_url,accent,reward_rub FROM partners WHERE code=?", (code,)).fetchone())
+PY
+
+# удалить заведённого по ошибке (откажется, если есть заказы, начисления или отправки)
+docker exec -i bannerprint_api python3 - КОД <<'PY'
+import os, sqlite3, sys
+code = sys.argv[1]
+c = sqlite3.connect(os.getenv("WEB_DB_PATH", "/app/data/banner_web.db"))
+c.execute("PRAGMA foreign_keys=ON")
+n = [c.execute(f"SELECT COUNT(*) FROM {t} WHERE partner_code=?", (code,)).fetchone()[0]
+     for t in ("web_orders", "partner_accruals", "partner_deliveries")]
+print("заказов / начислений / отправок:", n)
+if any(n):
+    raise SystemExit("есть заказы или начисления, не удаляю")
+print("удалено строк:", c.execute("DELETE FROM partners WHERE code=?", (code,)).rowcount)
+c.commit()
+PY
+```
+
+### Если что-то не так
+
+| Симптом | Причина и что делать |
+|---|---|
+| Логотип не виден или очень мелкий | На сервере старый CSS: до `style.css?v=22` логотип в SVG с размером в миллиметрах рисовался 49×14 px. Проверка: `curl -s https://bannerbot.ru/ \| grep -o 'style.css?v=[0-9]*'` (нужно `v=22` и выше), `git pull`, затем Ctrl+F5 |
+| Вместо логотипа текст названия | Файл не загрузился: 404 (не сделан `git pull`, опечатка в `logo_url`) или SVG в UTF-16/битый. `curl -sI https://bannerbot.ru/partners/<файл>` должен дать 200 и `image/svg+xml`; кодировка: см. «Логотип партнёра» |
+| Страница без брендинга | Код в ссылке не совпадает с кодом партнёра, партнёр отключён или `GET /api/partner/<код>` не отдаёт 200 |
+| `partner` пропал из адресной строки | Так задумано, код держится в `sessionStorage` вкладки. Делитесь исходной ссылкой, а не скопированной из браузера |
+| Бренд остался на обычной ссылке | Та же вкладка помнит код партнёра: откройте новую вкладку или приватное окно |
+| Письмо не пришло | `docker logs bannerprint_api --since 1h 2>&1 \| grep "Макет заказа"`, `failed_deliveries` в `GET /api/admin/partners`, раздел «Почта партнёрам» |
+| `409` при создании партнёра | Код занят, в том числе заведённый ранее с ошибкой: исправьте или удалите через базу (раздел «Эксплуатация») |
+| Заказ с промокодом 100% ничего не начислил | Так задумано: начисление `min(ставка, оплачено)`, оплачено 0 ₽. Письмо типографии при этом уходит |
+| `500 ADMIN_TOKEN не настроен` или `403 Неверный admin-токен` | Токен не задан в `.env` контейнера или в запросе другой |
+
+### Где лежит код
+
+| Файл | Что в нём |
+|---|---|
+| `web/api/services/partner_store.py` | Партнёры, начисления, выплаты, отчёты, учёт отправок |
+| `web/api/services/mailer.py` | SMTP-клиент (стандартная библиотека), читает `SMTP_*` при каждой отправке |
+| `web/api/services/partner_delivery.py` | Текст письма и отправка макета партнёру |
+| `web/api/routers/partner.py` | Публичный брендинг и админские запросы |
+| `web/api/routers/order.py`, `download.py` | Привязка заказа к партнёру, начисление на `paid`, отправка при скачивании |
+| `web/frontend/partner.js`, `partners/`, `style.css` | Брендирование страницы, логотипы, правила `.logo--partner`, `.partner-strip`, `.confirm-partner` |
+| `web/frontend/prefill.js` | Предзаполнение из адреса |
+| `web/nginx/partner-redirect.example.conf` | Шаблон редиректа с домена типографии |
+| `web/ops/partner_mail_check.py` | Проверка входа на почтовый сервер и тестовое письмо |
+| `web/tests/test_partner.py`, `test_partner_frontend.py` | Тесты бэкенда и фронтенда партнёрки |
 
 ---
 
@@ -950,7 +1163,7 @@ curl -sS -m 15 -X POST "$TG_API_BASE/bot$TG_NOTIFY_TOKEN/getWebhookInfo" -H 'con
 | **Не хранится** | имя, tg_id пользователя, платёжные данные (карта вводится на стороне ЮKassa) |
 | **Исключение** | `email` в `api_keys` — основание: исполнение договора |
 | **Администратор** | `push_subscriptions` — устройства админа (не клиентов), `user_agent` ≤200 символов |
-| **Третьи стороны** | ЮKassa (платежи); Яндекс.Метрика с Вебвизором (cookie, действия на странице) |
+| **Третьи стороны** | ЮKassa (платежи); Яндекс.Метрика с Вебвизором (cookie, действия на странице); типография-партнёр (только в заказах с её страницы: PDF и текст макета на её почту; IP, User-Agent и платёжные данные не передаются) |
 | **Сервер** | Германия |
 
 ---
@@ -988,6 +1201,7 @@ curl -sS -m 15 -X POST "$TG_API_BASE/bot$TG_NOTIFY_TOKEN/getWebhookInfo" -H 'con
 - [x] `scale` int (50–100) в API, float (0–1) в рендерере — конвертация в роутерах
 - [x] Боевые ключи ЮКасса установлены — автоматический флоу оплаты полностью работает
 - [x] TG-сообщение о заказе меняет статус на «💳 Оплачено» после webhook
+- [x] Партнёры-типографии: брендированная страница `?partner=<code>`, 100 ₽ за оплаченный заказ, макет на почту типографии (SMTP), админка, отчёт и выплаты, ссылка с предзаполнением; первый партнёр — «Реклама-Сити»
 
 ### P1 — боевые ключи ЮКасса
 
