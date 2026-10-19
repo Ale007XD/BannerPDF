@@ -15,7 +15,8 @@
  * типографии. Номер считает сервер и отдаёт в заголовке X-Order-Number скачивания, там же имя файла
  * «Заказ 482-915, скажите его в Реклама-Сити по номеру 90-20-55.pdf» (fromDownload); этот скрипт
  * только показывает их в окне после оплаты (decorateSuccess).
- * Чистые функции (extractCode, stripParam, fromDownload, safePhone) проверяет Node: tests/test_partner_frontend.py.
+ * Телефон типографии показан в шапке ссылкой tel: (renderPhone): с телефона звонок в один тап.
+ * Чистые функции (extractCode, stripParam, fromDownload, safePhone, telHref) проверяет Node: tests/test_partner_frontend.py.
  */
 (function (root) {
   "use strict";
@@ -27,6 +28,7 @@
   var BAD_FILENAME_RE = /[\\/:*?"<>|\u0000-\u001f]/;
   var STORAGE_KEY = "bb_partner";
   var PENDING_CLASS = "partner-pending";
+  var HAS_PHONE_CLASS = "partner-has-phone";
   var FETCH_TIMEOUT_MS = 4000;
   var PARAM = "partner";
 
@@ -70,6 +72,16 @@
     return PHONE_RE.test(phone) ? phone : null;
   }
 
+  /**
+   * Ссылка tel: из телефона, прошедшего safePhone: «+7 (843) 290-20-55» → «tel:+78432902055», «90-20-55» → «tel:902055».
+   * Остаются только цифры и ведущий «+»: пробелы, скобки и дефисы в tel: не нужны. null, если телефона нет.
+   */
+  function telHref(value) {
+    var phone = safePhone(value);
+    if (!phone) return null;
+    return "tel:" + (phone.charAt(0) === "+" ? "+" : "") + phone.replace(/\D/g, "");
+  }
+
   var api = {
     code: null,     // код из ссылки или вкладки; пока бренд не получен, в заказ не попадает
     brand: null,    // ответ /api/partner/{code}
@@ -81,6 +93,7 @@
     stripParam: stripParam,
     fromDownload: fromDownload,
     safePhone: safePhone,
+    telHref: telHref,
   };
 
   root.Partner = api;
@@ -137,6 +150,34 @@
     }
   }
 
+  /* Иконка трубки: SVG собирается через DOM, без innerHTML */
+  function phoneIcon() {
+    var ns = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    var path = document.createElementNS(ns, "path");
+    path.setAttribute("d", "M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25c1.1.37 2.3.57 3.6.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.6a1 1 0 0 1-.25 1z");
+    svg.appendChild(path);
+    return svg;
+  }
+
+  /* Телефон типографии в шапке: ссылка tel:, текст и адрес только из проверенного значения */
+  function renderPhone(brand) {
+    var link = document.getElementById("header-phone");
+    var phone = safePhone(brand.phone);
+    var href = telHref(brand.phone);
+    if (!link || !phone || !href) return;
+    while (link.firstChild) link.removeChild(link.firstChild);
+    link.appendChild(phoneIcon());
+    link.appendChild(document.createTextNode(phone));
+    link.setAttribute("href", href);
+    link.setAttribute("aria-label", "Позвонить в «" + brand.name + "»: " + phone);
+    link.classList.remove("hidden");
+    document.documentElement.classList.add(HAS_PHONE_CLASS);   // на узком экране освобождает место в шапке
+  }
+
   function renderStrip(brand) {
     var strip = document.getElementById("partner-strip");
     if (!strip) return;
@@ -160,6 +201,7 @@
       document.documentElement.style.setProperty("--accent2", brand.accent);
     }
     renderLogo(brand);
+    renderPhone(brand);
     renderStrip(brand);
     renderConfirmNotice(brand);
 

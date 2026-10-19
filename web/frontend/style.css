@@ -65,6 +65,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 14px 20px;
   max-width: 960px;
   margin: 0 auto;
@@ -101,6 +102,7 @@ html.partner-pending .site-header .logo { visibility: hidden; }
 .logo--partner {
   display: inline-flex;
   align-items: center;
+  min-width: 0;            /* уступает место телефону: длинное название обрезается многоточием */
   max-width: 62vw;
   padding: 4px 12px;
   background: #fff;
@@ -122,6 +124,46 @@ html.partner-pending .site-header .logo { visibility: hidden; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Правая часть шапки: телефон типографии (только на партнёрской странице) и плашка цены */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+/* Кликабельный телефон: на телефоне набирает номер. Размер касания не меньше 36 px по высоте */
+.header-phone {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1.5px solid rgba(255, 255, 255, 0.4);
+  border-radius: 20px;
+  color: #fff;
+  font-family: 'Onest', system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.header-phone:hover,
+.header-phone:focus-visible {
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+.header-phone svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  fill: currentColor;
+}
+/* На узком экране телефон важнее плашки цены (цена есть и на кнопке оплаты): иначе шапка не помещается */
+@media (max-width: 480px) {
+  html.partner-has-phone .header-right .header-badge { display: none; }
 }
 
 /* Кто продавец: страница типографии, а платёж принимает BannerBot */

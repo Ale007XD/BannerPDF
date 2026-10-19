@@ -96,6 +96,21 @@ class TestPureFunctions:
     def test_safe_phone(self, value, expected):
         assert call("safePhone", value) == expected
 
+    @pytest.mark.parametrize("value,expected", [
+        ("90-20-55", "tel:902055"),
+        ("+7 (843) 290-20-55", "tel:+78432902055"),
+        ("8 800 555-35-35", "tel:88005553535"),
+        ("  +7 843 290 20 55 ", "tel:+78432902055"),
+        (None, None), ("", None), ("123", None),
+        ("<b>1234</b>", None), ("javascript:alert(1)", None), ("tel:+7 123", None), ("90-20-55\" onclick=\"x", None),
+    ])
+    def test_tel_href(self, value, expected):
+        assert call("telHref", value) == expected
+
+    def test_tel_href_has_only_digits_and_a_leading_plus(self):
+        for value in ("90-20-55", "+7 (843) 290-20-55", "8 (800) 555-35-35"):
+            assert re.fullmatch(r"tel:\+?\d+", call("telHref", value)), value
+
     def test_phone_regex_matches_the_server(self):
         from web.api.services.partner_store import PHONE_RE
         m = re.search(r"var PHONE_RE = /(.+?)/;", JS)
@@ -140,15 +155,33 @@ class TestSafety:
 class TestWiring:
     def test_partner_js_loaded_blocking_in_head_before_the_page(self):
         head = INDEX[: INDEX.index("</head>")]
-        assert '<script src="partner.js?v=2"></script>' in head  # блокирующий: логотип BannerBot не мигает
+        assert '<script src="partner.js?v=3"></script>' in head  # блокирующий: логотип BannerBot не мигает
         assert "defer" not in re.search(r'<script src="partner\.js[^>]*>', head).group(0)
 
     def test_dom_hooks_exist(self):
-        for hook in ('id="site-logo"', 'id="partner-strip"', 'id="confirm-partner"', 'id="success-text"'):
+        for hook in ('id="site-logo"', 'id="partner-strip"', 'id="confirm-partner"', 'id="success-text"', 'id="header-phone"'):
             assert hook in INDEX, hook
         # плашка продавца и уведомление скрыты, пока партнёра нет
         assert re.search(r'class="partner-strip hidden" id="partner-strip"', INDEX)
         assert re.search(r'class="confirm-partner hidden" id="confirm-partner"', INDEX)
+
+    def test_header_phone_is_hidden_until_a_phone_is_known(self):
+        # обычная страница BannerBot телефона не показывает; ссылка без href не получает фокус и не звонит
+        tag = re.search(r'<a class="header-phone[^>]*id="header-phone"[^>]*>', INDEX).group(0)
+        assert "hidden" in tag and "href" not in tag
+        header = INDEX[INDEX.index('<header class="site-header">'):INDEX.index("</header>")]
+        assert header.index('id="site-logo"') < header.index('id="header-phone"') < header.index("PDF 299")
+
+    def test_phone_link_is_built_only_from_the_validated_value(self):
+        body = JS[JS.index("function renderPhone(brand)"):]
+        body = body[: body.index("\n  }\n")]
+        assert "var phone = safePhone(brand.phone);" in body and "var href = telHref(brand.phone);" in body
+        assert 'if (!link || !phone || !href) return;' in body
+        assert 'link.setAttribute("href", href)' in body and "innerHTML" not in body
+        assert "document.createTextNode(phone)" in body
+        # порядок в applyBranding: логотип, телефон, плашка
+        apply = JS[JS.index("function applyBranding(brand)"):]
+        assert apply.index("renderLogo(brand)") < apply.index("renderPhone(brand)") < apply.index("renderStrip(brand)")
 
     def test_notice_sits_between_the_layout_and_the_consent_checkbox(self):
         confirm = INDEX[INDEX.index('id="modal-confirm"'):]
@@ -180,7 +213,8 @@ class TestWiring:
         assert body.index("fromDownload") < body.index("a.download")
 
     def test_css_rules_exist(self):
-        for sel in ("html.partner-pending .site-header .logo", ".logo--partner", ".partner-strip", ".confirm-partner"):
+        for sel in ("html.partner-pending .site-header .logo", ".logo--partner", ".partner-strip", ".confirm-partner",
+                    ".header-right", ".header-phone", "html.partner-has-phone .header-right .header-badge"):
             assert sel in CSS, sel
 
     def test_logo_is_scaled_to_a_fixed_height(self):
@@ -190,6 +224,21 @@ class TestWiring:
         assert re.search(r"(?<![-\w])height:\s*28px", rule), rule
         assert "max-height" not in re.sub(r"/\*.*?\*/", "", rule, flags=re.S), rule
         assert "object-fit: contain" in rule  # при max-width логотип не растягивается
+
+    def test_header_makes_room_for_the_phone_on_narrow_screens(self):
+        # длинное название должно уступать место телефону, а плашка цены на телефоне прячется, иначе шапка ломает страницу
+        rule = CSS[CSS.index(".logo--partner {"):]
+        assert "min-width: 0" in rule[: rule.index("}")]
+        media = CSS[CSS.index("html.partner-has-phone"):]
+        before = CSS[: CSS.index("html.partner-has-phone")]
+        assert before.rstrip().endswith("{") and "@media (max-width: 480px)" in before[-80:]
+        assert "display: none" in media[: media.index("}")]
+        assert 'var HAS_PHONE_CLASS = "partner-has-phone";' in JS
+        assert "document.documentElement.classList.add(HAS_PHONE_CLASS)" in JS
+
+    def test_phone_tap_target_is_big_enough(self):
+        rule = CSS[CSS.index(".header-phone {"):]
+        assert re.search(r"min-height:\s*(3[6-9]|[4-9]\d)px", rule[: rule.index("}")])
 
     def test_partner_svg_logos_are_utf8_and_inert(self):
         # CorelDRAW сохраняет SVG в UTF-16: Chromium такой файл в <img> читает, остальные браузеры не обязаны

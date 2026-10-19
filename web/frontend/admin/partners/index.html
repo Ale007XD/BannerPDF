@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>BannerBot — Партнёры</title>
+  <meta name="theme-color" content="#1a1a1a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="BB Партнёры">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <style>
+    @font-face { font-family: 'Unbounded'; src: url('/fonts/Unbounded-var.woff2') format('woff2'); font-weight: 200 900; font-display: swap; }
+    @font-face { font-family: 'Onest'; src: url('/fonts/Onest-var.woff2') format('woff2'); font-weight: 100 900; font-display: swap; }
+  </style>
+  <style>
+    /* Переменные и базовые стили — копия /admin/ (там всё инлайн, общего файла нет). */
+    :root {
+      --bg:       #f2f0eb;
+      --surface:  #ffffff;
+      --ink:      #1a1a1a;
+      --ink-2:    #5a5650;
+      --ink-3:    #9a958f;
+      --accent:   #ff3c00;
+      --accent2:  #0057ff;
+      --ok:       #1a8a1a;
+      --border:   #e0ddd7;
+      --radius:   16px;
+      --radius-sm:8px;
+      --shadow:   0 2px 12px rgba(0,0,0,0.07);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { -webkit-tap-highlight-color: transparent; }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: 'Onest', system-ui, sans-serif;
+      font-size: 15px;
+      min-height: 100dvh;
+    }
+
+    /* ---- Шапка ---- */
+    .site-header {
+      background: var(--ink);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    .logo {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.02em;
+    }
+    .logo-accent { color: var(--accent); }
+    .header-badge {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--ink);
+      background: var(--accent);
+      padding: 4px 10px;
+      border-radius: 20px;
+      text-decoration: none;
+    }
+
+    /* ---- Контент ---- */
+    .main {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 16px 16px 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #stats-ui { display: none; flex-direction: column; gap: 12px; }
+
+    /* ---- Карточка ---- */
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 18px 16px;
+      box-shadow: var(--shadow);
+    }
+    .card-label {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--ink-3);
+      margin-bottom: 14px;
+    }
+
+    /* ---- Кнопки ---- */
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-family: 'Unbounded', sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+      transition: background 0.15s, transform 0.1s;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn--accent { background: var(--accent); color: #fff; }
+    .btn--accent:hover { background: #e03000; }
+    .btn--ghost { background: var(--bg); color: var(--ink-2); margin-top: 8px; }
+
+    .auth-error { font-size: 13px; color: var(--accent); margin-bottom: 12px; min-height: 20px; }
+    .note { font-size: 13px; color: var(--ink-2); line-height: 1.5; margin-bottom: 14px; }
+
+    /* ---- Фильтры ---- */
+    .controls { display: flex; flex-direction: column; gap: 10px; }
+    .filter-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .filter-btn {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 7px 14px;
+      border-radius: 20px;
+      border: 2px solid var(--border);
+      background: transparent;
+      color: var(--ink-3);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-btn.active {
+      background: var(--ink);
+      border-color: var(--ink);
+      color: #fff;
+    }
+    .select {
+      width: 100%;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font-family: 'Onest', sans-serif;
+      font-size: 14px;
+      color: var(--ink);
+      background: var(--bg);
+      outline: none;
+    }
+    .select:focus { border-color: var(--accent2); background: var(--surface); }
+
+    /* ---- Итоги ---- */
+    .period-note { font-size: 12px; color: var(--ink-3); margin-bottom: 12px; }
+    .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .stat-item {
+      background: var(--bg);
+      border-radius: var(--radius-sm);
+      padding: 12px 8px;
+      text-align: center;
+      min-width: 0;
+    }
+    .stat-value {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 20px;
+      font-weight: 900;
+      color: var(--ink);
+      line-height: 1;
+    }
+    .stat-value--accent { color: var(--accent); }
+    .stat-value--ok     { color: var(--ok); }
+    .stat-label {
+      font-size: 11px;
+      color: var(--ink-3);
+      margin-top: 4px;
+      overflow-wrap: anywhere;
+    }
+
+    /* ---- Детализация ---- */
+    .table-wrap { overflow-x: auto; margin: 0 -4px; padding: 0 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td {
+      padding: 8px 10px 8px 0;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--ink-3);
+      white-space: nowrap;
+    }
+    td.num, th.num { text-align: right; padding-right: 0; font-weight: 700; white-space: nowrap; }
+    td.page { overflow-wrap: anywhere; min-width: 110px; }
+    tr:last-child td { border-bottom: none; }
+    .source {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 20px;
+      background: var(--bg);
+      color: var(--ink-2);
+    }
+    .source--yandex { background: #fff1d6; color: #8a5a00; }
+    .source--google { background: #e3edff; color: var(--accent2); }
+    .source--server { background: #e0f5e0; color: var(--ok); }
+    .muted { color: var(--ink-3); }
+    .empty { text-align: center; color: var(--ink-3); font-size: 14px; padding: 20px 0; }
+
+
+    /* ---- Навигация по разделам админки (то же на /admin/ и /admin/stats/) ---- */
+    .header-nav {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      max-width: 600px; margin: 0 auto; padding: 0 20px 12px;
+    }
+    .nav-link {
+      font-family: 'Unbounded', sans-serif; font-size: 10px; font-weight: 700;
+      color: #fff; text-decoration: none;
+      border: 1.5px solid rgba(255,255,255,0.3); border-radius: 20px; padding: 5px 12px;
+    }
+    .nav-link:hover, .nav-link:focus-visible { border-color: #fff; }
+    .nav-link[aria-current="page"] { background: var(--accent); border-color: var(--accent); color: var(--ink); }
+
+    /* ---- Партнёры ---- */
+    .period-custom { display: none; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .period-custom.open { display: flex; }
+    .period-custom label { font-size: 12px; color: var(--ink-3); display: flex; align-items: center; gap: 6px; }
+    .period-custom input[type="date"] {
+      border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px;
+      font-family: 'Onest', sans-serif; font-size: 14px; color: var(--ink); background: var(--bg);
+    }
+    .period-custom .btn { width: auto; padding: 10px 18px; }
+    .stats-row + .stats-row { margin-top: 8px; }
+    /* На узком экране таблица прокручивается внутри карточки, а не сжимает заголовки в кашу */
+    .table-wrap table { min-width: 440px; }
+    td.num, th.num { padding-left: 12px; }
+    /* Таблица партнёров на телефоне: строка превращается в карточку «подпись — значение»,
+       иначе «Начислено» и «К выплате» остаются за краем экрана */
+    @media (max-width: 520px) {
+      table.stack { min-width: 0; }
+      table.stack thead { display: none; }
+      table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; }
+      table.stack tr { padding: 10px 0; border-bottom: 1px solid var(--border); }
+      table.stack tr:last-child { border-bottom: none; }
+      table.stack td { border: 0; padding: 3px 0; text-align: right; display: flex; justify-content: space-between; gap: 12px; }
+      table.stack td.num { padding-left: 0; }
+      table.stack td::before { content: attr(data-label); color: var(--ink-3); font-weight: 400; font-size: 12px; text-align: left; }
+      table.stack td:first-child { display: block; text-align: left; font-weight: 700; padding-bottom: 6px; }
+      table.stack td:first-child::before { content: none; }
+    }
+    .name-sub { display: block; font-size: 11px; color: var(--ink-3); font-weight: 400; }
+    .tag-off { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 20px; background: var(--bg); color: var(--ink-3); margin-left: 6px; }
+    .warn { color: var(--accent); font-weight: 700; }
+    .csv-row { display: flex; flex-direction: column; gap: 8px; }
+    .csv-row .btn--ghost { margin-top: 0; }
+    .csv-status { font-size: 13px; color: var(--accent); min-height: 18px; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-inner">
+    <span class="logo">Banner<span class="logo-accent">Bot</span></span>
+    <span class="header-badge">ADMIN</span>
+  </div>
+  <nav class="header-nav" aria-label="Разделы админки">
+    <a class="nav-link" href="/admin/">ЗАКАЗЫ</a>
+    <a class="nav-link" href="/admin/stats/">СТАТИСТИКА</a>
+    <a class="nav-link" href="/admin/partners/" aria-current="page">ПАРТНЁРЫ</a>
+  </nav>
+</header>
+
+<main class="main">
+
+  <!-- ---- НУЖЕН ВХОД ---- -->
+  <div class="card" id="login-card" style="display:none;">
+    <div class="card-label">Вход</div>
+    <div class="auth-error" id="login-error"></div>
+    <div class="note">
+      Токен вводится на странице заказов. Войдите там и вернитесь сюда в этой же вкладке.
+      Чтобы страница открывалась на любой вкладке, отметьте «Запомнить на этом устройстве».
+    </div>
+    <a class="btn btn--accent" href="/admin/">Открыть вход</a>
+  </div>
+
+  <!-- ---- СТАТИСТИКА ПАРТНЁРОВ ---- -->
+  <div id="stats-ui">
+
+    <div class="card">
+      <div class="card-label">Период</div>
+      <div class="controls">
+        <div class="filter-row" id="period-row">
+          <button class="filter-btn" data-period="today" aria-pressed="false">Сегодня</button>
+          <button class="filter-btn" data-period="week" aria-pressed="false">7 дней</button>
+          <button class="filter-btn active" data-period="month" aria-pressed="true">Месяц</button>
+          <button class="filter-btn" data-period="prev_month" aria-pressed="false">Прошлый месяц</button>
+          <button class="filter-btn" data-period="custom" aria-pressed="false">Даты</button>
+        </div>
+        <div class="period-custom" id="period-custom">
+          <label>с <input type="date" id="date-from"></label>
+          <label>по <input type="date" id="date-to"></label>
+          <button class="btn btn--accent" id="custom-apply">Показать</button>
+        </div>
+        <select class="select" id="partner-filter" aria-label="Партнёр">
+          <option value="">Все партнёры</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card" id="totals-card">
+      <div class="card-label">Итоги</div>
+      <div class="period-note" id="period-note"></div>
+      <div id="totals-area"><div class="empty">Загрузка…</div></div>
+    </div>
+
+    <div class="card" id="partners-card">
+      <div class="card-label">По партнёрам</div>
+      <div id="partners-area"></div>
+    </div>
+
+    <div class="card" id="days-card">
+      <div class="card-label">По дням</div>
+      <div id="days-area"></div>
+    </div>
+
+    <div class="card" id="csv-card">
+      <div class="card-label">Выгрузка в CSV</div>
+      <div class="note">
+        За выбранный период и партнёра. Открывается в Excel двойным щелчком (UTF-8, разделитель «;»).
+        В заказах номер совпадает с тем, что клиент называет типографии. Данных клиента в файле нет.
+      </div>
+      <div class="csv-row">
+        <button class="btn btn--accent" id="csv-orders">CSV: по заказам</button>
+        <button class="btn btn--ghost" id="csv-days">CSV: по дням</button>
+      </div>
+      <div class="csv-status" id="csv-status" role="status"></div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+/* Ключ и хранилища те же, что в /admin/: sessionStorage (по умолчанию) и localStorage («Запомнить»).
+   Если в /admin/index.html поменяется TOKEN_KEY, поменять и здесь. */
+const TOKEN_KEY = "bp_admin_token";
+const API_BASE  = "/api";
+
+function loadSavedToken() {
+  try { return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
+}
+function forgetToken() {
+  try { sessionStorage.removeItem(TOKEN_KEY); localStorage.removeItem(TOKEN_KEY); } catch { /* нечего чистить */ }
+}
+
+const $ = (id) => document.getElementById(id);
+
+let _token   = loadSavedToken();
+let _period  = "month";   // today | week | month | prev_month | custom
+let _applied = null;      // параметры последнего запроса: CSV выгружает ровно то, что на экране
+let _data    = null;
+let _reqId   = 0;         // защита от гонки: ответ на устаревший запрос игнорируется
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function fmt(n) { return Number(n || 0).toLocaleString("ru-RU"); }
+function fmtDate(iso) { return String(iso || "").split("-").reverse().join("."); }
+
+function showLogin(message) {
+  $("stats-ui").style.display = "none";
+  $("login-card").style.display = "block";
+  $("login-error").textContent = message || "";
+}
+function showUi() {
+  $("login-card").style.display = "none";
+  $("stats-ui").style.display = "flex";
+}
+function dropToken(message) {
+  forgetToken();
+  _token = "";
+  showLogin(message);
+}
+
+/* Параметры запроса: пресет или даты, плюс выбранный партнёр */
+function buildParams() {
+  const p = new URLSearchParams();
+  if (_period === "custom") {
+    p.set("from", $("date-from").value);
+    p.set("to", $("date-to").value);
+  } else {
+    p.set("period", _period);
+  }
+  const partner = $("partner-filter").value;
+  if (partner) p.set("partner", partner);
+  return p;
+}
+
+async function errorText(resp) {
+  try {
+    const body = await resp.json();
+    if (typeof body.detail === "string") return body.detail;
+  } catch { /* не JSON */ }
+  return `HTTP ${resp.status}`;
+}
+
+async function load() {
+  if (!_token) { showLogin("Нет сохранённого токена."); return; }
+  if (_period === "custom" && (!$("date-from").value || !$("date-to").value)) {
+    $("totals-area").innerHTML = '<div class="auth-error">Укажите обе даты.</div>';
+    return;
+  }
+
+  const id = ++_reqId;
+  const params = buildParams();
+  _applied = params.toString();
+  showUi();
+  $("period-note").textContent = "";
+  $("totals-area").innerHTML = '<div class="empty">Загрузка…</div>';
+  $("partners-area").innerHTML = "";
+  $("days-area").innerHTML = "";
+  $("csv-status").textContent = "";
+
+  try {
+    const resp = await fetch(`${API_BASE}/admin/partners/stats?${_applied}`, {
+      headers: { "Authorization": `Bearer ${_token}` },
+    });
+    if (id !== _reqId) return;
+    if (resp.status === 401 || resp.status === 403) { dropToken("Токен не подошёл. Введите его заново на странице заказов."); return; }
+    if (!resp.ok) throw new Error(await errorText(resp));
+
+    _data = await resp.json();
+    if (id !== _reqId) return;
+    if (_period !== "custom") {
+      $("date-from").value = _data.from;
+      $("date-to").value = _data.to;
+    }
+    renderPartnerOptions();
+    render();
+  } catch (e) {
+    if (id !== _reqId) return;
+    $("totals-area").innerHTML =
+      '<div class="auth-error">Не удалось загрузить данные (' + escapeHtml(e.message) + ').</div>' +
+      '<button class="btn btn--ghost" id="retry-btn">Повторить</button>';
+    $("retry-btn").addEventListener("click", load);
+  }
+}
+
+function renderPartnerOptions() {
+  const sel = $("partner-filter");
+  const keep = _data.partner || sel.value;
+  sel.innerHTML = '<option value="">Все партнёры</option>' + (_data.all_partners || []).map((p) =>
+    `<option value="${escapeHtml(p.code)}">${escapeHtml(p.name)}${p.active ? "" : " (отключён)"}</option>`).join("");
+  sel.value = (_data.all_partners || []).some((p) => p.code === keep) ? keep : "";
+}
+
+function statItem(value, label, cls) {
+  return `<div class="stat-item"><div class="stat-value${cls ? " " + cls : ""}">${fmt(value)}</div>` +
+         `<div class="stat-label">${escapeHtml(label)}</div></div>`;
+}
+
+function render() {
+  if (!_data) return;
+  const t = _data.totals || {};
+
+  $("period-note").textContent =
+    `${fmtDate(_data.from)} — ${fmtDate(_data.to)} · сутки по ${_data.tz}`;
+
+  $("totals-area").innerHTML =
+    '<div class="stats-row">' +
+      statItem(t.orders, "Заказов", "stat-value--accent") +
+      statItem(t.revenue_rub, "Выручка, ₽") +
+      statItem(t.reward_rub, "Начислено, ₽", "stat-value--ok") +
+    "</div>" +
+    '<div class="stats-row">' +
+      statItem(t.unpaid_rub, "К выплате сейчас, ₽ (всего)") +
+      statItem(t.free_orders, "Бесплатных (промокод)") +
+      statItem(t.mails_failed, "Сбоев отправки писем", t.mails_failed ? "stat-value--accent" : "") +
+    "</div>";
+
+  const partners = _data.partners || [];
+  $("partners-area").innerHTML = !partners.length
+    ? '<div class="empty">Партнёров нет.</div>'
+    : '<div class="table-wrap"><table class="stack"><thead><tr>' +
+      '<th>Партнёр</th><th class="num">Заказов</th><th class="num">Выручка</th>' +
+      '<th class="num">Начислено</th><th class="num">К выплате</th><th class="num">Письма</th>' +
+      "</tr></thead><tbody>" +
+      partners.map((r) =>
+        "<tr>" +
+        `<td>${escapeHtml(r.name)}${r.active ? "" : '<span class="tag-off">откл.</span>'}` +
+          `<span class="name-sub">${escapeHtml(r.code)}</span></td>` +
+        `<td class="num" data-label="Заказов"><span>${fmt(r.orders)}${r.free_orders ? `<span class="name-sub">беспл. ${fmt(r.free_orders)}</span>` : ""}</span></td>` +
+        `<td class="num" data-label="Выручка, ₽">${fmt(r.revenue_rub)}</td>` +
+        `<td class="num" data-label="Начислено, ₽">${fmt(r.reward_rub)}</td>` +
+        `<td class="num" data-label="К выплате (всего), ₽">${fmt(r.unpaid_rub)}</td>` +
+        `<td class="num" data-label="Письма"><span>${fmt(r.mails_sent)}${r.mails_failed ? `<span class="name-sub warn">сбоев ${fmt(r.mails_failed)}</span>` : ""}</span></td>` +
+        "</tr>").join("") +
+      "</tbody></table></div>";
+
+  const days = (_data.days || []).slice().reverse();   // свежие сверху
+  $("days-area").innerHTML = !days.length
+    ? '<div class="empty">За этот период оплаченных заказов нет.</div>'
+    : '<div class="table-wrap"><table><thead><tr>' +
+      '<th>Дата</th><th>Партнёр</th><th class="num">Заказов</th><th class="num">Выручка</th><th class="num">Начислено</th>' +
+      "</tr></thead><tbody>" +
+      days.map((d) =>
+        "<tr>" +
+        `<td>${escapeHtml(fmtDate(d.day))}</td>` +
+        `<td>${escapeHtml(d.name)}</td>` +
+        `<td class="num">${fmt(d.orders)}</td>` +
+        `<td class="num">${fmt(d.revenue_rub)}</td>` +
+        `<td class="num">${fmt(d.reward_rub)}</td>` +
+        "</tr>").join("") +
+      "</tbody></table></div>";
+}
+
+/* CSV: запрос с токеном в заголовке, поэтому не обычной ссылкой, а fetch → файл */
+async function downloadCsv(kind) {
+  if (!_token || _applied === null) return;
+  const status = $("csv-status");
+  status.textContent = "";
+  try {
+    const resp = await fetch(`${API_BASE}/admin/partners/stats.csv?kind=${kind}&${_applied}`, {
+      headers: { "Authorization": `Bearer ${_token}` },
+    });
+    if (resp.status === 401 || resp.status === 403) { dropToken("Токен не подошёл. Введите его заново на странице заказов."); return; }
+    if (!resp.ok) throw new Error(await errorText(resp));
+
+    const match = /filename="([^"]+)"/.exec(resp.headers.get("Content-Disposition") || "");
+    const url = URL.createObjectURL(await resp.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = match ? match[1] : `partners-${kind}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+  } catch (e) {
+    status.textContent = "Не удалось скачать: " + e.message;
+  }
+}
+
+document.querySelectorAll("#period-row .filter-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#period-row .filter-btn").forEach((b) => {
+      b.classList.remove("active");
+      b.setAttribute("aria-pressed", "false");
+    });
+    btn.classList.add("active");
+    btn.setAttribute("aria-pressed", "true");
+    _period = btn.dataset.period;
+    $("period-custom").classList.toggle("open", _period === "custom");
+    if (_period !== "custom") load();   // для «Даты» ждём кнопку «Показать»
+  });
+});
+$("custom-apply").addEventListener("click", load);
+$("partner-filter").addEventListener("change", load);
+$("csv-orders").addEventListener("click", () => downloadCsv("orders"));
+$("csv-days").addEventListener("click", () => downloadCsv("days"));
+
+load();
+</script>
+</body>
+</html>

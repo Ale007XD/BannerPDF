@@ -12,6 +12,8 @@ partner.py
   POST /api/admin/partners/{code}/active                    — включить / отключить
   POST /api/admin/partners/{code}/phone                     — задать / убрать рабочий телефон
   GET  /api/admin/partners/report?month=ГГГГ-ММ             — сводка за месяц
+  GET  /api/admin/partners/stats?period=…|from=…&to=…       — статистика за период (страница /admin/partners/)
+  GET  /api/admin/partners/stats.csv?kind=orders|days&…     — выгрузка в CSV (Excel: UTF-8 с BOM, разделитель «;»)
   POST /api/admin/partners/{code}/payout                    — отметить выплаченным (всё или до конца месяца)
   POST /api/admin/partners/deliveries/{order_id}/resend     — повторить отправку макета на почту партнёра
 
@@ -24,18 +26,16 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from ..db import get_db
 from ..routers.admin import require_admin
-from ..services import mailer, partner_delivery, partner_store
+from ..services import mailer, partner_delivery, partner_stats, partner_store
 from ..services.renderer import get_executor, render_pdf_sync
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-_PAID_STATUSES = ("paid", "token_issued")
 
 
 def _http_error(e: partner_store.PartnerError) -> HTTPException:
@@ -116,6 +116,44 @@ async def admin_partner_report(month: Optional[str] = None):
         raise _http_error(e) from None
 
 
+@router.get("/admin/partners/stats", dependencies=[Depends(require_admin)])
+async def admin_partner_stats(
+    period: Optional[str] = None,
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    partner: Optional[str] = None,
+):
+    """
+    Заказы, выручка и вознаграждение партнёров за период. period: today | week (7 дней) | month | prev_month
+    (по умолчанию month); либо свои даты from и to (ГГГГ-ММ-ДД, включительно). partner: код, чтобы смотреть одного.
+    Сутки считаются по поясу STATS_UTC_OFFSET_HOURS (по умолчанию +3).
+    """
+    try:
+        return partner_stats.stats(period, date_from, date_to, partner)
+    except partner_store.PartnerError as e:
+        raise _http_error(e) from None
+
+
+@router.get("/admin/partners/stats.csv", dependencies=[Depends(require_admin)])
+async def admin_partner_stats_csv(
+    kind: str = "orders",
+    period: Optional[str] = None,
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    partner: Optional[str] = None,
+):
+    """Те же данные в CSV: kind=orders (строка на заказ) или kind=days (строка на день и партнёра)."""
+    try:
+        filename, content = partner_stats.export_csv(kind, period, date_from, date_to, partner)
+    except partner_store.PartnerError as e:
+        raise _http_error(e) from None
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+    )
+
+
 @router.post("/admin/partners/{code}/active", dependencies=[Depends(require_admin)])
 async def admin_set_partner_active(code: str, body: ActiveRequest):
     norm = partner_store.normalize_code(code)
@@ -163,7 +201,7 @@ async def admin_resend_delivery(order_id: str):
         raise HTTPException(status_code=404, detail="Заказ не найден")
     if not row["partner_code"]:
         raise HTTPException(status_code=409, detail="Заказ не партнёрский")
-    if row["status"] not in _PAID_STATUSES:
+    if row["status"] not in partner_store.PAID_STATUSES:
         raise HTTPException(status_code=409, detail="Заказ не оплачен")
     if not row["config_json"]:
         # services/retention.py стирает текст макета через ORDER_PII_RETENTION_DAYS после оплаты

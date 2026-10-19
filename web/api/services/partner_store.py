@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_REWARD_RUB = 100
 MAX_REWARD_RUB = 1000
 
+# Статусы оплаченного заказа (web_orders.status): после оплаты и после выдачи download-токена
+PAID_STATUSES = ("paid", "token_issued")
+
 CODE_RE   = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 ACCENT_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 # Логотип: только файл из frontend/partners/ на нашем сервере. Внешние адреса не принимаем: браузер

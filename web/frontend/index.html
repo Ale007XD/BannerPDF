@@ -63,9 +63,9 @@
 }
   </script>
   <!-- SDK виджета ЮKassa подгружает app.js (loadYooKassaSdk); соединение открываем заранее -->
-  <link rel="stylesheet" href="style.css?v=22">
+  <link rel="stylesheet" href="style.css?v=23">
   <!-- Брендирование под типографию-партнёра (?partner=…): блокирующий и маленький, чтобы логотип BannerBot не мигал -->
-  <script src="partner.js?v=2"></script>
+  <script src="partner.js?v=3"></script>
   <style>
     /* ---- Кастомный размер ---- */
     .custom-size-block {
@@ -271,7 +271,10 @@
   <header class="site-header">
     <div class="header-inner">
       <span class="logo" id="site-logo">Banner<span class="logo-accent">Bot</span></span>
-      <span class="header-badge">PDF 299 ₽</span>
+      <div class="header-right">
+        <a class="header-phone hidden" id="header-phone"></a>
+        <span class="header-badge">PDF 299 ₽</span>
+      </div>
     </div>
     <div class="partner-strip hidden" id="partner-strip"></div>
   </header>

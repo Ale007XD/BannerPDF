@@ -78,6 +78,19 @@
       text-decoration: none;
     }
 
+    /* ---- Навигация по разделам админки (то же на /admin/, /admin/stats/ и /admin/partners/) ---- */
+    .header-nav {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      max-width: 600px; margin: 0 auto; padding: 0 20px 12px;
+    }
+    .nav-link {
+      font-family: 'Unbounded', sans-serif; font-size: 10px; font-weight: 700;
+      color: #fff; text-decoration: none;
+      border: 1.5px solid rgba(255,255,255,0.3); border-radius: 20px; padding: 5px 12px;
+    }
+    .nav-link:hover, .nav-link:focus-visible { border-color: #fff; }
+    .nav-link[aria-current="page"] { background: var(--accent); border-color: var(--accent); color: var(--ink); }
+
     /* ---- Контент ---- */
     .main {
       max-width: 600px;
@@ -228,8 +241,13 @@
 <header class="site-header">
   <div class="header-inner">
     <span class="logo">Banner<span class="logo-accent">Bot</span></span>
-    <a class="header-badge" href="/admin/">← ЗАКАЗЫ</a>
+    <span class="header-badge">ADMIN</span>
   </div>
+  <nav class="header-nav" aria-label="Разделы админки">
+    <a class="nav-link" href="/admin/">ЗАКАЗЫ</a>
+    <a class="nav-link" href="/admin/stats/" aria-current="page">СТАТИСТИКА</a>
+    <a class="nav-link" href="/admin/partners/">ПАРТНЁРЫ</a>
+  </nav>
 </header>
 
 <main class="main">
