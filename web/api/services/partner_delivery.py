@@ -15,7 +15,7 @@ partner_deliveries.error; следующее скачивание того же 
 import json
 import logging
 
-from . import mailer, partner_store
+from . import mailer, partner_naming, partner_store
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +40,13 @@ def _text_lines(config: dict) -> list[str]:
 
 
 def _compose(partner: dict, order_id: str, size_key: str, config: dict, revised: bool) -> tuple[str, str]:
-    short = order_id[:8]
+    number = partner_naming.order_number(order_id)
     size = _size_label(size_key, config)
     lines = _text_lines(config)
     text_block = "\n".join(f"  {i}. {line}" for i, line in enumerate(lines, 1)) or "  —"
 
     kind = "Исправленный макет" if revised else "Новый макет"
-    subject = f"{kind} баннера {size}: заказ {short}"
+    subject = f"{kind} баннера {size}: заказ {number}"
 
     intro = (
         "Клиент исправил текст на макете. Это обновлённая версия, она заменяет предыдущую."
@@ -56,12 +56,13 @@ def _compose(partner: dict, order_id: str, size_key: str, config: dict, revised:
     body = (
         "Здравствуйте!\n\n"
         f"{intro}\n\n"
-        f"Заказ: {short}\n"
+        f"Заказ: {number}\n"
         f"Размер: {size}\n"
         "Текст на баннере:\n"
         f"{text_block}\n\n"
         "Во вложении печатный PDF: чистый CMYK, шрифты в кривых, масштаб 1:1. "
-        "Такой же файл получил клиент. Если он обратится к вам, назовите номер заказа.\n\n"
+        "Такой же файл получил клиент. В его названии и в окне после оплаты стоит этот номер заказа: "
+        "если клиент позвонит, он назовёт его, а письмо найдётся по номеру в теме.\n\n"
         "Это автоматическое письмо сервиса BannerBot (bannerbot.ru), отвечать на него не нужно.\n"
     )
     return subject, body
@@ -105,18 +106,18 @@ async def deliver_order_pdf(
             to=partner["email"],
             subject=subject,
             body=body,
-            attachment_name=f"banner_{size_key.replace('.', '_')}_{order_id[:8]}.pdf",
+            attachment_name=partner_naming.mail_attachment_name(order_id, _size_label(size_key, config)),
             attachment_bytes=pdf_bytes,
         )
         try:
             await mailer.send_message(msg)
         except mailer.MailError as e:
             partner_store.mark_delivery_failed(order_id, cfg_hash, str(e))
-            logger.error("Макет заказа %s не отправлен партнёру %s: %s", order_id, partner["code"], e)
+            logger.error("Макет заказа %s (№ %s) не отправлен партнёру %s: %s", order_id, partner_naming.order_number(order_id), partner["code"], e)
             return False
 
         partner_store.mark_delivery_sent(order_id, cfg_hash)
-        logger.info("Макет заказа %s отправлен партнёру %s", order_id, partner["code"])
+        logger.info("Макет заказа %s (№ %s) отправлен партнёру %s", order_id, partner_naming.order_number(order_id), partner["code"])
         return True
     except Exception:
         # Фоновая задача: что бы ни случилось, клиента это не касается

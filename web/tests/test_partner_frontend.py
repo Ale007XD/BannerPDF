@@ -60,11 +60,46 @@ class TestPureFunctions:
     def test_strip_param_keeps_prefill(self, search, expected):
         assert call("stripParam", search) == expected
 
-    def test_short_order_id_matches_the_email(self):
-        # то же правило, что в письме и имени вложения: order_id[:8]
-        assert call("shortOrderId", "abcdef12-3456-7890-abcd-ef1234567890") == "abcdef12"
-        assert call("shortOrderId", None) == ""
-        assert call("shortOrderId", "abc") == "abc"
+    DISPOSITION = (
+        "attachment; filename=\"order_353-095.pdf\"; "
+        "filename*=UTF-8''%D0%97%D0%B0%D0%BA%D0%B0%D0%B7%20353-095%2C%20%D1%81%D0%BA%D0%B0%D0%B6%D0%B8%D1%82%D0%B5.pdf"
+    )
+
+    def test_from_download_takes_number_and_decodes_the_utf8_name(self):
+        got = call("fromDownload", "353-095", self.DISPOSITION)
+        assert got == {"number": "353-095", "filename": "Заказ 353-095, скажите.pdf"}
+
+    def test_from_download_is_null_for_a_regular_order(self):
+        # обычный заказ: сервер X-Order-Number не шлёт, имя файла собирает app.js, как раньше
+        assert call("fromDownload", None, 'attachment; filename="banner_1x1_ab12cd34.pdf"') is None
+        assert call("fromDownload", "", self.DISPOSITION) is None
+
+    @pytest.mark.parametrize("number", ["35-095", "3530-95", "abc-def", "353-095<script>", "353 095", "-353-095", "353-0951"])
+    def test_from_download_rejects_a_malformed_number(self, number):
+        assert call("fromDownload", number, self.DISPOSITION) is None
+
+    @pytest.mark.parametrize("disposition", [
+        None, "", "attachment", 'attachment; filename="order_353-095.pdf"',   # нет filename*: имя по умолчанию
+        "attachment; filename*=UTF-8''%E0%A4%A",                              # битая последовательность %
+        "attachment; filename*=UTF-8''..%2Fevil.pdf",                         # разделитель пути
+        "attachment; filename*=UTF-8''a%3Ab.pdf",                             # «:» недопустим в Windows
+        "attachment; filename*=UTF-8''virus.exe",                             # не pdf
+        "attachment; filename*=UTF-8''" + "a" * 200 + ".pdf",                 # слишком длинное
+    ])
+    def test_from_download_keeps_the_number_but_drops_a_bad_name(self, disposition):
+        assert call("fromDownload", "353-095", disposition) == {"number": "353-095", "filename": None}
+
+    @pytest.mark.parametrize("value,expected", [
+        ("90-20-55", "90-20-55"), (" +7 (843) 290-20-55 ", "+7 (843) 290-20-55"),
+        (None, None), ("", None), ("<b>1234</b>", None), ("123", None), ("90-20-55; x", None), ("9" * 40, None),
+    ])
+    def test_safe_phone(self, value, expected):
+        assert call("safePhone", value) == expected
+
+    def test_phone_regex_matches_the_server(self):
+        from web.api.services.partner_store import PHONE_RE
+        m = re.search(r"var PHONE_RE = /(.+?)/;", JS)
+        assert m and m.group(1) == PHONE_RE.pattern
 
     def test_code_regex_matches_the_server(self):
         from web.api.services.partner_store import CODE_RE
@@ -105,7 +140,7 @@ class TestSafety:
 class TestWiring:
     def test_partner_js_loaded_blocking_in_head_before_the_page(self):
         head = INDEX[: INDEX.index("</head>")]
-        assert '<script src="partner.js?v=1"></script>' in head  # блокирующий: логотип BannerBot не мигает
+        assert '<script src="partner.js?v=2"></script>' in head  # блокирующий: логотип BannerBot не мигает
         assert "defer" not in re.search(r'<script src="partner\.js[^>]*>', head).group(0)
 
     def test_dom_hooks_exist(self):
@@ -128,11 +163,21 @@ class TestWiring:
         pay = pay[: pay.index("\n});")]
         assert "partner_code: window.Partner ? window.Partner.orderCode() : undefined" in pay
 
-    def test_success_modal_is_decorated(self):
+    def test_success_modal_is_decorated_with_the_server_number(self):
         body = APP_JS[APP_JS.index("async function downloadPdf("):]
         body = body[: body.index("\n}\n")]
-        assert "window.Partner.decorateSuccess(state.orderId)" in body
+        # номер берётся из ответа скачивания, а не считается во фронтенде: один источник правды
+        assert 'window.Partner.fromDownload(resp.headers.get("X-Order-Number"), resp.headers.get("Content-Disposition"))' in body
+        assert 'window.Partner.decorateSuccess(partnerFile ? partnerFile.number : "")' in body
         assert body.index("decorateSuccess") < body.index("showModal(el.modalSuccess)")
+
+    def test_downloaded_file_gets_the_server_name_only_for_partner_orders(self):
+        body = APP_JS[APP_JS.index("async function downloadPdf("):]
+        body = body[: body.index("\n}\n")]
+        assert "a.download = (partnerFile && partnerFile.filename) || `banner_" in body
+        # имя по умолчанию для обычного заказа не изменилось
+        assert "${Date.now()}.pdf" in body
+        assert body.index("fromDownload") < body.index("a.download")
 
     def test_css_rules_exist(self):
         for sel in ("html.partner-pending .site-header .logo", ".logo--partner", ".partner-strip", ".confirm-partner"):
@@ -197,3 +242,25 @@ class TestPrivacyDisclosure:
         src = (WEB / "api" / "services" / "partner_delivery.py").read_text(encoding="utf-8")
         for word in ("accepted_ip", "accepted_ua", "yookassa", "payment", "user-agent"):
             assert word not in src.lower(), word
+
+
+class TestSuccessWordingWithoutPersonalData:
+    """Окно после оплаты называет номер заказа и телефон типографии: ничего персонального от клиента не просим."""
+
+    def _decorate_src(self) -> str:
+        start = JS.index("api.decorateSuccess = function (number)")
+        return JS[start: JS.index("};", start)]
+
+    def test_text_is_set_via_textcontent_and_only_when_mail_is_delivered(self):
+        src = self._decorate_src()
+        assert "node.textContent = text" in src and "innerHTML" not in src
+        assert "!brand.delivers" in src
+
+    def test_phone_is_shown_only_in_the_server_accepted_format(self):
+        src = self._decorate_src()
+        assert "safePhone(brand.phone)" in src and "brand.phone" not in src.replace("safePhone(brand.phone)", "")
+
+    def test_nothing_is_requested_from_the_client(self):
+        # ни поля телефона, ни почты для «связи с типографией»
+        assert 'type="tel"' not in INDEX
+        assert "partner-phone" not in INDEX and "client_phone" not in APP_JS and "client_phone" not in JS

@@ -28,7 +28,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from conftest import VALID_CONFIG, VALID_ORDER_PAYLOAD, make_yookassa_succeeded_payment
 
-from web.api.services import mailer, partner_delivery, partner_store, promo_store
+from web.api.services import (
+    mailer,
+    partner_delivery,
+    partner_naming,
+    partner_store,
+    promo_store,
+)
 from web.api.services.partner_store import PartnerError, PartnerExists, PartnerNotFound
 from web.api.services.token_store import create_token
 
@@ -205,12 +211,12 @@ class TestPublicBranding:
 
     @pytest.mark.asyncio
     async def test_returns_only_public_fields(self, client, init_test_db, mail_env):
-        _partner(logo_url="/partners/rc.svg", accent="#e31e24")
+        _partner(logo_url="/partners/rc.svg", accent="#e31e24", phone="90-20-55")
         resp = await client.get("/api/partner/reklamacity")
         assert resp.status_code == 200
         assert resp.json() == {
             "code": "reklamacity", "name": "Реклама-Сити", "logo_url": "/partners/rc.svg",
-            "accent": "#e31e24", "delivers": True,
+            "accent": "#e31e24", "phone": "90-20-55", "delivers": True,
         }
         raw = resp.text
         assert "print@reklamacity.example" not in raw and "reward" not in raw
@@ -472,6 +478,7 @@ class TestAdminApi:
         ("GET", "/api/admin/partners"),
         ("GET", "/api/admin/partners/report"),
         ("POST", "/api/admin/partners/x1/active"),
+        ("POST", "/api/admin/partners/x1/phone"),
         ("POST", "/api/admin/partners/x1/payout"),
         ("POST", "/api/admin/partners/deliveries/o1/resend"),
     ])
@@ -574,13 +581,15 @@ class TestDeliveryOnDownload:
         assert msg["To"] == "print@reklamacity.example"
         assert msg["From"] == "BannerBot <noreply@test.invalid>"
         assert msg["Bcc"] == "owner@bannerbot.example"
-        assert msg["Subject"] == "Новый макет баннера 1×0.5 м: заказ abcdef12"
+        number = partner_naming.order_number("abcdef12-0000")
+        assert msg["Subject"] == f"Новый макет баннера 1×0.5 м: заказ {number}"
         att = _attachment(msg)
         assert att.get_content() == PDF_BYTES
-        assert att.get_filename() == "banner_1x0_5_abcdef12.pdf"
+        assert att.get_filename() == f"Заказ {number}, баннер 1×0.5 м.pdf"
         assert att.get_content_type() == "application/pdf"
         body = _body(msg)
-        assert "Реклама-Сити" in body and "abcdef12" in body and "Тест баннер" in body
+        assert "Реклама-Сити" in body and f"Заказ: {number}" in body and "Тест баннер" in body
+        assert "abcdef12" not in body and "abcdef12" not in msg["Subject"]  # служебный id клиенту и типографии не нужен
 
         conn = _db(init_test_db)
         row = conn.execute("SELECT * FROM partner_deliveries").fetchone()
@@ -943,3 +952,191 @@ class TestMailer:
                 "o1", "reklamacity", "1x1", json.dumps(VALID_CONFIG), PDF_BYTES,
             )
         assert ok is False
+
+
+# ---------------------------------------------------------------------------
+# Телефон типографии
+# ---------------------------------------------------------------------------
+class TestPhone:
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("90-20-55", "90-20-55"),
+        ("  +7 (843)   290-20-55 ", "+7 (843) 290-20-55"),
+        ("8 800 555 35 35", "8 800 555 35 35"),
+        ("", None),
+        ("   ", None),
+        (None, None),
+    ])
+    def test_normalize_phone(self, raw, expected):
+        assert partner_store.normalize_phone(raw) == expected
+
+    @pytest.mark.parametrize("raw", [
+        "123", "abc-de-fg", "90-20-55 <b>", "90-20-55; DROP", "+", "-90-20-55", "90-20-55-", "9" * 40,
+        "тел. 90-20-55", "90\n20\n55\x00",
+    ])
+    def test_rejects_bad_phone(self, raw):
+        with pytest.raises(PartnerError):
+            partner_store.normalize_phone(raw)
+
+    def test_create_with_and_without_phone(self, init_test_db):
+        assert _partner("with-phone", phone=" 90-20-55 ")["phone"] == "90-20-55"
+        assert _partner("no-phone")["phone"] is None
+        with pytest.raises(PartnerError):
+            _partner("bad-phone", phone="<script>")
+
+    def test_set_phone(self, init_test_db):
+        _partner()
+        assert partner_store.set_phone("reklamacity", "90-20-55") is True
+        assert partner_store.get_partner("reklamacity")["phone"] == "90-20-55"
+        assert partner_store.set_phone("reklamacity", None) is True
+        assert partner_store.get_partner("reklamacity")["phone"] is None
+        assert partner_store.set_phone("nobody", "90-20-55") is False
+        with pytest.raises(PartnerError):
+            partner_store.set_phone("reklamacity", "oops")
+
+    def test_old_database_without_the_column_is_migrated(self, tmp_path, monkeypatch):
+        # боевая БД создана до появления phone: init_db() обязан добавить колонку и не потерять партнёра
+        from web.api.db import init_db
+        path = str(tmp_path / "old.db")
+        monkeypatch.setenv("WEB_DB_PATH", path)
+        init_db()
+        conn = sqlite3.connect(path)
+        conn.execute("INSERT INTO partners (code, name, email, created_at) VALUES ('old', 'Старая', 'a@example.com', 'x')")
+        conn.execute("ALTER TABLE partners DROP COLUMN phone")
+        conn.commit()
+        assert "phone" not in {r[1] for r in conn.execute("PRAGMA table_info(partners)")}
+        conn.close()
+
+        init_db()
+        init_db()  # идемпотентно
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        assert "phone" in {r[1] for r in conn.execute("PRAGMA table_info(partners)")}, \
+            "в _COLUMN_MIGRATIONS нет ('partners', 'phone', ...)"
+        row = conn.execute("SELECT name, phone FROM partners WHERE code = 'old'").fetchone()
+        conn.close()
+        assert row["name"] == "Старая" and row["phone"] is None
+
+    @pytest.mark.asyncio
+    async def test_admin_sets_and_clears_phone(self, client, init_test_db):
+        _partner()
+        resp = await client.post("/api/admin/partners/ReklamaCity/phone", headers=_auth(), json={"phone": " 90-20-55 "})
+        assert resp.status_code == 200 and resp.json() == {"code": "reklamacity", "phone": "90-20-55"}
+        assert (await client.get("/api/partner/reklamacity")).json()["phone"] == "90-20-55"
+        listing = (await client.get("/api/admin/partners", headers=_auth())).json()
+        assert listing["partners"][0]["phone"] == "90-20-55"
+
+        resp = await client.post("/api/admin/partners/reklamacity/phone", headers=_auth(), json={"phone": None})
+        assert resp.status_code == 200 and resp.json()["phone"] is None
+        assert (await client.get("/api/partner/reklamacity")).json()["phone"] is None
+
+    @pytest.mark.asyncio
+    async def test_admin_phone_errors(self, client, init_test_db):
+        _partner()
+        bad = await client.post("/api/admin/partners/reklamacity/phone", headers=_auth(), json={"phone": "<b>"})
+        assert bad.status_code == 422
+        assert partner_store.get_partner("reklamacity")["phone"] is None
+        missing = await client.post("/api/admin/partners/nobody/phone", headers=_auth(), json={"phone": "90-20-55"})
+        assert missing.status_code == 404
+        junk = await client.post("/api/admin/partners/BAD%20CODE/phone", headers=_auth(), json={"phone": "90-20-55"})
+        assert junk.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_create_via_admin_accepts_phone(self, client, init_test_db):
+        resp = await client.post("/api/admin/partners", headers=_auth(), json={
+            "code": "rc", "name": "РС", "email": "p@example.com", "phone": "90-20-55",
+        })
+        assert resp.status_code == 200 and resp.json()["phone"] == "90-20-55"
+        bad = await client.post("/api/admin/partners", headers=_auth(), json={
+            "code": "rc2", "name": "РС", "email": "p@example.com", "phone": "x",
+        })
+        assert bad.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Имя файла, который скачивает клиент
+# ---------------------------------------------------------------------------
+class TestClientFilename:
+
+    async def _download(self, client, order_id: str):
+        token = create_token(order_id)
+        with _render_with("download", _ok_render):
+            return await client.get(f"/api/download/{token}")
+
+    @staticmethod
+    def _decoded_name(resp) -> str:
+        from urllib.parse import unquote
+        disposition = resp.headers["content-disposition"]
+        return unquote(disposition.split("filename*=UTF-8''", 1)[1])
+
+    @pytest.mark.asyncio
+    async def test_partner_order_file_says_the_number_and_the_phone(self, client, init_test_db, no_mail_env):
+        _partner(phone="90-20-55")
+        _insert_order(init_test_db, "abcdef12-0000", partner_code="reklamacity")
+        resp = await self._download(client, "abcdef12-0000")
+        number = partner_naming.order_number("abcdef12-0000")
+        assert resp.status_code == 200 and resp.content == PDF_BYTES
+        assert self._decoded_name(resp) == f"Заказ {number}, скажите его в Реклама-Сити по номеру 90-20-55.pdf"
+        assert resp.headers["x-order-number"] == number
+        # заголовок остаётся ASCII; для старых клиентов есть обычный filename
+        resp.headers["content-disposition"].encode("ascii")
+        assert f'filename="order_{number}.pdf"' in resp.headers["content-disposition"]
+        assert resp.headers["cache-control"] == "no-store"
+        assert resp.headers["x-order-id"] == "abcdef12-0000"
+
+    @pytest.mark.asyncio
+    async def test_without_phone_the_name_has_only_the_number(self, client, init_test_db, no_mail_env):
+        _partner()
+        _insert_order(init_test_db, "ord-0101", partner_code="reklamacity")
+        resp = await self._download(client, "ord-0101")
+        number = partner_naming.order_number("ord-0101")
+        assert self._decoded_name(resp) == f"Заказ {number}, скажите его в Реклама-Сити.pdf"
+
+    @pytest.mark.asyncio
+    async def test_phone_change_applies_to_the_next_download(self, client, init_test_db, no_mail_env):
+        _partner()
+        _insert_order(init_test_db, "ord-0102", partner_code="reklamacity")
+        partner_store.set_phone("reklamacity", "+7 (843) 290-20-55")
+        resp = await self._download(client, "ord-0102")
+        assert self._decoded_name(resp).endswith("по номеру +7 (843) 290-20-55.pdf")
+
+    @pytest.mark.asyncio
+    async def test_regular_order_keeps_the_old_name_and_has_no_number(self, client, init_test_db, mail_env):
+        _insert_order(init_test_db, "ord-0103")
+        resp = await self._download(client, "ord-0103")
+        assert resp.headers["content-disposition"] == 'attachment; filename="banner_1x0_5_ord-0103.pdf"'
+        assert "x-order-number" not in resp.headers
+
+    @pytest.mark.asyncio
+    async def test_disabled_partner_gets_the_regular_name(self, client, init_test_db, mail_env):
+        # у клиента страница уже без бренда: «скажите его в …» ему не поможет
+        _partner(phone="90-20-55")
+        _insert_order(init_test_db, "ord-0104", partner_code="reklamacity")
+        partner_store.set_active("reklamacity", False)
+        resp = await self._download(client, "ord-0104")
+        assert resp.headers["content-disposition"] == 'attachment; filename="banner_1x0_5_ord-0104.pdf"'
+        assert "x-order-number" not in resp.headers
+
+    @pytest.mark.asyncio
+    async def test_hostile_partner_name_cannot_break_the_header_or_the_file_name(self, client, init_test_db, no_mail_env):
+        _partner(name='A/B\\C:"D"‮.exe\r\nSet-Cookie: x=1')
+        _insert_order(init_test_db, "ord-0105", partner_code="reklamacity")
+        resp = await self._download(client, "ord-0105")
+        assert resp.status_code == 200
+        name = self._decoded_name(resp)
+        assert name.endswith(".pdf") and "‮" not in name
+        assert not any(ch in name for ch in '\\/:*?"<>|\r\n')
+        assert "set-cookie" not in resp.headers
+
+    @pytest.mark.asyncio
+    async def test_the_number_in_the_file_is_the_number_in_the_mail(self, client, init_test_db, mail_env):
+        _partner(phone="90-20-55")
+        _insert_order(init_test_db, "ord-0106", partner_code="reklamacity")
+        with patch(SEND, new=AsyncMock()) as send:
+            resp = await self._download(client, "ord-0106")
+        number = resp.headers["x-order-number"]
+        msg = send.await_args.args[0]
+        assert number in self._decoded_name(resp) and number in msg["Subject"] and f"Заказ: {number}" in _body(msg)
+        assert number in _attachment(msg).get_filename()
+        # типографии не нужно видеть собственное название и телефон в имени вложения
+        assert "скажите" not in _attachment(msg).get_filename()

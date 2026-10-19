@@ -1337,11 +1337,17 @@ async function downloadPdf(token) {
       throw err;
     }
 
+    // Партнёрский заказ: сервер называет файл «Заказ 482-915, скажите его в … по номеру …» и отдаёт номер
+    // в X-Order-Number. Для обычного заказа partnerFile = null, имя собирается здесь, как раньше.
+    const partnerFile = window.Partner
+      ? window.Partner.fromDownload(resp.headers.get("X-Order-Number"), resp.headers.get("Content-Disposition"))
+      : null;
+
     const blob = await resp.blob();
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href     = url;
-    a.download = `banner_${state.sizeKey === "custom"
+    a.download = (partnerFile && partnerFile.filename) || `banner_${state.sizeKey === "custom"
       ? `${state.customW}x${state.customH}mm`
       : state.sizeKey}_${Date.now()}.pdf`;
     document.body.appendChild(a);
@@ -1355,7 +1361,7 @@ async function downloadPdf(token) {
     hideModal(el.modalWait);
     rememberPaidOrder();
     el.amendOpen.classList.toggle("hidden", !state.orderId || state.amendUsed);
-    if (window.Partner) window.Partner.decorateSuccess(state.orderId);   // «копия ушла в типографию, номер заказа …»
+    if (window.Partner) window.Partner.decorateSuccess(partnerFile ? partnerFile.number : "");   // «копия ушла в типографию, номер заказа …, телефон …»
     showModal(el.modalSuccess);
   } catch (e) {
     hideModal(el.modalWait);

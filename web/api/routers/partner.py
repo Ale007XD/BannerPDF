@@ -4,12 +4,13 @@ partner.py
 Партнёры-типографии: брендированная страница конструктора, вознаграждение, отправка макета.
 
 Публичное:
-  GET  /api/partner/{code}  — название, логотип и цвет для брендирования (без почты и ставки)
+  GET  /api/partner/{code}  — название, логотип, цвет и рабочий телефон для брендирования (без почты и ставки)
 
 Админка (Bearer ADMIN_TOKEN):
   POST /api/admin/partners                                  — создать партнёра
   GET  /api/admin/partners                                  — список с суммами к выплате
   POST /api/admin/partners/{code}/active                    — включить / отключить
+  POST /api/admin/partners/{code}/phone                     — задать / убрать рабочий телефон
   GET  /api/admin/partners/report?month=ГГГГ-ММ             — сводка за месяц
   POST /api/admin/partners/{code}/payout                    — отметить выплаченным (всё или до конца месяца)
   POST /api/admin/partners/deliveries/{order_id}/resend     — повторить отправку макета на почту партнёра
@@ -73,10 +74,16 @@ class CreatePartnerRequest(BaseModel):
     logo_url:   Optional[str] = None
     accent:     Optional[str] = None
     reward_rub: int = partner_store.DEFAULT_REWARD_RUB
+    phone:      Optional[str] = None
 
 
 class ActiveRequest(BaseModel):
     active: bool
+
+
+class PhoneRequest(BaseModel):
+    # Пусто или null: убрать телефон (в имени файла останется только номер заказа)
+    phone: Optional[str] = None
 
 
 class PayoutRequest(BaseModel):
@@ -88,7 +95,7 @@ class PayoutRequest(BaseModel):
 async def admin_create_partner(body: CreatePartnerRequest):
     try:
         partner = partner_store.create_partner(
-            body.code, body.name, body.email, body.logo_url, body.accent, body.reward_rub,
+            body.code, body.name, body.email, body.logo_url, body.accent, body.reward_rub, body.phone,
         )
     except partner_store.PartnerError as e:
         raise _http_error(e) from None
@@ -115,6 +122,18 @@ async def admin_set_partner_active(code: str, body: ActiveRequest):
     if norm is None or not partner_store.set_active(norm, body.active):
         raise HTTPException(status_code=404, detail="Партнёр не найден")
     return {"code": norm, "active": body.active}
+
+
+@router.post("/admin/partners/{code}/phone", dependencies=[Depends(require_admin)])
+async def admin_set_partner_phone(code: str, body: PhoneRequest):
+    norm = partner_store.normalize_code(code)
+    try:
+        found = norm is not None and partner_store.set_phone(norm, body.phone)
+    except partner_store.PartnerError as e:
+        raise _http_error(e) from None
+    if not found:
+        raise HTTPException(status_code=404, detail="Партнёр не найден")
+    return {"code": norm, "phone": partner_store.normalize_phone(body.phone)}
 
 
 @router.post("/admin/partners/{code}/payout", dependencies=[Depends(require_admin)])

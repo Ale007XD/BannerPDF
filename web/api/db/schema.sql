@@ -169,6 +169,7 @@ CREATE TABLE IF NOT EXISTS partners (
     code       TEXT    PRIMARY KEY,         -- slug a-z0-9-, 2..32 символа; уходит в ссылку
     name       TEXT    NOT NULL,            -- название для шапки страницы
     email      TEXT    NOT NULL,            -- служебный адрес типографии (юрлицо/ИП), куда уходит макет; на сайт не отдаётся
+    phone      TEXT,                        -- публичный рабочий телефон типографии: попадает в имя скачанного файла и в окно после оплаты; NULL = без телефона
     logo_url   TEXT,                        -- /partners/<файл> (web/frontend/partners/); NULL = в шапке название текстом
     accent     TEXT,                        -- #rrggbb основного цвета интерфейса; NULL = цвет сайта
     reward_rub INTEGER NOT NULL DEFAULT 100,-- вознаграждение за оплаченный заказ (не больше суммы заказа)

@@ -43,6 +43,8 @@ ACCENT_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 LOGO_RE   = re.compile(r"^/partners/[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$")
 MONTH_RE  = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 _CONTROL  = re.compile(r"[\u0000-\u001f\u007f]")
+# Рабочий телефон типографии: цифры, пробелы, скобки, дефисы, ведущий «+»; «90-20-55», «+7 (843) 290-20-55»
+PHONE_RE  = re.compile(r"^\+?[0-9][0-9 ()\-]{3,28}[0-9]$")
 
 # Право на отправку, занятое и не завершённое дольше этого срока (процесс упал), можно занять заново
 DELIVERY_STALE_MINUTES = 10
@@ -76,6 +78,16 @@ def normalize_code(value: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 # Партнёры
 # ---------------------------------------------------------------------------
+def normalize_phone(value: str | None) -> str | None:
+    """Телефон типографии или None (не задан). PartnerError, если формат не подходит."""
+    phone = " ".join((value or "").split())
+    if not phone:
+        return None
+    if not PHONE_RE.match(phone):
+        raise PartnerError("Телефон: 5–30 символов, цифры, пробелы, скобки, дефисы, «+» в начале (например 90-20-55)")
+    return phone
+
+
 def create_partner(
     code: str,
     name: str,
@@ -83,6 +95,7 @@ def create_partner(
     logo_url: str | None = None,
     accent: str | None = None,
     reward_rub: int = DEFAULT_REWARD_RUB,
+    phone: str | None = None,
 ) -> dict:
     """Создаёт партнёра. PartnerError — неверные данные или код уже занят."""
     norm = normalize_code(code)
@@ -111,14 +124,16 @@ def create_partner(
     if not 0 <= reward_rub <= MAX_REWARD_RUB:
         raise PartnerError(f"Вознаграждение: от 0 до {MAX_REWARD_RUB} ₽")
 
+    clean_phone = normalize_phone(phone)
+
     try:
         with get_db() as conn:
             conn.execute(
                 """
-                INSERT INTO partners (code, name, email, logo_url, accent, reward_rub, active, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+                INSERT INTO partners (code, name, email, logo_url, accent, reward_rub, phone, active, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
                 """,
-                (norm, clean_name, clean_email, logo, clean_accent, reward_rub, _now()),
+                (norm, clean_name, clean_email, logo, clean_accent, reward_rub, clean_phone, _now()),
             )
     except sqlite3.IntegrityError:
         raise PartnerExists("Партнёр с таким кодом уже существует") from None
@@ -144,7 +159,7 @@ def get_active_partner(code: str | None) -> dict | None:
 
 
 def public_branding(code: str) -> dict | None:
-    """Данные для брендирования страницы. Почта и ставка наружу не отдаются."""
+    """Данные для брендирования страницы. Почта и ставка наружу не отдаются; телефон публичный: он в имени файла клиента."""
     partner = get_active_partner(code)
     if partner is None:
         return None
@@ -153,7 +168,16 @@ def public_branding(code: str) -> dict | None:
         "name":     partner["name"],
         "logo_url": partner["logo_url"],
         "accent":   partner["accent"],
+        "phone":    partner["phone"],
     }
+
+
+def set_phone(code: str, phone: str | None) -> bool:
+    """Меняет телефон партнёра (None или пусто — убрать). False, если такого партнёра нет; PartnerError — неверный формат."""
+    clean = normalize_phone(phone)
+    with get_db() as conn:
+        cur = conn.execute("UPDATE partners SET phone = ? WHERE code = ?", (clean, code))
+    return cur.rowcount == 1
 
 
 def set_active(code: str, active: bool) -> bool:
@@ -215,7 +239,7 @@ def list_partners() -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(
             """
-            SELECT p.code, p.name, p.email, p.logo_url, p.accent, p.reward_rub, p.active, p.created_at,
+            SELECT p.code, p.name, p.email, p.phone, p.logo_url, p.accent, p.reward_rub, p.active, p.created_at,
                    COUNT(a.id)                                                       AS orders,
                    COALESCE(SUM(a.reward_rub), 0)                                    AS earned_rub,
                    COALESCE(SUM(CASE WHEN a.paid_out_at IS NULL THEN a.reward_rub END), 0) AS unpaid_rub,

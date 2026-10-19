@@ -11,13 +11,20 @@
  * проверки макета. Нет ответа, 404 или сбой сети: страница обычная, заказ без партнёра.
  *
  * Все данные партнёра вставляются через textContent / атрибуты, никогда через innerHTML.
- * Чистые функции (extractCode, stripParam, shortOrderId) проверяет Node: tests/test_partner_frontend.py.
+ * Связь клиента с типографией без новых персональных данных: номер заказа (482-915) и публичный телефон
+ * типографии. Номер считает сервер и отдаёт в заголовке X-Order-Number скачивания, там же имя файла
+ * «Заказ 482-915, скажите его в Реклама-Сити по номеру 90-20-55.pdf» (fromDownload); этот скрипт
+ * только показывает их в окне после оплаты (decorateSuccess).
+ * Чистые функции (extractCode, stripParam, fromDownload, safePhone) проверяет Node: tests/test_partner_frontend.py.
  */
 (function (root) {
   "use strict";
 
   var CODE_RE = /^[a-z0-9][a-z0-9-]{1,31}$/;
   var ACCENT_RE = /^#[0-9a-fA-F]{6}$/;
+  var NUMBER_RE = /^\d{3}-\d{3}$/;
+  var PHONE_RE = /^\+?[0-9][0-9 ()\-]{3,28}[0-9]$/;      // как PHONE_RE в services/partner_store.py
+  var BAD_FILENAME_RE = /[\\/:*?"<>|\u0000-\u001f]/;
   var STORAGE_KEY = "bb_partner";
   var PENDING_CLASS = "partner-pending";
   var FETCH_TIMEOUT_MS = 4000;
@@ -41,9 +48,26 @@
     return s ? "?" + s : "";
   }
 
-  /** Номер заказа для клиента и типографии: первые 8 символов (как в письме и имени вложения). */
-  function shortOrderId(orderId) {
-    return String(orderId || "").slice(0, 8);
+  /**
+   * Номер заказа и имя файла из ответа скачивания: заголовки X-Order-Number и Content-Disposition
+   * (filename*=UTF-8''…). null для обычного заказа: имя файла тогда собирает app.js, как раньше.
+   * Имя файла null, если оно не разобралось или выглядит подозрительно: тогда тоже имя по умолчанию.
+   */
+  function fromDownload(number, disposition) {
+    if (!NUMBER_RE.test(String(number || ""))) return null;
+    var filename = null;
+    var m = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(String(disposition || ""));
+    if (m) {
+      try { filename = decodeURIComponent(m[1].trim()); } catch (_) { filename = null; }
+    }
+    if (filename && (!/\.pdf$/i.test(filename) || BAD_FILENAME_RE.test(filename) || filename.length > 150)) filename = null;
+    return { number: number, filename: filename };
+  }
+
+  /** Телефон типографии только в том виде, который принимает сервер; иначе null (в окне покажем без телефона). */
+  function safePhone(value) {
+    var phone = String(value == null ? "" : value).trim();
+    return PHONE_RE.test(phone) ? phone : null;
   }
 
   var api = {
@@ -55,7 +79,8 @@
     decorateSuccess: function () {},
     extractCode: extractCode,
     stripParam: stripParam,
-    shortOrderId: shortOrderId,
+    fromDownload: fromDownload,
+    safePhone: safePhone,
   };
 
   root.Partner = api;
@@ -138,12 +163,16 @@
     renderStrip(brand);
     renderConfirmNotice(brand);
 
-    api.decorateSuccess = function (orderId) {
+    // number: «482-915» из ответа скачивания (fromDownload(...).number) или пусто
+    api.decorateSuccess = function (number) {
       var node = document.getElementById("success-text");
       if (!node || !brand.delivers) return;
       var text = "PDF-файл скачивается. Копия макета отправляется в «" + brand.name + "».";
-      var short = shortOrderId(orderId);
-      if (short) text += " Номер заказа: " + short + ", назовите его в типографии.";
+      if (NUMBER_RE.test(String(number || ""))) {
+        var phone = safePhone(brand.phone);
+        text += " Номер заказа: " + number + " (он же в названии файла). ";
+        text += phone ? "Назовите его в типографии по телефону " + phone + "." : "Назовите его в типографии.";
+      }
       node.textContent = text;
     };
   }
