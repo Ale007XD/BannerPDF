@@ -19,6 +19,7 @@
 - [FSM заказов](#fsm-заказов)
 - [Авторизация](#авторизация)
 - [Флоу оплаты (текущий)](#флоу-оплаты-текущий)
+- [Промокоды](#промокоды)
 - [Реферальная программа](#реферальная-программа)
 - [Партнёры-типографии](#партнёры-типографии)
 - [Корп. API тарифы](#корп-api-тарифы)
@@ -28,6 +29,7 @@
 - [Telegram через Cloudflare Worker](#telegram-через-cloudflare-worker)
 - [152-ФЗ](#152-фз)
 - [Pending tasks](#pending-tasks)
+- [Персональные данные, счётчики, журналы](#персональные-данные-счётчики-журналы)
 
 ---
 
@@ -37,6 +39,7 @@
 |---|---|
 | Готовность | **99%** — сайт запущен, принимает боевые платежи |
 | URL | `https://bannerbot.ru` |
+| Партнёры | Первый партнёр «Реклама-Сити» (`reklamasity`) подключён и работает на проде: брендированная страница, почта через SMTP Яндекса, статистика в `/admin/partners/`. Боевое письмо на ящик типографии ждёт подтверждения (см. Pending tasks) |
 | Что готово | Весь бэкенд (P0 закрыты), фронтенд (превью, кастомный размер, шрифты в кнопках, ЮКасса-виджет, промокоды), FSM заказов, E2E флоу оплаты (ЮКасса → webhook → PDF) + бесплатный флоу по промокоду, TG-уведомления (`@BannerBotInfo_bot`), корп. API с тарифом Trial, adminка, боевые ключи ЮКасса, партнёрский конструктор для типографий (брендирование, 100 ₽ за заказ, макет на почту типографии) |
 | Что осталось | Реферальные команды бота · тесты корп. API |
 
@@ -81,6 +84,9 @@
                         │  • /api/payment/*    (ЮКасса)        │
                         │  • /api/download/*   (GS)             │
                         │  • /api/admin/*      (force_token)    │
+                        │  • /api/promo/check   (код без списания)│
+                        │  • /api/partner/*     (брендинг типографий)│
+                        │  • /api/beat          (счётчик без IP)│
                         │  • /api/referral/*                    │
                         │  • /api/v1/*         (Corp API)       │
                         │  • /api/tg/callback  (TG webhook)     │
@@ -99,6 +105,7 @@
                          └─ FSM: pending→paid→token_issued
                          └─ editMessageText в TG (@BannerBotInfo_bot, статус «💳 Оплачено»)
                          └─ Клиент получает PDF автоматически (поллинг)
+                         └─ партнёрский заказ: +100 ₽ типографии; при скачивании копия PDF на её почту (SMTP)
 
   @BannerPrintBot ────► POST /api/referral/internal/create
                             (X-Bot-Secret)
@@ -127,16 +134,26 @@ BannerPDF/
 ├── .github/
 │   └── workflows/
 │       ├── deploy-web.yml        # Деплой сайта при push в main
-│       └── ci-web.yml            # CI: ruff + pytest
+│       ├── ci-web.yml            # CI: ruff + pytest (Python 3.11, Ghostscript)
+│       └── ruff-fix.yml          # Ручной запуск: автоисправление ruff
+│
+├── API.md                        # Документация корп. API (/api/v1) для клиентов
+├── docs/partners/                # Скриншоты для раздела «Партнёры-типографии»
 │
 ├── web/                          # Сайт
 │   ├── Dockerfile
 │   ├── docker-compose.yml
 │   ├── requirements.txt
+│   ├── requirements-test.txt     # pytest, pytest-asyncio (CI ставит поверх основных)
 │   ├── ruff.toml                 # known-first-party=['web']
 │   ├── pytest.ini                # testpaths=web/tests, PYTHONPATH=.
 │   ├── templates.json            # Размеры, шрифты, цвета — источник для GET /api/templates
 │   ├── migrate_add_yookassa.py   # Миграция: yookassa_payment_id + tg_message_id
+│   ├── migrate_add_trial_plan.py # Миграция: тариф Trial (идемпотентно)
+│   ├── fonts/                    # TTF для PDF (в репо, монтируются в контейнер)
+│   ├── profiles/                 # ICC-профиль (не используется: PDF пишется в чистом DeviceCMYK)
+│   ├── seo/build_pages.py        # Генератор статических SEO-страниц и /privacy/ (python web/seo/build_pages.py)
+│   ├── utils/                    # api_check.py, evidence.py: сквозные проверки корп. API по ключу
 │   │
 │   ├── api/
 │   │   ├── main.py               # FastAPI app + lifespan
@@ -151,6 +168,7 @@ BannerPDF/
 │   │   │   ├── admin.py          # stats|orders|funnel + force_token + order audit + промокоды (выдача, список, отчёт)
 │   │   │   ├── promo.py          # POST /api/promo/check — скидка и цена по коду без списания
 │   │   │   ├── partner.py        # Партнёры-типографии: GET /api/partner/{code} + админка /api/admin/partners*
+│   │   │   ├── stat.py           # POST /api/beat (счётчик) + GET /api/admin/events
 │   │   │   ├── push.py           # /api/admin/push/* — подписка устройств админа (Web Push)
 │   │   │   ├── referral.py       # Реферальная программа
 │   │   │   ├── corp_api.py       # Корп. API (Trial + платные тарифы)
@@ -165,6 +183,10 @@ BannerPDF/
 │   │       ├── payment.py           # ЮКасса: create_payment(), verify_yookassa_payment()
 │   │       ├── token_store.py       # create_token(), consume_token() — SQLite
 │   │       ├── order_store.py       # save_pending(), get_pending() — SQLite
+│   │       ├── stat_store.py        # Счётчик посещений и действий без идентификаторов (stat_counters)
+│   │       ├── conversions.py       # Серверные события воронки: оплата и выдача файла
+│   │       ├── retention.py         # Стирание текста макета, IP и User-Agent через ORDER_PII_RETENTION_DAYS
+│   │       ├── pdf_check.py         # Самопроверка печатного PDF (stdlib)
 │   │       ├── push_notify.py       # Web Push (VAPID) админу: push_new_order(), push_order_paid()
 │   │       ├── promo_store.py       # промокоды: reserve() атомарно, calc_amount(), release_*, create_promo()
 │   │       ├── referral_store.py    # accrue_commission() 15%
@@ -179,23 +201,28 @@ BannerPDF/
 │   │
 │   ├── frontend/
 │   │   ├── index.html            # Конструктор + модалка #modal-pay (ЮКасса embedded-виджет)
-│   │   ├── style.css             # v7: mobile-first, sticky превью, двухколонка ≥820px
-│   │   ├── app.js                # v13: openYooKassaWidget(), поллинг, FONT_CSS_MAP, промокоды
+│   │   ├── style.css             # mobile-first, sticky превью, двухколонка ≥820px; правила партнёра `.logo--partner`
+│   │   ├── app.js                # конструктор: виджет ЮKassa, поллинг, шрифты, промокоды, правка текста
+│   │   ├── kit.js                # Собственный счётчик событий (POST /api/beat), без cookie
+│   │   ├── <slug>/index.html     # SEO-страницы (razmery-bannerov, baner-3-na-2 и др.), генерируются seo/build_pages.py
+│   │   ├── privacy/, requisites.html  # Политика и реквизиты
+│   │   ├── fonts/                # woff2 для сайта (без внешних шрифтов)
 │   │   ├── partner.js            # Брендирование под типографию (?partner=<code>), уведомление о передаче макета
 │   │   ├── prefill.js            # Предзаполнение конструктора из адреса (?size=&text1=&bg=&color=&font=)
 │   │   ├── partners/             # Логотипы типографий (SVG в UTF-8 / PNG), раздаются как /partners/<файл>
 │   │   └── admin/
 │   │       ├── index.html        # Adminка: заказы, корп. ключи (Trial бейдж), карточка «Уведомления»; в шапке навигация ЗАКАЗЫ · СТАТИСТИКА · ПАРТНЁРЫ
-│   │       ├── stats/index.html  # /admin/stats/: счётчики событий (воронка, SEO)
+│   │       ├── stats/index.html  # /admin/stats/: счётчики событий (GET /api/admin/events: воронка, SEO)
 │   │       ├── partners/index.html  # /admin/partners/: статистика партнёров за период, выгрузка CSV
 │   │       ├── sw.js             # Service worker: только Web Push, без кэша
 │   │       ├── manifest.json     # PWA: установка на экран «Домой»
 │   │       └── icons/            # 192/512 + maskable 512
 │   │
 │   ├── nginx/
-│   │   ├── default.conf          # Server-блоки: 80→443 редирект, 443 HTTPS (включая /api/tg/callback)
+│   │   ├── nginx.conf            # Глобальные настройки: log_format с обезличенным IP, зоны лимитов
+│   │   ├── default.conf          # Server-блоки: 80→443 редирект, 443 HTTPS, http2, точные location с лимитами
 │   │   └── partner-redirect.example.conf  # Шаблон: редирект домена типографии на ?partner=<code> (не подключается сам)
-│   │                             # ⚠️ nginx.conf и proxy_params НЕ монтировать
+│   │                             # Оба файла (nginx.conf, default.conf) монтируются по одному; proxy_params не используется
 │   │
 │   ├── ops/
 │   │   ├── logrotate-bannerbot   # Ротация журналов nginx (14 дней)
@@ -207,7 +234,6 @@ BannerPDF/
 │   └── tests/
 │       ├── conftest.py
 │       ├── test_fsm.py
-│       ├── test_hmac.py
 │       ├── test_token_store.py
 │       ├── test_order_store.py
 │       ├── test_sanitizer.py
@@ -219,7 +245,8 @@ BannerPDF/
 │       ├── test_partner_naming.py      # Номер заказа 482-915, имя файла, Content-Disposition
 │       ├── test_partner_stats.py       # Статистика партнёров: периоды, границы суток, CSV
 │       ├── test_admin_pages.py         # Навигация между страницами админки, страница партнёров
-│       └── test_partner_frontend.py    # partner.js, проводка в index.html/app.js/nginx, SVG-логотипы, политика
+│       ├── test_partner_frontend.py    # partner.js, проводка в index.html/app.js/nginx, SVG-логотипы, политика
+│       └── …                           # всего 40 файлов, см. раздел «Тесты»
 │
 └── bot/                          # Telegram-бот (отдельный контейнер)
     └── ...
@@ -232,7 +259,7 @@ BannerPDF/
 ### Требования
 
 - Docker + Docker Compose
-- Шрифты TTF: `GolosText-Bold.ttf`, `TenorSans-Regular.ttf`, `FiraSansCondensed-ExtraBold.ttf`, `PTSansNarrow-Bold.ttf`, `Caveat-Bold.ttf` (OFL, лицензия `OFL-Caveat.txt`)
+- Шрифты TTF лежат в репо (`web/fonts/`: `GolosText-Bold`, `TenorSans-Regular`, `FiraSansCondensed-ExtraBold`, `PTSansNarrow-Bold`, `Caveat-Bold`, лицензии OFL), монтируются в контейнер
 
 > ❌ `FiraSans-Regular.ttf` и `IgraSans-Regular.ttf` на сервере отсутствуют — не использовать.
 
@@ -245,19 +272,17 @@ cd BannerPDF/web
 
 ### 2. Переменные окружения
 
+Шаблона `.env.example` в репо нет: создайте `web/.env` вручную (полный список переменных: раздел «Переменные окружения»).
+
 ```bash
-cp .env.example .env
-# Заполнить: ADMIN_TOKEN, BOT_INTERNAL_SECRET, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY
+# Минимум: ADMIN_TOKEN, BOT_INTERNAL_SECRET, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, SITE_BASE_URL
 # TG_NOTIFY_TOKEN, TG_ADMIN_CHAT_ID, TG_WEBHOOK_SECRET — для TG-уведомлений
+# SMTP_* — для писем партнёрам
 ```
 
-### 3. Подготовка шрифтов
+### 3. Шрифты
 
-```bash
-mkdir -p fonts
-# Скопировать TTF-шрифты в fonts/
-# ICC-профиль не нужен: PDF пишется чистым DeviceCMYK без встроенного профиля
-```
+Ничего делать не нужно: шрифты в `web/fonts/`. ICC-профиль не нужен: PDF пишется чистым DeviceCMYK без встроенного профиля.
 
 ### 4. Запуск
 
@@ -268,13 +293,12 @@ docker compose up -d --build
 ### 5. Проверка
 
 ```bash
-curl http://localhost:8000/api/health
+# порт 8000 наружу не публикуется (expose), проверка изнутри контейнера, как в деплое
+docker exec bannerprint_api python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/api/health').read())"
 # {"status":"ok","service":"bannerprint"}
 ```
 
-Сайт: `http://localhost`
-Adminка: `http://localhost/admin/`
-Swagger: `http://localhost/api/docs`
+`default.conf` ссылается на сертификат Let's Encrypt (`/etc/letsencrypt/live/bannerbot.ru/`): без него контейнер nginx локально не стартует. Для разработки хватает контейнера `api` (`docker compose up -d --build api`) и проверки выше; сайт и админка по `https://bannerbot.ru` и `/admin/` работают только на сервере с сертификатом.
 
 ---
 
@@ -296,12 +320,12 @@ Swagger: `http://localhost/api/docs`
 
 ### Автоматический деплой (GitHub Actions)
 
-При `push` в `main` с изменениями в `web/**` автоматически запускается `.github/workflows/deploy-web.yml`:
+При любом `push` в `main` автоматически запускается `.github/workflows/deploy-web.yml` (CI с ruff и pytest, `ci-web.yml`, идёт отдельно и срабатывает при изменениях в `web/**`):
 
-1. Копирует файлы на VPS через SCP (`web/` → `<DEPLOY_PATH>/`)
-2. `docker compose build --no-cache api && docker compose up -d --force-recreate --remove-orphans`
+1. Копирует весь репозиторий на VPS через SCP (в каталог `<DEPLOY_PATH>`; `.env` в репо нет и остаётся на сервере нетронутым)
+2. `cd web && docker compose build api && docker compose up -d --force-recreate --remove-orphans`: пересоздаются оба контейнера, поэтому изменения `nginx.conf` и `default.conf` (одиночные bind mount) подхватываются
 3. `docker image prune -f`
-4. Health check через `urllib.request` внутри контейнера
+4. Health check изнутри контейнера: до 12 попыток с паузой 5 с (60 с), при неудаче в лог выводятся последние 50 строк `api`
 
 **Необходимые секреты в GitHub:**
 
@@ -314,14 +338,10 @@ VPS_SSH_KEY   — приватный SSH-ключ
 ### Файлы вне репо (монтируются как volume)
 
 ```
-<DEPLOY_PATH>/fonts/
-  GolosText-Bold.ttf
-  TenorSans-Regular.ttf
-  FiraSansCondensed-ExtraBold.ttf
-  PTSansNarrow-Bold.ttf
-
-<DEPLOY_PATH>/.env   # секреты
+<DEPLOY_PATH>/web/.env   # секреты (в репо нет, деплой его не трогает)
 ```
+
+Шрифты (`web/fonts/`), `templates.json` и `frontend/` приезжают вместе с репозиторием.
 
 ### SSL-сертификат
 
@@ -329,7 +349,7 @@ VPS_SSH_KEY   — приватный SSH-ключ
 Домен:    bannerbot.ru
 Cert:     /etc/letsencrypt/live/bannerbot.ru/fullchain.pem
 Key:      /etc/letsencrypt/live/bannerbot.ru/privkey.pem
-Истекает: 2026-12-xx
+Срок:     проверка: `echo | openssl s_client -connect bannerbot.ru:443 -servername bannerbot.ru 2>/dev/null | openssl x509 -noout -enddate`
 ```
 
 ### Перезагрузка Nginx без даунтайма
@@ -360,7 +380,10 @@ docker exec bannerprint_nginx nginx -s reload
 | `WEB_DB_PATH` | Путь к SQLite БД | `/app/data/banner_web.db` |
 | `FONTS_DIR` | Директория с TTF-шрифтами | `/app/fonts` |
 | `BATCH_DIR` | Временная директория для batch ZIP | `/tmp/bannerprint_batches` |
-| `UVICORN_WORKERS` | Количество воркеров (строго 1) | `1` |
+| `UVICORN_WORKERS` | Справочная переменная из Dockerfile; число воркеров задаёт `CMD` (`--workers 1`), строго 1 | `1` |
+| `ORDER_PII_RETENTION_DAYS` | Через сколько дней после оплаты стираются текст макета, IP и User-Agent заказа (`services/retention.py`) | `14` |
+| `BATCH_MAX_FILE_BYTES` | Максимальный размер CSV для batch-рендера | `1000000` |
+| `FRONTEND_DIR`, `TEMPLATES_PATH` | Каталог статики и путь к `templates.json` внутри контейнера (заданы в Dockerfile) | `/app/frontend`, `/app/templates.json` |
 | `VAPID_PRIVATE_KEY` | Приватный ключ Web Push (VAPID). Пусто — push в админку выключен | `genkey`, см. «Web Push» |
 | `VAPID_SUBJECT` | Контакт в VAPID-токене (`mailto:` или `https://`) | по умолчанию `SITE_BASE_URL` |
 | `SMTP_HOST` | SMTP-сервер для писем типографиям-партнёрам. Пусто — почта выключена, макеты не отправляются | `smtp.example.ru` |
@@ -385,8 +408,11 @@ POST /api/order                    — Создание заказа → {order_
 POST /api/order/{id}/abandon       — Заказ не оплачен (окно оплаты закрыли): вернуть использование промокода → {released: bool}
 POST /api/promo/check              — Проверка промокода → {valid, discount, price, final_price, free} | {valid:false, message}
 GET  /api/payment/status/{id}      — Статус заказа (поллинг)
+GET  /api/order/{id}/amend         — Доступна ли единственная бесплатная правка текста (24 ч после оплаты) и текущий текст
+POST /api/order/{id}/amend         — Применить правку текста; новый PDF по новому токену
+POST /api/beat                     — Собственный счётчик событий (204; IP не передаётся и не логируется)
 POST /api/payment/callback         — Webhook от ЮКасса (verify_yookassa_payment() ПЕРВЫМ)
-GET  /api/download/{token}         — Скачать PDF (10 RPM/IP, burst 3, одноразовый токен TTL 15 мин; 429 токен не расходует)
+GET  /api/download/{token}         — Скачать PDF (10 RPM/IP, burst 3, токен TTL 15 мин и до 3 успешных выдач; 429 токен не расходует)
 GET  /api/referral/stats/{code}    — Статистика реферального кода
 GET  /api/partner/{code}           — Брендинг партнёра-типографии: название, логотип, цвет, телефон, delivers (кэш 5 мин; 404 — неизвестный или отключён)
 ```
@@ -419,6 +445,9 @@ POST /api/referral/internal/create  — Создание реф. кода (X-Bot
 GET        /api/admin/stats                  — Общая статистика
 GET        /api/admin/orders                 — Список заказов с пагинацией
 GET        /api/admin/funnel                 — Воронка конверсии
+GET        /api/admin/events                 — Счётчики событий за ?days=1–365 (страница `/admin/stats/`)
+GET        /api/admin/order/{id}/audit       — Аудит заказа: акцепт, текст до и после правки, история выдач
+GET        /api/admin/audit/by-payment/{id}  — То же по ID платежа ЮKassa
 POST       /api/admin/force_token/{order_id} — Ручная выдача PDF-токена
 POST       /api/admin/promo                  — Выдать промокод {discount 1–100, uses 1–1000, code?, expires_in_days?, note?}
 GET        /api/admin/promo                  — Список промокодов: остаток, оплачено, статус
@@ -484,7 +513,7 @@ web_orders(
   partner_code TEXT                 -- партнёр-типография, с чьей страницы пришёл заказ; NULL — обычный заказ
 )
 
-download_tokens(token, order_id, expires_at, used)  -- TTL 15 мин
+download_tokens(token, order_id, expires_at, used, downloads)  -- TTL 15 мин, до 3 успешных выдач (used=1 при исчерпании)
 pending_orders(order_id, config_json, expires_at)   -- TTL 30 мин
 promo_codes(code, uses_left, expires_at, discount, uses_total, created_at, note, active)
                                                      -- discount: % скидки, 100 → бесплатно; uses_left списывается
@@ -495,11 +524,15 @@ batch_jobs(id, api_key_id, status, total, done, errors_json, expires_at, charged
 partners(code PK, name, email, phone, logo_url, accent, reward_rub, active, created_at)  -- типографии-партнёры; email на сайт не отдаётся
 partner_accruals(id, partner_code FK, order_id UNIQUE, order_amount, reward_rub, created_at, paid_out_at)  -- одно начисление на оплаченный заказ
 partner_deliveries(order_id, config_hash, partner_code, created_at, sent_at, error, attempts)  -- письмо с макетом: одна запись на версию макета
+push_subscriptions(id, endpoint UNIQUE, p256dh, auth, user_agent, fail_count, created_at, last_ok_at)  -- устройства админа (Web Push)
+stat_counters(day, event, page, source, detail, n)  -- суммарные счётчики за день, без идентификаторов
 referrers(ref_code, balance_rub, created_at)
 referrals(id, referrer_id, order_id, order_amount, commission, ...)
 ```
 
 ### Миграции
+
+Новые таблицы и колонки применяются сами при старте контейнера: `init_db()` выполняет `schema.sql` и `_COLUMN_MIGRATIONS` (`web/api/db/__init__.py`), идемпотентно. Новая колонка = строка в `schema.sql` плюс запись в `_COLUMN_MIGRATIONS`. Ручные скрипты ниже исторические, нужны только для очень старых баз.
 
 ```bash
 # Колонки yookassa_payment_id и tg_message_id (если БД создана до миграции):
@@ -561,6 +594,8 @@ PENDING ──[ttl_expired]──► EXPIRED
 PAID    ──[ttl_expired]──► EXPIRED
 ```
 
+Переход `ttl_expired` описан в таблице FSM, но в боевом коде не вызывается: статус `expired` у заказов практически не встречается, просроченные `pending_orders` убирает фоновый cleanup.
+
 Все переходы — только через `transition(order_id, event)`. Прямой `UPDATE status` в обход FSM запрещён. `force_token` делает оба перехода последовательно: `PENDING→PAID→TOKEN_ISSUED`.
 
 ---
@@ -609,6 +644,8 @@ api_key:    bp_live_<32 chars base64url>
 5. Фронтенд показывает модалку успеха → PDF скачивается мгновенно
 6. TG: «✅ PDF выдан автоматически по промокоду XXXX»
 ```
+
+Заказ со страницы типографии (`partner_code`) идёт тем же флоу; отличия (начисление 100 ₽ на `paid`, копия PDF на почту типографии при скачивании, имя файла с номером заказа) описаны в разделе «Партнёры-типографии».
 
 **Тестовые карты ЮКасса:**
 
@@ -774,7 +811,7 @@ EOF
 ### Логотип партнёра
 
 - Файл лежит в `web/frontend/partners/<имя>`, в партнёре указывается `logo_url` = `/partners/<имя>` (формат `^/partners/[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$`). Внешние адреса запрещены: браузер посетителя не должен обращаться к чужому хосту (`/privacy/`).
-- На сервер файл попадает через `git pull`: каталог `frontend` смонтирован в nginx, пересборка не нужна.
+- На сервер файл попадает с обычным деплоем (push в `main`, см. «Деплой на VPS»; при ручном обновлении `git pull`): каталог `frontend` смонтирован в nginx, пересборка образа не нужна.
 - SVG или PNG. В шапке высота всегда 28 px, поэтому размер SVG в файле не важен (CorelDRAW задаёт миллиметры: 13×3.8 мм без фикса высоты рисовались 49×14 px). У PNG берите высоту от 56 px (2×), иначе он размоется. Плашка белая: подходят любые цвета логотипа, в том числе тёмные.
 - **SVG только в UTF-8 без BOM.** CorelDRAW по умолчанию сохраняет UTF-16: Chromium такой файл в `<img>` показывает, остальные браузеры не обязаны. Перекодировать:
   ```bash
@@ -888,7 +925,7 @@ v=$(grep '^SMTP_PASSWORD=' .env | cut -d= -f2- | tr -d '\r\n'); printf 'в .env:
 
 ### Эксплуатация
 
-Админка пока только API (вкладки в панели нет). Все запросы с `Authorization: Bearer $ADMIN_TOKEN`.
+Статистика и выгрузка CSV есть в браузере: `/admin/partners/` (ниже). Управление партнёрами (создание, телефон, отключение, выплата, повтор письма) пока только через API, вкладки для него нет. Запросы с `Authorization: Bearer $ADMIN_TOKEN`.
 
 | Запрос | Что делает |
 |---|---|
@@ -960,12 +997,12 @@ PY
 
 | Симптом | Причина и что делать |
 |---|---|
-| Логотип не виден или очень мелкий | На сервере старый CSS: до `style.css?v=22` логотип в SVG с размером в миллиметрах рисовался 49×14 px. Проверка: `curl -s https://bannerbot.ru/ \| grep -o 'style.css?v=[0-9]*'` (нужно `v=22` и выше), `git pull`, затем Ctrl+F5 |
-| Вместо логотипа текст названия | Файл не загрузился: 404 (не сделан `git pull`, опечатка в `logo_url`) или SVG в UTF-16/битый. `curl -sI https://bannerbot.ru/partners/<файл>` должен дать 200 и `image/svg+xml`; кодировка: см. «Логотип партнёра» |
+| Логотип не виден или очень мелкий | На сервере старый CSS: до `style.css?v=22` логотип в SVG с размером в миллиметрах рисовался 49×14 px. Проверка: `curl -s https://bannerbot.ru/ \| grep -o 'style.css?v=[0-9]*'` (нужно `v=22` и выше), деплой (или `git pull`), затем Ctrl+F5 |
+| Вместо логотипа текст названия | Файл не загрузился: 404 (деплой не прошёл или не сделан `git pull`, опечатка в `logo_url`) или SVG в UTF-16/битый. `curl -sI https://bannerbot.ru/partners/<файл>` должен дать 200 и `image/svg+xml`; кодировка: см. «Логотип партнёра» |
 | Страница без брендинга | Код в ссылке не совпадает с кодом партнёра, партнёр отключён или `GET /api/partner/<код>` не отдаёт 200 |
 | `partner` пропал из адресной строки | Так задумано, код держится в `sessionStorage` вкладки. Делитесь исходной ссылкой, а не скопированной из браузера |
 | Бренд остался на обычной ссылке | Та же вкладка помнит код партнёра: откройте новую вкладку или приватное окно |
-| Клиент назвал номер заказа, а письма с ним нет | Поиск по номеру в теме письма типографии; на сервере `docker logs bannerprint_api --since 14d 2>&1 \| grep "№ 482-915"` покажет `order_id` отправки. Нет строки: письмо не уходило, смотрите `failed_deliveries` и «Письмо не пришло». Номер не секрет и ничего не открывает: файл выдаётся только по одноразовому токену |
+| Клиент назвал номер заказа, а письма с ним нет | Поиск по номеру в теме письма типографии; на сервере `docker logs bannerprint_api --since 14d 2>&1 \| grep "№ 482-915"` покажет `order_id` отправки. Нет строки: письмо не уходило, смотрите `failed_deliveries` и «Письмо не пришло». Номер не секрет и ничего не открывает: файл выдаётся только по токену скачивания (TTL 15 мин, до 3 выдач) |
 | Письмо не пришло | `docker logs bannerprint_api --since 1h 2>&1 \| grep "Макет заказа"`, `failed_deliveries` в `GET /api/admin/partners`, раздел «Почта партнёрам» |
 | `409` при создании партнёра | Код занят, в том числе заведённый ранее с ошибкой: исправьте или удалите через базу (раздел «Эксплуатация») |
 | Заказ с промокодом 100% ничего не начислил | Так задумано: начисление `min(ставка, оплачено)`, оплачено 0 ₽. Письмо типографии при этом уходит |
@@ -1023,23 +1060,27 @@ curl -X POST https://bannerbot.ru/api/v1/admin/keys \
 ```bash
 PYTHONPATH=. pytest web/tests/ -v
 
-# Только юнит-тесты (без HTTP)
-PYTHONPATH=. pytest web/tests/test_fsm.py web/tests/test_hmac.py -v
+# Только FSM и хранилища (без HTTP)
+PYTHONPATH=. pytest web/tests/test_fsm.py web/tests/test_token_store.py web/tests/test_order_store.py -v
+
+# Линтер (как в CI, ruff==0.4.4)
+ruff check web/api/ web/tests/
 ```
 
-| Файл | Что проверяет |
-|---|---|
-| `test_fsm.py` | Все переходы FSM, guard, идемпотентность |
-| `test_hmac.py` | SHA256 верификация webhook |
-| `test_token_store.py` | create/consume/cleanup токенов |
-| `test_order_store.py` | save/get/delete/cleanup pending_orders |
-| `test_sanitizer.py` | sanitize_line, validate_banner_config |
-| `test_order_api.py` | HTTP: POST /api/order, GET /api/payment/status |
-| `test_payment_webhook.py` | HTTP: webhook, FSM через HTTP |
-| `test_preview_api.py` | HTTP: POST /api/preview, size_key, кастомный размер |
-| `test_renderer_preview.py` | build_render_data, executor lifecycle |
+Последний прогон: 1087 passed, 47 skipped (пропущены тесты печатного PDF без Ghostscript; в CI Ghostscript ставится и они выполняются).
 
-GS замокан в `conftest.py` — тесты работают без Ghostscript и Docker.
+| Группа | Файлы | Что проверяют |
+|---|---|---|
+| Заказы и оплата | `test_fsm`, `test_order_api`, `test_order_store`, `test_order_amend`, `test_order_consent`, `test_order_latency`, `test_custom_order`, `test_payment_webhook`, `test_token_store`, `test_download_api` | Переходы FSM, создание заказа, акцепт, бесплатная правка текста, webhook, токены скачивания |
+| Промокоды | `test_promo`, `test_promo_report` | Резерв, возврат, автовозврат, отчёт |
+| Партнёры | `test_partner`, `test_partner_naming`, `test_partner_stats`, `test_partner_frontend`, `test_ops_partner_mail_check`, `test_admin_pages` | Начисления, письма, номер заказа и имя файла, статистика и CSV, `partner.js`, логотипы, навигация админки, скрипт проверки почты |
+| Рендер и PDF | `test_preview_api`, `test_renderer_preview`, `test_print_pdf`, `test_diagonal_watermark`, `test_fonts`, `test_sanitizer` | Превью, печатный PDF (чистый CMYK, масштаб 1:1; нужен Ghostscript), шрифты, санитайзер |
+| Корп. API | `test_batch_charge`, `test_batch_validation` | Лимиты и валидация batch |
+| Сайт и статика | `test_static_site`, `test_site_defaults`, `test_seo_pages`, `test_prefill`, `test_kit_js`, `test_stat`, `test_conversions`, `test_privacy` | Версии ассетов, SEO-страницы, предзаполнение, счётчик, соответствие политики коду |
+| Админка и уведомления | `test_admin_audit`, `test_push`, `test_tg_notify`, `test_tg_relay` | Аудит заказа, Web Push, Telegram и Worker |
+| Прочее | `test_db_migration`, `test_router_wiring` | Миграции колонок, подключение роутеров |
+
+В `conftest.py` рендер через `ProcessPoolExecutor` замокан: почти все тесты работают без Ghostscript и Docker. Исключение: `test_print_pdf.py` вызывает настоящий Ghostscript и без него пропускается.
 
 ---
 
@@ -1051,8 +1092,9 @@ GS замокан в `conftest.py` — тесты работают без Ghosts
 | `order_limit` | 5 req/min/IP | 2 | `POST /api/order` |
 | `download_limit` | 10 req/min/IP | 3 | `GET /api/download/*` |
 | `promo_limit` | 20 req/min/IP | 10 | `POST /api/promo/check` (проверка кода при вводе; защита от перебора) |
+| `beat_limit` | 120 req/min/IP | 30 | `POST /api/beat` (счётчик; без передачи IP приложению, `access_log off`) |
 
-> Все четыре зоны применены в `default.conf` точными `location` до общего `/api/`: `location = /api/preview`, `location = /api/order`, `location = /api/promo/check` и префиксный `location /api/download/`. Точный или более длинный location не наследует настройки `/api/`, поэтому прокси-заголовки в каждом повторены целиком (тест сверяет их с общим блоком).
+> Все пять зон применены в `default.conf` точными `location` до общего `/api/`: `location = /api/preview`, `location = /api/order`, `location = /api/promo/check`, `location = /api/beat` и префиксный `location /api/download/`. Точный или более длинный location не наследует настройки `/api/`, поэтому прокси-заголовки в каждом повторены целиком (тест сверяет их с общим блоком).
 >
 > Зоны не распространяются на `/api/order/{id}/amend`, `/api/order/{id}/abandon` (он возвращает использование промокода, его нельзя душить), `/api/payment/*`, `/api/v1/*` (корпоративный API и batch считаются по ключам, а не по IP) и админку.
 >
@@ -1063,8 +1105,8 @@ GS замокан в `conftest.py` — тесты работают без Ghosts
 `/admin/` обслуживается отдельным `location /admin/` с `alias /app/frontend/admin/`. Rate limit не применяется — защита на уровне `ADMIN_TOKEN`. `sw.js`, `manifest.json` и иконки PWA отдаются тем же `location`, менять nginx не нужно.
 
 > ❌ `proxy_params` не использовать — вызывает конфликт директив.
-> ❌ `listen 443 ssl http2` → использовать `listen 443 ssl;` (http2 добавляется отдельно позже).
-> ❌ nginx монтирует только `nginx/default.conf` → `/etc/nginx/conf.d/default.conf`.
+> ❌ `listen 443 ssl http2` (устаревший синтаксис) → `listen 443 ssl;` и отдельная директива `http2 on;` (nginx ≥ 1.25.1, уже включена).
+> Монтируются два файла: `nginx/nginx.conf` → `/etc/nginx/nginx.conf` и `nginx/default.conf` → `/etc/nginx/conf.d/default.conf`.
 
 ---
 
@@ -1199,13 +1241,13 @@ curl -sS -m 15 -X POST "$TG_API_BASE/bot$TG_NOTIFY_TOKEN/getWebhookInfo" -H 'con
 
 | | |
 |---|---|
-| **Хранится при заказе** | `order_id` (UUID), `size_key`, `ref_code`, `promo_code`, `token` (hex), `amount_rub`, `config_json`, временные метки |
-| **Акцепт соглашения** | `offer_version`, `accepted_at`, **`accepted_ip`** (X-Real-IP от nginx), **`accepted_ua`** (User-Agent, ≤300 символов) — нужны, чтобы подтвердить, что условия приняты. Срок хранения в коде не ограничен |
-| **Текст макета** | `config_json` / `original_config_json` содержат введённый пользователем текст; он может включать телефоны и адреса. Сервис текст не анализирует (ответственность пользователя — п. 2 Соглашения) |
+| **Хранится при заказе** | `order_id` (UUID), `size_key`, `ref_code`, `partner_code`, `promo_code`, `token` (hex), `amount_rub`, `config_json`, временные метки |
+| **Акцепт соглашения** | `offer_version`, `accepted_at`, **`accepted_ip`** (X-Real-IP от nginx), **`accepted_ua`** (User-Agent, ≤300 символов) — нужны, чтобы подтвердить, что условия приняты. IP и User-Agent стираются через `ORDER_PII_RETENTION_DAYS` (14 дней), версия и время акцепта остаются |
+| **Текст макета** | `config_json` / `original_config_json` содержат введённый пользователем текст; он может включать телефоны и адреса. Стирается через `ORDER_PII_RETENTION_DAYS` (14 дней после оплаты). Сервис текст не анализирует (ответственность пользователя — п. 2 Соглашения) |
 | **Не хранится** | имя, tg_id пользователя, платёжные данные (карта вводится на стороне ЮKassa) |
-| **Исключение** | `email` в `api_keys` — основание: исполнение договора |
+| **Исключение** | `email` в `api_keys` — основание: исполнение договора. `email` и `phone` партнёра-типографии (`partners`) — рабочие контакты типографии, не клиентов |
 | **Администратор** | `push_subscriptions` — устройства админа (не клиентов), `user_agent` ≤200 символов |
-| **Третьи стороны** | ЮKassa (платежи); Яндекс.Метрика с Вебвизором (cookie, действия на странице); типография-партнёр (только в заказах с её страницы: PDF и текст макета на её почту; IP, User-Agent и платёжные данные не передаются) |
+| **Третьи стороны** | ЮKassa (платежи, виджет грузится на экране проверки); типография-партнёр (только в заказах с её страницы: PDF и текст макета на её почту; IP, User-Agent и платёжные данные не передаются) |
 | **Сервер** | Германия |
 
 ---
@@ -1219,7 +1261,7 @@ curl -sS -m 15 -X POST "$TG_API_BASE/bot$TG_NOTIFY_TOKEN/getWebhookInfo" -H 'con
 - [x] `order_store` → SQLite `pending_orders`
 - [x] Lifespan cleanup просроченных токенов и заказов
 - [x] Автодеплой через GitHub Actions + health check
-- [x] SSL (bannerbot.ru, истекает 2026-06-19)
+- [x] SSL Let's Encrypt для bannerbot.ru
 - [x] Переезд на новый сервер, nginx на стандартных портах 80/443
 - [x] Фронтенд: динамический рендер из `/api/templates`, шрифты в кнопках
 - [x] Фронтенд: FAB + sticky-бар превью на мобиле, двухколонка на десктопе
@@ -1229,7 +1271,7 @@ curl -sS -m 15 -X POST "$TG_API_BASE/bot$TG_NOTIFY_TOKEN/getWebhookInfo" -H 'con
 - [x] `banner_generator.py`: вотермарка на JPEG-превью
 - [x] Переключение на ЮКасса: `services/payment.py` + `routers/payment.py`
 - [x] Запасной провайдер Selfwork удалён: роутер не импортировался (функция проверки подписи лежала в другом модуле), фронт умел только виджет ЮКасса, инструкция переключения называла несуществующие модули. Код остаётся в истории git
-- [x] `app.js` v12: модалка `#modal-pay` с виджетом ЮКасса, очистка контейнера
+- [x] `app.js`: модалка `#modal-pay` с виджетом ЮКасса, очистка контейнера
 - [x] E2E флоу: превью → заказ → виджет ЮКасса → webhook → PDF скачан ✅
 - [x] TG-уведомления о новых заказах (`@BannerBotInfo_bot` + inline-кнопка «Выдать PDF»)
 - [x] TG webhook: Telegram → Cloudflare Worker (`<TG_API_BASE>/tg-hook`) → `/api/tg/callback`; порт 88 не используется
@@ -1243,7 +1285,17 @@ curl -sS -m 15 -X POST "$TG_API_BASE/bot$TG_NOTIFY_TOKEN/getWebhookInfo" -H 'con
 - [x] `scale` int (50–100) в API, float (0–1) в рендерере — конвертация в роутерах
 - [x] Боевые ключи ЮКасса установлены — автоматический флоу оплаты полностью работает
 - [x] TG-сообщение о заказе меняет статус на «💳 Оплачено» после webhook
-- [x] Партнёры-типографии: брендированная страница `?partner=<code>`, 100 ₽ за оплаченный заказ, макет на почту типографии (SMTP), админка, отчёт и выплаты, ссылка с предзаполнением; первый партнёр — «Реклама-Сити»
+- [x] Партнёры-типографии: брендированная страница `?partner=<code>`, 100 ₽ за оплаченный заказ, макет на почту типографии (SMTP), админка, отчёт и выплаты, ссылка с предзаполнением; первый партнёр — «Реклама-Сити» подключён на проде
+- [x] Партнёры: телефон типографии в шапке (`tel:`), номер заказа `482-915` и телефон в имени скачиваемого файла, страница `/admin/partners/` (периоды, фильтр, CSV), навигация между страницами админки
+- [x] Бесплатная правка текста после оплаты (`/api/order/{id}/amend`), собственный счётчик без cookie (`kit.js`, `/api/beat`), стирание текста и IP через 14 дней
+- [x] Nginx: `http2 on;`, зоны лимитов `preview` / `order` / `download` / `promo` / `beat`
+- [x] Очистка `/tmp/bannerprint_batches` по TTL (`batch_worker.cleanup_old_batches`)
+
+### P1 — партнёры
+
+- [ ] Подтвердить боевое письмо: оплаченный заказ со страницы `reklamasity`, скачать PDF, письмо с тем же номером приходит на ящик типографии (`docker logs bannerprint_api --since 30m 2>&1 | grep "Макет заказа"`)
+- [ ] Править и отключать партнёров из админки (сейчас: телефон и `active` через API, остальное прямым SQL)
+- [ ] Единая граница месяца: статистика считает сутки по UTC+3, `report` и `payout` по UTC
 
 ### P1 — боевые ключи ЮКасса
 
@@ -1265,9 +1317,7 @@ curl -sS -m 15 -X POST "$TG_API_BASE/bot$TG_NOTIFY_TOKEN/getWebhookInfo" -H 'con
 
 ### P2 — улучшения
 
-- [ ] Nginx: `http2 on;`
 - [ ] Preview → `image/jpeg` streaming вместо base64 (+33% overhead)
-- [ ] Cleanup `/tmp/bannerprint_batches` старше TTL
 - [ ] Structured JSON logging
 - [ ] Перенос домена на `bannerprintbot.ru` + порт 443
 - [ ] Postman-коллекция из `/api/docs`
