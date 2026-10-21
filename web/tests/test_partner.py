@@ -477,6 +477,7 @@ class TestAdminApi:
         ("POST", "/api/admin/partners"),
         ("GET", "/api/admin/partners"),
         ("GET", "/api/admin/partners/report"),
+        ("PATCH", "/api/admin/partners/x1"),
         ("POST", "/api/admin/partners/x1/active"),
         ("POST", "/api/admin/partners/x1/phone"),
         ("POST", "/api/admin/partners/x1/payout"),
@@ -1140,3 +1141,116 @@ class TestClientFilename:
         assert number in _attachment(msg).get_filename()
         # типографии не нужно видеть собственное название и телефон в имени вложения
         assert "скажите" not in _attachment(msg).get_filename()
+
+
+# ---------------------------------------------------------------------------
+# Правка и заморозка партнёра (админка)
+# ---------------------------------------------------------------------------
+class TestUpdatePartner:
+
+    def test_changes_only_given_fields(self, init_test_db):
+        _partner("rc", logo_url="/partners/rc.svg", accent="#e31e24", phone="90-20-55")
+        p = partner_store.update_partner("rc", {"name": "Новое имя", "reward_rub": 150})
+        assert p["name"] == "Новое имя" and p["reward_rub"] == 150
+        assert p["email"] == "print@reklamacity.example" and p["logo_url"] == "/partners/rc.svg"
+        assert p["accent"] == "#e31e24" and p["phone"] == "90-20-55" and p["active"] == 1
+
+    def test_empty_values_clear_optional_fields(self, init_test_db):
+        _partner("rc", logo_url="/partners/rc.svg", accent="#e31e24", phone="90-20-55")
+        p = partner_store.update_partner("rc", {"logo_url": "", "accent": None, "phone": "  "})
+        assert p["logo_url"] is None and p["accent"] is None and p["phone"] is None
+
+    def test_same_validation_as_create_and_nothing_written_on_error(self, init_test_db):
+        _partner("rc", phone="90-20-55")
+        for changes in ({"name": ""}, {"email": "не почта"}, {"logo_url": "https://evil.example/x.svg"},
+                        {"accent": "red"}, {"reward_rub": 1001}, {"reward_rub": -1}, {"reward_rub": True}, {"phone": "abc"}):
+            with pytest.raises(PartnerError):
+                partner_store.update_partner("rc", changes)
+        # одно неверное поле не даёт записать соседние
+        with pytest.raises(PartnerError):
+            partner_store.update_partner("rc", {"name": "Другое", "reward_rub": 5000})
+        p = partner_store.get_partner("rc")
+        assert p["name"] == "Реклама-Сити" and p["reward_rub"] == 100
+
+    def test_code_and_active_cannot_be_changed_here(self, init_test_db):
+        _partner("rc")
+        for field in ("code", "active", "created_at"):
+            with pytest.raises(PartnerError):
+                partner_store.update_partner("rc", {field: "x"})
+
+    def test_unknown_partner(self, init_test_db):
+        with pytest.raises(PartnerNotFound):
+            partner_store.update_partner("nope", {"name": "x"})
+        with pytest.raises(PartnerNotFound):
+            partner_store.update_partner("../x", {"name": "x"})
+
+    def test_code_is_case_insensitive(self, init_test_db):
+        _partner("rc")
+        assert partner_store.update_partner("RC", {"name": "Имя"})["name"] == "Имя"
+
+    def test_new_reward_applies_only_to_future_accruals(self, init_test_db):
+        _partner("rc")
+        path = init_test_db
+        _insert_order(path, "o1", partner_code="rc")
+        assert partner_store.accrue_for_order("o1") == 100
+        partner_store.update_partner("rc", {"reward_rub": 40})
+        _insert_order(path, "o2", partner_code="rc")
+        assert partner_store.accrue_for_order("o2") == 40
+        assert sorted(r["reward_rub"] for r in _accruals(path)) == [40, 100]
+
+
+class TestUpdateAndFreezeApi:
+
+    @pytest.mark.asyncio
+    async def test_patch_updates_and_returns_partner(self, client, init_test_db):
+        _partner("rc")
+        resp = await client.patch("/api/admin/partners/rc", headers=_auth(),
+                                  json={"name": "Новое", "phone": "+7 (843) 290-20-55", "reward_rub": 120})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["name"] == "Новое" and body["phone"] == "+7 (843) 290-20-55" and body["reward_rub"] == 120
+        assert partner_store.get_partner("rc")["name"] == "Новое"
+
+    @pytest.mark.asyncio
+    async def test_patch_explicit_null_clears_optional_but_not_required(self, client, init_test_db):
+        _partner("rc", phone="90-20-55", accent="#e31e24")
+        ok = await client.patch("/api/admin/partners/rc", headers=_auth(), json={"phone": None, "accent": None})
+        assert ok.status_code == 200 and ok.json()["phone"] is None and ok.json()["accent"] is None
+        for field in ("name", "email", "reward_rub"):
+            bad = await client.patch("/api/admin/partners/rc", headers=_auth(), json={field: None})
+            assert bad.status_code == 422, field
+        assert partner_store.get_partner("rc")["name"] == "Реклама-Сити"
+
+    @pytest.mark.asyncio
+    async def test_patch_errors(self, client, init_test_db):
+        _partner("rc")
+        assert (await client.patch("/api/admin/partners/nope", headers=_auth(), json={"name": "x"})).status_code == 404
+        r = await client.patch("/api/admin/partners/rc", headers=_auth(), json={"accent": "red"})
+        assert r.status_code == 422 and "#rrggbb" in r.json()["detail"]
+        r = await client.patch("/api/admin/partners/rc", headers=_auth(), json={"reward_rub": "много"})
+        assert r.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_patch_empty_body_changes_nothing(self, client, init_test_db):
+        _partner("rc")
+        r = await client.patch("/api/admin/partners/rc", headers=_auth(), json={})
+        assert r.status_code == 200 and r.json()["name"] == "Реклама-Сити"
+
+    @pytest.mark.asyncio
+    async def test_freeze_and_restore_keep_everything(self, client, init_test_db):
+        _partner("rc", phone="90-20-55")
+        path = init_test_db
+        _insert_order(path, "o1", partner_code="rc")
+        partner_store.accrue_for_order("o1")
+
+        off = await client.post("/api/admin/partners/rc/active", headers=_auth(), json={"active": False})
+        assert off.status_code == 200 and off.json()["active"] is False
+        assert (await client.get("/api/partner/rc")).status_code == 404          # страница без брендинга
+        listed = (await client.get("/api/admin/partners", headers=_auth())).json()["partners"]
+        row = next(p for p in listed if p["code"] == "rc")
+        assert row["active"] == 0 and row["unpaid_rub"] == 100 and row["orders"] == 1  # история и долг на месте
+
+        on = await client.post("/api/admin/partners/rc/active", headers=_auth(), json={"active": True})
+        assert on.status_code == 200
+        branding = (await client.get("/api/partner/rc")).json()
+        assert branding["name"] == "Реклама-Сити" and branding["phone"] == "90-20-55"

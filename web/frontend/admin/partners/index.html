@@ -269,6 +269,33 @@
     .csv-row { display: flex; flex-direction: column; gap: 8px; }
     .csv-row .btn--ghost { margin-top: 0; }
     .csv-status { font-size: 13px; color: var(--accent); min-height: 18px; margin-top: 8px; }
+
+    /* ---- Управление партнёрами ---- */
+    .pm-item { padding: 12px 0; border-bottom: 1px solid var(--border); }
+    .pm-item:last-child { border-bottom: none; padding-bottom: 0; }
+    .pm-item--off .pm-name { color: var(--ink-3); }
+    .pm-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+    .pm-name { font-weight: 700; overflow-wrap: anywhere; }
+    .pm-meta { font-size: 12px; color: var(--ink-3); margin-top: 4px; line-height: 1.5; overflow-wrap: anywhere; }
+    .pm-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .pm-actions .btn { width: auto; padding: 9px 14px; margin-top: 0; font-size: 11px; }
+    .btn--danger { background: #fde8e4; color: #b32400; }
+    .btn--ok { background: #e0f5e0; color: var(--ok); }
+    .btn[disabled] { opacity: .5; cursor: default; }
+    .pm-add { margin-top: 12px; }
+    .pm-form { display: none; flex-direction: column; gap: 12px; }
+    .pm-form.open { display: flex; }
+    .pm-field label { display: block; font-size: 12px; color: var(--ink-2); margin-bottom: 4px; }
+    .pm-field input { width: 100%; border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px;
+      font-family: 'Onest', sans-serif; font-size: 14px; color: var(--ink); background: var(--bg); outline: none; }
+    .pm-field input:focus { border-color: var(--accent2); background: var(--surface); }
+    .pm-field input[disabled] { color: var(--ink-3); }
+    .pm-field .hint { font-size: 11px; color: var(--ink-3); margin-top: 3px; }
+    .pm-color { display: flex; gap: 8px; align-items: center; }
+    .pm-color input[type="color"] { width: 48px; height: 42px; padding: 2px; flex: none; }
+    .pm-msg { font-size: 13px; min-height: 18px; color: var(--accent); overflow-wrap: anywhere; }
+    .pm-msg--ok { color: var(--ok); }
+    .pm-link { font-size: 12px; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -300,6 +327,38 @@
 
   <!-- ---- СТАТИСТИКА ПАРТНЁРОВ ---- -->
   <div id="stats-ui">
+
+    <div class="card" id="pm-card">
+      <div class="card-label">Партнёры</div>
+      <div id="pm-list"><div class="empty">Загрузка…</div></div>
+      <div class="pm-msg" id="pm-msg" role="status"></div>
+      <button class="btn btn--accent pm-add" id="pm-add">+ Добавить партнёра</button>
+
+      <form class="pm-form" id="pm-form" autocomplete="off" novalidate>
+        <div class="card-label" id="pm-form-title" style="margin:14px 0 0">Новый партнёр</div>
+        <div class="pm-field"><label for="pm-code">Код (латиница, цифры, дефис; в ссылке <code>?partner=код</code>)</label>
+          <input id="pm-code" maxlength="32" autocapitalize="off" spellcheck="false"></div>
+        <div class="pm-field"><label for="pm-name">Название</label><input id="pm-name" maxlength="80"></div>
+        <div class="pm-field"><label for="pm-email">Почта типографии (сюда уходят макеты)</label>
+          <input id="pm-email" type="email" inputmode="email" maxlength="254"></div>
+        <div class="pm-field"><label for="pm-phone">Телефон для клиентов (в имени файла и окне после оплаты)</label>
+          <input id="pm-phone" type="tel" maxlength="30" placeholder="90-20-55 или +7 (843) 290-20-55">
+          <div class="hint">Пусто: в имени файла останется только номер заказа.</div></div>
+        <div class="pm-field"><label for="pm-logo">Логотип</label>
+          <input id="pm-logo" maxlength="120" placeholder="/partners/reklamasity.svg" spellcheck="false">
+          <div class="hint">Файл должен лежать в репо в web/frontend/partners/. Пусто: в шапке название текстом.</div></div>
+        <div class="pm-field"><label for="pm-accent-text">Цвет страницы</label>
+          <div class="pm-color"><input id="pm-accent-pick" type="color" value="#e31e24" aria-label="Выбор цвета">
+            <input id="pm-accent-text" maxlength="7" placeholder="#e31e24" spellcheck="false"></div>
+          <div class="hint">Пусто: цвет сайта по умолчанию.</div></div>
+        <div class="pm-field"><label for="pm-reward">Вознаграждение за оплаченный заказ, ₽</label>
+          <input id="pm-reward" type="number" inputmode="numeric" min="0" max="1000" step="1" value="100">
+          <div class="hint">Меняет только будущие начисления.</div></div>
+        <div class="pm-msg" id="pm-form-msg" role="alert"></div>
+        <button type="submit" class="btn btn--accent" id="pm-save">Сохранить</button>
+        <button type="button" class="btn btn--ghost" id="pm-cancel" style="margin-top:0">Отмена</button>
+      </form>
+    </div>
 
     <div class="card">
       <div class="card-label">Период</div>
@@ -571,6 +630,153 @@ $("custom-apply").addEventListener("click", load);
 $("partner-filter").addEventListener("change", load);
 $("csv-orders").addEventListener("click", () => downloadCsv("orders"));
 $("csv-days").addEventListener("click", () => downloadCsv("days"));
+
+
+/* ---- Управление партнёрами: список, добавление, правка, заморозка и восстановление ---- */
+let _pm = [];          // GET /admin/partners
+let _pmEdit = null;    // код редактируемого партнёра или null (режим добавления)
+let _pmBusy = false;
+
+async function pmFetch(path, method, body) {
+  const resp = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: Object.assign({ "Authorization": `Bearer ${_token}` }, body ? { "Content-Type": "application/json" } : {}),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (resp.status === 401 || resp.status === 403) { dropToken("Токен не подошёл. Введите его заново на странице заказов."); throw new Error("auth"); }
+  if (!resp.ok) throw new Error(await errorText(resp));
+  return resp.json();
+}
+function pmSay(text, ok) {
+  const el = $("pm-msg");
+  el.textContent = text || "";
+  el.className = "pm-msg" + (ok ? " pm-msg--ok" : "");
+}
+function partnerLink(code) { return `https://bannerbot.ru/?partner=${code}`; }
+
+async function loadPartners() {
+  try {
+    const data = await pmFetch("/admin/partners", "GET");
+    _pm = data.partners || [];
+    renderPartnerList(data.mail_configured);
+  } catch (e) {
+    if (e.message === "auth") return;
+    $("pm-list").innerHTML = '<div class="auth-error">Не удалось загрузить список (' + escapeHtml(e.message) + ").</div>";
+  }
+}
+
+function renderPartnerList(mailConfigured) {
+  const warn = mailConfigured === false ? '<div class="pm-meta warn" style="margin-bottom:8px">Почта на сервере не настроена: макеты типографиям не уходят.</div>' : "";
+  $("pm-list").innerHTML = warn + (!_pm.length ? '<div class="empty">Партнёров пока нет.</div>' : _pm.map((p) => {
+    const off = !p.active;
+    const fails = p.failed_deliveries ? ` · <span class="warn">сбоев писем ${fmt(p.failed_deliveries)}</span>` : "";
+    return `<div class="pm-item${off ? " pm-item--off" : ""}" data-code="${escapeHtml(p.code)}">` +
+      `<div class="pm-head"><span class="pm-name">${escapeHtml(p.name)}</span>` +
+        `${off ? '<span class="tag-off">заморожен</span>' : ""}<span class="name-sub">${escapeHtml(p.code)}</span></div>` +
+      `<div class="pm-meta">${escapeHtml(p.email)}${p.phone ? " · " + escapeHtml(p.phone) : ""} · ${fmt(p.reward_rub)} ₽ за заказ<br>` +
+        `заказов ${fmt(p.orders)}, к выплате ${fmt(p.unpaid_rub)} ₽${fails}</div>` +
+      `<div class="pm-meta pm-link">${escapeHtml(partnerLink(p.code))}</div>` +
+      '<div class="pm-actions">' +
+        '<button class="btn btn--ghost" data-act="edit">Изменить</button>' +
+        '<button class="btn btn--ghost" data-act="copy">Копировать ссылку</button>' +
+        (off ? '<button class="btn btn--ok" data-act="restore">Восстановить</button>'
+             : '<button class="btn btn--danger" data-act="freeze">Заморозить</button>') +
+      "</div></div>";
+  }).join(""));
+}
+
+function openForm(partner) {
+  _pmEdit = partner ? partner.code : null;
+  $("pm-form").classList.add("open");
+  $("pm-add").style.display = "none";
+  $("pm-form-title").textContent = partner ? `Изменить: ${partner.name}` : "Новый партнёр";
+  $("pm-code").value   = partner ? partner.code : "";
+  $("pm-code").disabled = !!partner;
+  $("pm-name").value   = partner ? partner.name : "";
+  $("pm-email").value  = partner ? partner.email : "";
+  $("pm-phone").value  = partner ? (partner.phone || "") : "";
+  $("pm-logo").value   = partner ? (partner.logo_url || "") : "";
+  $("pm-accent-text").value = partner ? (partner.accent || "") : "";
+  if (partner && partner.accent) $("pm-accent-pick").value = partner.accent;
+  $("pm-reward").value = partner ? partner.reward_rub : 100;
+  $("pm-form-msg").textContent = "";
+  $("pm-form").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  (partner ? $("pm-name") : $("pm-code")).focus();
+}
+function closeForm() {
+  _pmEdit = null;
+  $("pm-form").classList.remove("open");
+  $("pm-add").style.display = "";
+}
+
+async function saveForm(ev) {
+  ev.preventDefault();
+  if (_pmBusy) return;
+  const msg = $("pm-form-msg");
+  const reward = $("pm-reward").value.trim();
+  if (!/^\d{1,4}$/.test(reward)) { msg.textContent = "Вознаграждение: целое число от 0 до 1000."; return; }
+  const fields = {
+    name: $("pm-name").value, email: $("pm-email").value, phone: $("pm-phone").value,
+    logo_url: $("pm-logo").value, accent: $("pm-accent-text").value, reward_rub: Number(reward),
+  };
+  _pmBusy = true; $("pm-save").disabled = true; msg.textContent = "";
+  try {
+    if (_pmEdit) {
+      await pmFetch(`/admin/partners/${encodeURIComponent(_pmEdit)}`, "PATCH", fields);
+      pmSay("Сохранено. Посетители увидят изменения не позже чем через 5 минут (кэш).", true);
+    } else {
+      const created = await pmFetch("/admin/partners", "POST", Object.assign({ code: $("pm-code").value.trim() }, fields));
+      pmSay("Партнёр добавлен. Ссылка для типографии: " + created.link, true);
+    }
+    closeForm();
+    await loadPartners();
+    load();   // обновить статистику и фильтр партнёров
+  } catch (e) {
+    if (e.message !== "auth") msg.textContent = e.message;
+  } finally {
+    _pmBusy = false; $("pm-save").disabled = false;
+  }
+}
+
+async function setActive(code, active) {
+  const p = _pm.find((x) => x.code === code);
+  if (!p) return;
+  if (!active && !confirm(`Заморозить «${p.name}»?\n\nСтраница типографии станет обычной, новые заказы будут без партнёра, макеты на почту не уйдут. ` +
+    "Начисления и история сохраняются, выплата и статистика доступны. Восстановить можно в любой момент.")) return;
+  try {
+    await pmFetch(`/admin/partners/${encodeURIComponent(code)}/active`, "POST", { active });
+    pmSay(active ? `«${p.name}» восстановлен. Брендинг вернётся не позже чем через 5 минут.` : `«${p.name}» заморожен.`, true);
+    await loadPartners();
+    load();
+  } catch (e) {
+    if (e.message !== "auth") pmSay("Не удалось: " + e.message, false);
+  }
+}
+
+$("pm-add").addEventListener("click", () => { pmSay(""); openForm(null); });
+$("pm-cancel").addEventListener("click", closeForm);
+$("pm-form").addEventListener("submit", saveForm);
+$("pm-accent-pick").addEventListener("input", () => { $("pm-accent-text").value = $("pm-accent-pick").value; });
+$("pm-accent-text").addEventListener("input", () => {
+  const v = $("pm-accent-text").value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(v)) $("pm-accent-pick").value = v.toLowerCase();
+});
+$("pm-list").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-act]");
+  if (!btn) return;
+  const code = btn.closest(".pm-item").dataset.code;
+  const p = _pm.find((x) => x.code === code);
+  pmSay("");
+  if (btn.dataset.act === "edit" && p) openForm(p);
+  else if (btn.dataset.act === "freeze") setActive(code, false);
+  else if (btn.dataset.act === "restore") setActive(code, true);
+  else if (btn.dataset.act === "copy") {
+    try { await navigator.clipboard.writeText(partnerLink(code)); pmSay("Ссылка скопирована.", true); }
+    catch { pmSay(partnerLink(code), true); }
+  }
+});
+
+if (_token) loadPartners();
 
 load();
 </script>

@@ -9,7 +9,8 @@ partner.py
 Админка (Bearer ADMIN_TOKEN):
   POST /api/admin/partners                                  — создать партнёра
   GET  /api/admin/partners                                  — список с суммами к выплате
-  POST /api/admin/partners/{code}/active                    — включить / отключить
+  PATCH /api/admin/partners/{code}                          — изменить название, почту, логотип, цвет, ставку, телефон
+  POST /api/admin/partners/{code}/active                    — заморозить (false) / восстановить (true)
   POST /api/admin/partners/{code}/phone                     — задать / убрать рабочий телефон
   GET  /api/admin/partners/report?month=ГГГГ-ММ             — сводка за месяц
   GET  /api/admin/partners/stats?period=…|from=…&to=…       — статистика за период (страница /admin/partners/)
@@ -77,6 +78,16 @@ class CreatePartnerRequest(BaseModel):
     phone:      Optional[str] = None
 
 
+class UpdatePartnerRequest(BaseModel):
+    # Меняются только присланные поля. null или "" у logo_url, accent, phone убирает значение
+    name:       Optional[str] = None
+    email:      Optional[str] = None
+    logo_url:   Optional[str] = None
+    accent:     Optional[str] = None
+    reward_rub: Optional[int] = None
+    phone:      Optional[str] = None
+
+
 class ActiveRequest(BaseModel):
     active: bool
 
@@ -100,6 +111,19 @@ async def admin_create_partner(body: CreatePartnerRequest):
     except partner_store.PartnerError as e:
         raise _http_error(e) from None
     return {**partner, "link": f"https://bannerbot.ru/?partner={partner['code']}"}
+
+
+@router.patch("/admin/partners/{code}", dependencies=[Depends(require_admin)])
+async def admin_update_partner(code: str, body: UpdatePartnerRequest):
+    changes = {f: getattr(body, f) for f in body.model_fields_set}
+    # name, email, reward_rub обязательны: явный null не «убирает» их, а считается ошибкой
+    for field in ("name", "email", "reward_rub"):
+        if field in changes and changes[field] is None:
+            raise HTTPException(status_code=422, detail=f"Поле {field} нельзя очистить")
+    try:
+        return partner_store.update_partner(code, changes)
+    except partner_store.PartnerError as e:
+        raise _http_error(e) from None
 
 
 @router.get("/admin/partners", dependencies=[Depends(require_admin)])

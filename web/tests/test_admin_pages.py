@@ -102,7 +102,8 @@ class TestPartnersPage:
         assert 'Укажите обе даты' in script
 
     def test_dynamic_text_is_always_escaped(self):
-        script = self._script()
+        # блок управления партнёрами проверяет TestPartnersManagementUi
+        script = self._script().split("/* ---- Управление партнёрами")[0]
         # название и код партнёра задаёт админ, но в разметку они попадают только через escapeHtml;
         # единственное исключение: сравнение кода с выбранным значением фильтра
         found = 0
@@ -120,7 +121,7 @@ class TestPartnersPage:
 
     def test_expired_token_sends_the_user_to_the_login_page(self):
         script = self._script()
-        assert script.count("resp.status === 401 || resp.status === 403") == 2   # и в статистике, и в CSV
+        assert script.count("resp.status === 401 || resp.status === 403") == 3   # статистика, CSV и управление партнёрами
         assert 'href="/admin/"' in self.html
 
     def test_phone_layout_stacks_the_partner_table(self):
@@ -134,3 +135,41 @@ def test_admin_pages_are_served_from_the_noindex_location():
     block = nginx[nginx.index("location /admin/ {"):]
     block = block[: block.index("\n    }")]
     assert "X-Robots-Tag" in block and "try_files $uri $uri/ /admin/index.html" in block
+
+
+class TestPartnersManagementUi:
+    html = HTML["partners"]
+    script = html[html.index("<script>"):html.rindex("</script>")]
+
+    def test_calls_the_management_endpoints(self):
+        assert 'pmFetch("/admin/partners", "GET")' in self.script
+        assert '"PATCH", fields' in self.script and "/admin/partners/${encodeURIComponent(_pmEdit)}" in self.script
+        assert '"POST", Object.assign({ code:' in self.script
+        assert "/admin/partners/${encodeURIComponent(code)}/active" in self.script and "{ active }" in self.script
+
+    def test_form_fields_match_the_editable_api_fields(self):
+        from web.api.services.partner_store import EDITABLE_FIELDS
+        for field in ("name", "email", "phone", "logo_url", "accent", "reward_rub"):
+            assert field in EDITABLE_FIELDS and f"{field}:" in self.script
+        assert set(EDITABLE_FIELDS) == {"name", "email", "phone", "logo_url", "accent", "reward_rub"}
+
+    def test_code_is_not_editable_for_existing_partner(self):
+        assert '$("pm-code").disabled = !!partner;' in self.script
+
+    def test_freezing_asks_for_confirmation_restoring_does_not(self):
+        assert "if (!active && !confirm(" in self.script
+        assert 'data-act="restore"' in self.html and 'data-act="freeze"' in self.html
+
+    def test_bearer_token_and_dropping_on_401(self):
+        assert '"Authorization": `Bearer ${_token}`' in self.script
+        assert "resp.status === 401 || resp.status === 403" in self.script
+
+    def test_partner_text_in_the_list_is_escaped(self):
+        block = self.script[self.script.index("function renderPartnerList"):self.script.index("function openForm")]
+        for field in ("p.name", "p.code", "p.email", "p.phone"):
+            for m in re.finditer(r"\$\{([^}]*" + re.escape(field) + r"[^}]*)\}", block):
+                assert "escapeHtml(" in m.group(1) or "partnerLink(p.code)" in m.group(1), m.group(0)
+        assert "innerHTML = " in block and "textContent" not in block.replace("pm-", "")
+
+    def test_save_button_is_disabled_while_saving(self):
+        assert "if (_pmBusy) return;" in self.script and '$("pm-save").disabled = true' in self.script

@@ -91,6 +91,40 @@ def normalize_phone(value: str | None) -> str | None:
     return phone
 
 
+def _clean_name(name: str | None) -> str:
+    clean = _CONTROL.sub("", name or "").strip()
+    if not 1 <= len(clean) <= 80:
+        raise PartnerError("Название: от 1 до 80 символов")
+    return clean
+
+
+def _clean_email(email: str | None) -> str:
+    try:
+        return validate_email((email or "").strip(), check_deliverability=False).normalized
+    except EmailNotValidError as e:
+        raise PartnerError(f"Некорректный e-mail: {e}") from None
+
+
+def _clean_logo(logo_url: str | None) -> str | None:
+    logo = (logo_url or "").strip() or None
+    if logo and not LOGO_RE.match(logo):
+        raise PartnerError("Логотип: путь вида /partners/<файл> (файл лежит в web/frontend/partners/)")
+    return logo
+
+
+def _clean_accent(accent: str | None) -> str | None:
+    clean = (accent or "").strip() or None
+    if clean and not ACCENT_RE.match(clean):
+        raise PartnerError("Цвет: формат #rrggbb")
+    return clean.lower() if clean else None
+
+
+def _clean_reward(reward_rub: int) -> int:
+    if isinstance(reward_rub, bool) or not isinstance(reward_rub, int) or not 0 <= reward_rub <= MAX_REWARD_RUB:
+        raise PartnerError(f"Вознаграждение: от 0 до {MAX_REWARD_RUB} ₽")
+    return reward_rub
+
+
 def create_partner(
     code: str,
     name: str,
@@ -105,28 +139,11 @@ def create_partner(
     if norm is None:
         raise PartnerError("Код партнёра: 2–32 символа, a-z, 0-9 и дефис, начинается не с дефиса")
 
-    clean_name = _CONTROL.sub("", name or "").strip()
-    if not 1 <= len(clean_name) <= 80:
-        raise PartnerError("Название: от 1 до 80 символов")
-
-    try:
-        clean_email = validate_email((email or "").strip(), check_deliverability=False).normalized
-    except EmailNotValidError as e:
-        raise PartnerError(f"Некорректный e-mail: {e}") from None
-
-    logo = (logo_url or "").strip() or None
-    if logo and not LOGO_RE.match(logo):
-        raise PartnerError("Логотип: путь вида /partners/<файл> (файл лежит в web/frontend/partners/)")
-
-    clean_accent = (accent or "").strip() or None
-    if clean_accent and not ACCENT_RE.match(clean_accent):
-        raise PartnerError("Цвет: формат #rrggbb")
-    if clean_accent:
-        clean_accent = clean_accent.lower()
-
-    if not 0 <= reward_rub <= MAX_REWARD_RUB:
-        raise PartnerError(f"Вознаграждение: от 0 до {MAX_REWARD_RUB} ₽")
-
+    clean_name = _clean_name(name)
+    clean_email = _clean_email(email)
+    logo = _clean_logo(logo_url)
+    clean_accent = _clean_accent(accent)
+    reward_rub = _clean_reward(reward_rub)
     clean_phone = normalize_phone(phone)
 
     try:
@@ -142,6 +159,37 @@ def create_partner(
         raise PartnerExists("Партнёр с таким кодом уже существует") from None
 
     logger.info("Создан партнёр %s (%s), вознаграждение %d ₽", norm, clean_name, reward_rub)
+    return get_partner(norm)
+
+
+# Поля, которые можно менять после создания (код не меняется: он в ссылках типографии и в заказах)
+EDITABLE_FIELDS = ("name", "email", "logo_url", "accent", "reward_rub", "phone")
+
+
+def update_partner(code: str, changes: dict) -> dict:
+    """
+    Меняет только переданные поля (EDITABLE_FIELDS) с теми же проверками, что при создании.
+    None или пустая строка у logo_url, accent, phone убирают значение; name, email и reward_rub обязательны.
+    Ставка влияет только на будущие начисления: уже начисленное хранит свою сумму.
+    PartnerNotFound — нет такого партнёра; PartnerError — неверные данные (ничего не записывается).
+    """
+    unknown = sorted(set(changes) - set(EDITABLE_FIELDS))
+    if unknown:
+        raise PartnerError("Нельзя изменить: " + ", ".join(unknown))
+    norm = normalize_code(code)
+    if norm is None or get_partner(norm) is None:
+        raise PartnerNotFound("Партнёр не найден")
+
+    cleaners = {
+        "name": _clean_name, "email": _clean_email, "logo_url": _clean_logo,
+        "accent": _clean_accent, "reward_rub": _clean_reward, "phone": normalize_phone,
+    }
+    clean = {field: cleaners[field](value) for field, value in changes.items()}
+    if clean:
+        assignments = ", ".join(f"{field} = ?" for field in clean)   # имена полей только из EDITABLE_FIELDS
+        with get_db() as conn:
+            conn.execute(f"UPDATE partners SET {assignments} WHERE code = ?", (*clean.values(), norm))
+        logger.info("Партнёр %s изменён: %s", norm, ", ".join(clean))
     return get_partner(norm)
 
 
