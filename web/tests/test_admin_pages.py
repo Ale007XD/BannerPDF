@@ -77,7 +77,7 @@ class TestPartnersPage:
         from web.api.services.partner_stats import PERIODS
         buttons = re.findall(r'data-period="(\w+)"', self.html)
         assert set(buttons) == set(PERIODS) | {"custom"}
-        assert 'data-period="month"' in re.search(r'<button[^>]*class="filter-btn active"[^>]*>', self.html).group(0)
+        assert 'data-period="month"' in re.search(r'<button[^>]*class="filter-btn active"[^>]*data-period[^>]*>', self.html).group(0)
         assert 'id="date-from"' in self.html and 'id="date-to"' in self.html and 'type="date"' in self.html
 
     def test_calls_the_stats_and_csv_endpoints_with_the_applied_filter(self):
@@ -173,3 +173,37 @@ class TestPartnersManagementUi:
 
     def test_save_button_is_disabled_while_saving(self):
         assert "if (_pmBusy) return;" in self.script and '$("pm-save").disabled = true' in self.script
+
+
+class TestDeliveriesUi:
+    html = HTML["partners"]
+    script = html[html.index("<script>"):html.rindex("</script>")]
+
+    def test_calls_the_list_and_resend_endpoints(self):
+        assert "/admin/partners/deliveries?${params}" in self.script
+        assert "/admin/partners/deliveries/${encodeURIComponent(orderId)}/resend" in self.script
+
+    def test_states_match_the_api(self):
+        import re as _re
+
+        from web.api.services import partner_store
+        src = open(partner_store.__file__, encoding="utf-8").read()
+        api_states = set(_re.findall(r'state = "(\w+)"', src))
+        ui_states = set(_re.findall(r'^\s+(\w+):\s+\["', self.script[self.script.index("const DL_STATES"):], _re.M))
+        assert api_states == ui_states == {"sent", "failed", "sending", "none", "erased"}
+
+    def test_search_by_number_is_not_narrowed_by_the_failed_filter(self):
+        assert 'if (q) params.set("q", q);' in self.script and 'else if (_dlOnly) params.set("only", _dlOnly);' in self.script
+
+    def test_resend_button_only_when_the_api_allows_and_is_locked_while_sending(self):
+        assert "d.can_resend ?" in self.script
+        assert "btn.disabled = true;" in self.script and "if (btn && !btn.disabled) resendDelivery(btn);" in self.script
+
+    def test_stale_list_responses_are_ignored(self):
+        assert "const id = ++_dlReq;" in self.script and "if (id !== _dlReq" in self.script
+
+    def test_delivery_text_is_escaped(self):
+        block = self.script[self.script.index("function renderDeliveries"):self.script.index("async function resendDelivery")]
+        for field in ("d.number", "d.partner_name", "d.size_key", "d.order_id", "d.error", "label", "when"):
+            for m in re.finditer(r"\$\{([^}]*\b" + re.escape(field) + r"\b[^}]*)\}", block):
+                assert "escapeHtml(" in m.group(1), m.group(0)

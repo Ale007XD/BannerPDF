@@ -35,6 +35,7 @@ from web.api.services import (
     partner_store,
     promo_store,
 )
+from web.api.services.partner_naming import order_number
 from web.api.services.partner_store import PartnerError, PartnerExists, PartnerNotFound
 from web.api.services.token_store import create_token
 
@@ -481,6 +482,7 @@ class TestAdminApi:
         ("POST", "/api/admin/partners/x1/active"),
         ("POST", "/api/admin/partners/x1/phone"),
         ("POST", "/api/admin/partners/x1/payout"),
+        ("GET", "/api/admin/partners/deliveries"),
         ("POST", "/api/admin/partners/deliveries/o1/resend"),
     ])
     async def test_every_admin_endpoint_requires_token(self, client, init_test_db, method, path):
@@ -1254,3 +1256,126 @@ class TestUpdateAndFreezeApi:
         assert on.status_code == 200
         branding = (await client.get("/api/partner/rc")).json()
         assert branding["name"] == "Реклама-Сити" and branding["phone"] == "90-20-55"
+
+
+# ---------------------------------------------------------------------------
+# Письма типографиям в админке: список по заказам и поиск по номеру
+# ---------------------------------------------------------------------------
+def _set_delivery(path, order_id, cfg_json, partner, *, sent=False, error=None, attempts=1):
+    conn = _db(path)
+    conn.execute(
+        "INSERT INTO partner_deliveries (order_id, config_hash, partner_code, created_at, sent_at, error, attempts) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (order_id, partner_store.config_hash(cfg_json), partner, datetime.now(timezone.utc).isoformat(),
+         datetime.now(timezone.utc).isoformat() if sent else None, error, attempts),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _cfg(path, order_id) -> str:
+    return _order_row(path, order_id)["config_json"]
+
+
+class TestListDeliveries:
+
+    def _setup(self, path):
+        _partner("rc")
+        for oid in ("sent1", "fail1", "send1", "none1", "gone1"):
+            _insert_order(path, oid, partner_code="rc")
+        _set_delivery(path, "sent1", _cfg(path, "sent1"), "rc", sent=True)
+        _set_delivery(path, "fail1", _cfg(path, "fail1"), "rc", error="SMTP: 550", attempts=2)
+        _set_delivery(path, "send1", _cfg(path, "send1"), "rc")
+        conn = _db(path)
+        conn.execute("UPDATE web_orders SET config_json = '' WHERE id = 'gone1'")
+        conn.commit()
+        conn.close()
+
+    def test_states(self, init_test_db):
+        self._setup(init_test_db)
+        by_id = {d["order_id"]: d for d in partner_store.list_deliveries()}
+        assert {k: v["state"] for k, v in by_id.items()} == {
+            "sent1": "sent", "fail1": "failed", "send1": "sending", "none1": "none", "gone1": "erased"}
+        assert by_id["fail1"]["error"] == "SMTP: 550" and by_id["fail1"]["attempts"] == 2
+        assert by_id["sent1"]["error"] is None and by_id["sent1"]["sent_at"]
+        assert by_id["gone1"]["can_resend"] is False and by_id["none1"]["can_resend"] is True
+        assert by_id["none1"]["number"] == order_number("none1") and by_id["none1"]["partner_name"] == "Реклама-Сити"
+
+    def test_only_failed(self, init_test_db):
+        self._setup(init_test_db)
+        assert [d["order_id"] for d in partner_store.list_deliveries(only_failed=True)] == ["fail1"]
+
+    def test_search_by_number_ignores_separators_and_state(self, init_test_db):
+        self._setup(init_test_db)
+        num = order_number("sent1")
+        for q in (num, num.replace("-", ""), f" {num[:3]} {num[4:]} "):
+            assert [d["order_id"] for d in partner_store.list_deliveries(query=q)] == ["sent1"]
+        other = "000-000" if num != "000-000" else "000-001"
+        assert partner_store.list_deliveries(query=other) == []
+
+    def test_old_version_of_the_layout_does_not_count_as_sent(self, init_test_db):
+        _partner("rc")
+        _insert_order(init_test_db, "o1", partner_code="rc")
+        _set_delivery(init_test_db, "o1", '{"other": 1}', "rc", sent=True)   # ушла другая версия макета
+        assert partner_store.list_deliveries()[0]["state"] == "none"
+
+    def test_only_paid_partner_orders_and_partner_filter(self, init_test_db):
+        _partner("rc")
+        _partner("other", name="Другая")
+        _insert_order(init_test_db, "p1", partner_code="rc")
+        _insert_order(init_test_db, "p2", partner_code="other")
+        _insert_order(init_test_db, "u1", partner_code="rc", status="pending")
+        _insert_order(init_test_db, "n1")
+        assert sorted(d["order_id"] for d in partner_store.list_deliveries()) == ["p1", "p2"]
+        assert [d["order_id"] for d in partner_store.list_deliveries(partner="RC")] == ["p1"]
+
+    def test_limit_and_validation(self, init_test_db):
+        _partner("rc")
+        for i in range(5):
+            _insert_order(init_test_db, f"o{i}", partner_code="rc")
+        assert len(partner_store.list_deliveries(limit=3)) == 3
+        for kw in ({"limit": 0}, {"limit": 201}, {"query": "12"}, {"query": "abc"}, {"partner": "../x"}):
+            with pytest.raises(PartnerError):
+                partner_store.list_deliveries(**kw)
+        assert len(partner_store.list_deliveries(query="  ")) == 5     # пустой поиск = без поиска
+
+    def test_frozen_partner_orders_still_listed(self, init_test_db):
+        _partner("rc")
+        _insert_order(init_test_db, "o1", partner_code="rc")
+        partner_store.set_active("rc", False)
+        assert [d["order_id"] for d in partner_store.list_deliveries()] == ["o1"]
+
+
+class TestDeliveriesApi:
+
+    @pytest.mark.asyncio
+    async def test_list_and_filters(self, client, init_test_db, mail_env):
+        _partner("rc")
+        _insert_order(init_test_db, "o1", partner_code="rc")
+        _insert_order(init_test_db, "o2", partner_code="rc")
+        _set_delivery(init_test_db, "o2", _cfg(init_test_db, "o2"), "rc", error="boom")
+        body = (await client.get("/api/admin/partners/deliveries", headers=_auth())).json()
+        assert body["mail_configured"] is True and len(body["deliveries"]) == 2
+        failed = (await client.get("/api/admin/partners/deliveries?only=failed", headers=_auth())).json()
+        assert [d["order_id"] for d in failed["deliveries"]] == ["o2"]
+        q = order_number("o1")
+        found = (await client.get(f"/api/admin/partners/deliveries?q={q}", headers=_auth())).json()
+        assert [d["order_id"] for d in found["deliveries"]] == ["o1"]
+
+    @pytest.mark.asyncio
+    async def test_bad_params_are_422(self, client, init_test_db):
+        for qs in ("only=sent", "q=12", "limit=0", "limit=500", "partner=../x"):
+            r = await client.get(f"/api/admin/partners/deliveries?{qs}", headers=_auth())
+            assert r.status_code == 422, qs
+
+    @pytest.mark.asyncio
+    async def test_failed_item_goes_away_after_successful_resend(self, client, init_test_db, mail_env):
+        _partner("rc")
+        _insert_order(init_test_db, "o1", partner_code="rc")
+        _set_delivery(init_test_db, "o1", _cfg(init_test_db, "o1"), "rc", error="boom")
+        with patch(SEND, new=AsyncMock()), _render_with("partner", _ok_render):
+            r = await client.post("/api/admin/partners/deliveries/o1/resend", headers=_auth())
+        assert r.status_code == 200, r.text
+        after = (await client.get("/api/admin/partners/deliveries", headers=_auth())).json()["deliveries"][0]
+        assert after["state"] == "sent" and after["attempts"] == 2
+        assert (await client.get("/api/admin/partners/deliveries?only=failed", headers=_auth())).json()["deliveries"] == []

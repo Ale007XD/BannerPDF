@@ -16,6 +16,7 @@ partner.py
   GET  /api/admin/partners/stats?period=…|from=…&to=…       — статистика за период (страница /admin/partners/)
   GET  /api/admin/partners/stats.csv?kind=orders|days&…     — выгрузка в CSV (Excel: UTF-8 с BOM, разделитель «;»)
   POST /api/admin/partners/{code}/payout                    — отметить выплаченным (всё или до конца месяца)
+  GET  /api/admin/partners/deliveries?partner=&q=&only=failed&limit= — письма типографиям по заказам: ушло, сбой, не скачан
   POST /api/admin/partners/deliveries/{order_id}/resend     — повторить отправку макета на почту партнёра
 
 Ссылка для типографии: https://bannerbot.ru/?partner=<code>
@@ -129,6 +130,26 @@ async def admin_update_partner(code: str, body: UpdatePartnerRequest):
 @router.get("/admin/partners", dependencies=[Depends(require_admin)])
 async def admin_list_partners():
     return {"mail_configured": mailer.is_configured(), "partners": partner_store.list_partners()}
+
+
+@router.get("/admin/partners/deliveries", dependencies=[Depends(require_admin)])
+async def admin_partner_deliveries(
+    partner: Optional[str] = None,
+    q: Optional[str] = None,
+    only: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+):
+    """
+    Состояние письма с макетом по каждому оплаченному партнёрскому заказу (свежие сверху).
+    q: номер заказа, который назвал клиент (482-915). only=failed: только сбои.
+    """
+    if only not in (None, "", "failed"):
+        raise HTTPException(status_code=422, detail="only: failed или пусто")
+    try:
+        items = partner_store.list_deliveries(partner, q, only == "failed", limit)
+    except partner_store.PartnerError as e:
+        raise _http_error(e) from None
+    return {"mail_configured": mailer.is_configured(), "deliveries": items}
 
 
 @router.get("/admin/partners/report", dependencies=[Depends(require_admin)])

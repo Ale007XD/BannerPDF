@@ -452,6 +452,86 @@ def claim_delivery(order_id: str, cfg_hash: str, partner_code: str, force: bool 
         return cur.rowcount == 1
 
 
+DELIVERY_SCAN_LIMIT = 2000   # сколько последних оплаченных партнёрских заказов просматривать при поиске по номеру
+
+
+def list_deliveries(partner: str | None = None, query: str | None = None,
+                    only_failed: bool = False, limit: int = 50) -> list[dict]:
+    """
+    Оплаченные партнёрские заказы с состоянием письма типографии (для админки), свежие сверху.
+
+    state: sent (ушло), failed (сбой, error задан), sending (идёт или зависло), none (клиент ещё не скачивал),
+    erased (текст макета стёрт по сроку хранения: повтор невозможен).
+    query — номер заказа, который назвал клиент (482-915, 482915, регистр и разделители не важны).
+    PartnerError — неверные параметры.
+    """
+    # импорт здесь, чтобы не связывать модули при загрузке
+    from .partner_naming import order_number
+
+    if not 1 <= limit <= 200:
+        raise PartnerError("limit: от 1 до 200")
+    code = None
+    if partner:
+        code = normalize_code(partner)
+        if code is None:
+            raise PartnerError("Партнёр: неверный код")
+    digits = "".join(ch for ch in (query or "") if ch.isdigit())
+    if query and query.strip() and len(digits) != 6:
+        raise PartnerError("Номер заказа: 6 цифр, например 482-915")
+
+    sql = (
+        "SELECT o.id, o.partner_code, o.size_key, o.paid_at, o.config_json, p.name AS partner_name "
+        "FROM web_orders o JOIN partners p ON p.code = o.partner_code "
+        "WHERE o.status IN (?, ?)"
+    )
+    args: list = list(PAID_STATUSES)
+    if code:
+        sql += " AND o.partner_code = ?"
+        args.append(code)
+    sql += " ORDER BY COALESCE(o.paid_at, o.created_at) DESC LIMIT ?"
+    args.append(DELIVERY_SCAN_LIMIT)
+
+    with get_db() as conn:
+        orders = conn.execute(sql, args).fetchall()
+        ids = [o["id"] for o in orders]
+        rows: dict[tuple[str, str], sqlite3.Row] = {}
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            marks = ",".join("?" * len(chunk))
+            for r in conn.execute(f"SELECT * FROM partner_deliveries WHERE order_id IN ({marks})", chunk):
+                rows[(r["order_id"], r["config_hash"])] = r
+
+    result = []
+    for o in orders:
+        number = order_number(o["id"])
+        if digits and number.replace("-", "") != digits:
+            continue
+        cfg = o["config_json"]
+        d = rows.get((o["id"], config_hash(cfg))) if cfg else None
+        if not cfg:
+            state = "erased"
+        elif d is None:
+            state = "none"
+        elif d["sent_at"]:
+            state = "sent"
+        elif d["error"]:
+            state = "failed"
+        else:
+            state = "sending"
+        if only_failed and state != "failed":
+            continue
+        result.append({
+            "order_id": o["id"], "number": number, "partner_code": o["partner_code"],
+            "partner_name": o["partner_name"], "size_key": o["size_key"], "paid_at": o["paid_at"],
+            "state": state, "error": d["error"] if d and state == "failed" else None,
+            "attempts": d["attempts"] if d else 0, "sent_at": d["sent_at"] if d else None,
+            "can_resend": state != "erased",
+        })
+        if len(result) >= limit:
+            break
+    return result
+
+
 def mark_delivery_sent(order_id: str, cfg_hash: str) -> None:
     with get_db() as conn:
         conn.execute(

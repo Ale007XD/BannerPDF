@@ -296,6 +296,24 @@
     .pm-msg { font-size: 13px; min-height: 18px; color: var(--accent); overflow-wrap: anywhere; }
     .pm-msg--ok { color: var(--ok); }
     .pm-link { font-size: 12px; word-break: break-all; }
+
+    /* ---- Письма типографиям ---- */
+    .dl-controls { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+    .dl-search { display: flex; gap: 8px; }
+    .dl-search input { flex: 1; min-width: 0; border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px;
+      font-family: 'Onest', sans-serif; font-size: 14px; color: var(--ink); background: var(--bg); outline: none; }
+    .dl-search input:focus { border-color: var(--accent2); background: var(--surface); }
+    .dl-search .btn { width: auto; padding: 10px 16px; margin-top: 0; }
+    .dl-item { padding: 12px 0; border-bottom: 1px solid var(--border); }
+    .dl-item:last-child { border-bottom: none; padding-bottom: 0; }
+    .dl-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .dl-num { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 15px; }
+    .dl-state { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; background: var(--bg); color: var(--ink-2); }
+    .dl-state--sent { background: #e0f5e0; color: var(--ok); }
+    .dl-state--failed { background: #fde8e4; color: #b32400; }
+    .dl-state--sending { background: #fff1d6; color: #8a5a00; }
+    .dl-err { font-size: 12px; color: #b32400; margin-top: 4px; overflow-wrap: anywhere; }
+    .dl-item .pm-actions .btn { padding: 8px 14px; }
 </style>
 </head>
 <body>
@@ -327,6 +345,23 @@
 
   <!-- ---- СТАТИСТИКА ПАРТНЁРОВ ---- -->
   <div id="stats-ui">
+
+    <div class="card" id="dl-card">
+      <div class="card-label">Письма типографиям</div>
+      <div class="note">Клиент называет номер заказа из имени файла: найдите его здесь и проверьте, дошёл ли макет. Если нет, отправьте повторно.</div>
+      <div class="dl-controls">
+        <div class="filter-row" id="dl-filter">
+          <button class="filter-btn active" data-only="failed" aria-pressed="true">Сбои</button>
+          <button class="filter-btn" data-only="" aria-pressed="false">Все заказы</button>
+        </div>
+        <form class="dl-search" id="dl-search" novalidate>
+          <input id="dl-q" inputmode="numeric" maxlength="12" placeholder="Номер заказа, например 482-915" aria-label="Номер заказа">
+          <button class="btn btn--accent" type="submit">Найти</button>
+        </form>
+      </div>
+      <div id="dl-list"><div class="empty">Загрузка…</div></div>
+      <div class="pm-msg" id="dl-msg" role="status"></div>
+    </div>
 
     <div class="card" id="pm-card">
       <div class="card-label">Партнёры</div>
@@ -777,6 +812,92 @@ $("pm-list").addEventListener("click", async (ev) => {
 });
 
 if (_token) loadPartners();
+
+/* ---- Письма типографиям: состояние отправки по заказам и повтор ---- */
+let _dlOnly = "failed";
+let _dlReq = 0;
+const DL_STATES = {
+  sent:    ["ушло", "dl-state--sent"],
+  failed:  ["сбой", "dl-state--failed"],
+  sending: ["отправляется", "dl-state--sending"],
+  none:    ["клиент не скачивал", ""],
+  erased:  ["данные удалены", ""],
+};
+function dlSay(text, ok) {
+  const el = $("dl-msg");
+  el.textContent = text || "";
+  el.className = "pm-msg" + (ok ? " pm-msg--ok" : "");
+}
+function fmtDateTime(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+async function loadDeliveries() {
+  if (!_token) return;
+  const id = ++_dlReq;
+  const params = new URLSearchParams({ limit: "50" });
+  const q = $("dl-q").value.trim();
+  if (q) params.set("q", q);                 // поиск по номеру идёт по всем заказам, фильтр «Сбои» его не сужает
+  else if (_dlOnly) params.set("only", _dlOnly);
+  try {
+    const data = await pmFetch(`/admin/partners/deliveries?${params}`, "GET");
+    if (id !== _dlReq) return;
+    renderDeliveries(data.deliveries || [], data.mail_configured, !!q);
+  } catch (e) {
+    if (id !== _dlReq || e.message === "auth") return;
+    $("dl-list").innerHTML = '<div class="auth-error">' + escapeHtml(e.message) + "</div>";
+  }
+}
+
+function renderDeliveries(items, mailConfigured, searched) {
+  const warn = mailConfigured === false ? '<div class="pm-meta warn" style="margin-bottom:8px">Почта на сервере не настроена: повтор невозможен.</div>' : "";
+  if (!items.length) {
+    $("dl-list").innerHTML = warn + '<div class="empty">' +
+      (searched ? "Заказа с таким номером у партнёров нет." : _dlOnly === "failed" ? "Сбоев нет." : "Оплаченных партнёрских заказов пока нет.") + "</div>";
+    return;
+  }
+  $("dl-list").innerHTML = warn + items.map((d) => {
+    const [label, cls] = DL_STATES[d.state] || [d.state, ""];
+    const when = d.state === "sent" && d.sent_at ? "отправлено " + fmtDateTime(d.sent_at) : "оплачен " + fmtDateTime(d.paid_at);
+    const attempts = d.attempts > 1 ? ` · попыток ${fmt(d.attempts)}` : "";
+    return `<div class="dl-item" data-order="${escapeHtml(d.order_id)}">` +
+      `<div class="dl-head"><span class="dl-num">${escapeHtml(d.number)}</span>` +
+        `<span class="dl-state ${cls}">${escapeHtml(label)}</span><span class="name-sub">${escapeHtml(d.partner_name)}</span></div>` +
+      `<div class="pm-meta">${escapeHtml(d.size_key)} · ${escapeHtml(when)}${attempts}</div>` +
+      (d.error ? `<div class="dl-err">${escapeHtml(d.error)}</div>` : "") +
+      (d.can_resend ? '<div class="pm-actions"><button class="btn btn--ghost" data-act="resend">' +
+        (d.state === "sent" ? "Отправить ещё раз" : "Отправить повторно") + "</button></div>" : "") +
+      "</div>";
+  }).join("");
+}
+
+async function resendDelivery(btn) {
+  const orderId = btn.closest(".dl-item").dataset.order;
+  const number = btn.closest(".dl-item").querySelector(".dl-num").textContent;
+  btn.disabled = true; btn.textContent = "Отправляю…"; dlSay("");
+  try {
+    await pmFetch(`/admin/partners/deliveries/${encodeURIComponent(orderId)}/resend`, "POST");
+    dlSay(`Заказ ${number}: письмо отправлено.`, true);
+  } catch (e) {
+    if (e.message !== "auth") dlSay(`Заказ ${number}: ${e.message}`, false);
+  }
+  await loadDeliveries();
+  loadPartners();   // счётчик сбоев в списке партнёров
+}
+
+document.querySelectorAll("#dl-filter .filter-btn").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll("#dl-filter .filter-btn").forEach((x) => { x.classList.remove("active"); x.setAttribute("aria-pressed", "false"); });
+  b.classList.add("active"); b.setAttribute("aria-pressed", "true");
+  _dlOnly = b.dataset.only; dlSay(""); loadDeliveries();
+}));
+$("dl-search").addEventListener("submit", (ev) => { ev.preventDefault(); dlSay(""); loadDeliveries(); });
+$("dl-list").addEventListener("click", (ev) => {
+  const btn = ev.target.closest("button[data-act=resend]");
+  if (btn && !btn.disabled) resendDelivery(btn);
+});
+
+if (_token) loadDeliveries();
 
 load();
 </script>
