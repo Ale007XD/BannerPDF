@@ -349,8 +349,37 @@ VPS_SSH_KEY   — приватный SSH-ключ
 Домен:    bannerbot.ru
 Cert:     /etc/letsencrypt/live/bannerbot.ru/fullchain.pem
 Key:      /etc/letsencrypt/live/bannerbot.ru/privkey.pem
-Срок:     проверка: `echo | openssl s_client -connect bannerbot.ru:443 -servername bannerbot.ru 2>/dev/null | openssl x509 -noout -enddate`
+Выдаёт:   Let's Encrypt, срок 90 дней
 ```
+
+**Проверка срока** (без root, так же, как видит браузер):
+
+```bash
+echo | openssl s_client -connect bannerbot.ru:443 -servername bannerbot.ru 2>/dev/null | openssl x509 -noout -startdate -enddate
+```
+
+**Автопродление.** Работает `certbot.timer` (systemd, два запуска в сутки). Certbot продлевает сертификат, когда до конца остаётся меньше 30 дней, в остальные запуски ничего не делает (`status=0/SUCCESS`, `No renewals were attempted`). Конфигурация `/etc/letsencrypt/renewal/bannerbot.ru.conf` использует порт 80 напрямую, поэтому есть хуки:
+
+```
+pre_hook  = docker stop bannerprint_nginx    # освободить порт 80
+post_hook = docker start bannerprint_nginx   # nginx стартует и читает новый сертификат
+```
+
+Следствие: на время продления (секунды, раз в ~60 дней, ночью) сайт и оплата недоступны, а отдельный `nginx -s reload` не нужен.
+
+**Проверка продления.** От обычного пользователя `certbot` и логи `/var/log/letsencrypt` недоступны, нужен root:
+
+```bash
+sudo certbot certificates          # срок и пути
+sudo certbot renew --dry-run       # пробный прогон; хуки выполняются, nginx остановится на несколько секунд, запускать в тихое время
+sudo journalctl -u certbot.service -n 30
+```
+
+Чтобы читать журнал без `sudo`: `sudo usermod -aG adm <пользователь>` и перезайти.
+
+**Если продление не сработало.** Признак: за 7–10 дней до конца `notAfter` не сменился (после успешного продления `notBefore` становится свежим). Что делать: `sudo certbot renew --dry-run` покажет причину (порт 80 занят, docker недоступен для root, проблемы с DNS), затем вручную `sudo certbot renew`. Если выдача невозможна, сайт и приём платежей встанут в день окончания.
+
+Дата следующей проверки на момент написания: сертификат выпущен 5 сентября 2026, действует до 4 декабря 2026, продление ожидается около 4 ноября. Убедитесь, что `notBefore` сменился.
 
 ### Перезагрузка Nginx без даунтайма
 
@@ -1323,6 +1352,10 @@ curl -sS -m 15 -X POST "$TG_API_BASE/bot$TG_NOTIFY_TOKEN/getWebhookInfo" -H 'con
 - [x] Бесплатная правка текста после оплаты (`/api/order/{id}/amend`), собственный счётчик без cookie (`kit.js`, `/api/beat`), стирание текста и IP через 14 дней
 - [x] Nginx: `http2 on;`, зоны лимитов `preview` / `order` / `download` / `promo` / `beat`
 - [x] Очистка `/tmp/bannerprint_batches` по TTL (`batch_worker.cleanup_old_batches`)
+
+### P1 — эксплуатация
+
+- [ ] Автопродление сертификата: около 4 ноября 2026 `notBefore` должен смениться (раздел «SSL-сертификат»); один раз выполнить `sudo certbot renew --dry-run`
 
 ### P1 — партнёры
 
