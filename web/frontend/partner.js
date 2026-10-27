@@ -16,7 +16,12 @@
  * «Заказ 482-915, скажите его в Реклама-Сити по номеру 90-20-55.pdf» (fromDownload); этот скрипт
  * только показывает их в окне после оплаты (decorateSuccess).
  * Телефон типографии показан в шапке ссылкой tel: (renderPhone): с телефона звонок в один тап.
- * Чистые функции (extractCode, stripParam, fromDownload, safePhone, telHref) проверяет Node: tests/test_partner_frontend.py.
+ *
+ * Как макет попадает к типографии, решает админка (partners.auto_email). «Почта автоматом»: письмо уходит само при скачивании.
+ * «Кнопка»: сервер отвечает на скачивание заголовком X-Partner-Delivery: button, а окно после оплаты показывает кнопку
+ * «Отправить в …» (renderSendButton): письмо уходит, только когда клиент её нажал (POST /api/partner/send/{order_id}).
+ * Чистые функции (extractCode, stripParam, fromDownload, deliveryMode, sendErrorText, safePhone, telHref)
+ * проверяет Node: tests/test_partner_frontend.py.
  */
 (function (root) {
   "use strict";
@@ -30,6 +35,7 @@
   var PENDING_CLASS = "partner-pending";
   var HAS_PHONE_CLASS = "partner-has-phone";
   var FETCH_TIMEOUT_MS = 4000;
+  var SEND_TIMEOUT_MS = 45000;   // сервер рендерит PDF и отправляет письмо (SMTP до 20 с)
   var PARAM = "partner";
 
   function normalize(value) {
@@ -66,6 +72,19 @@
     return { number: number, filename: filename };
   }
 
+  /** Способ отправки макета из заголовка X-Partner-Delivery скачивания: «button» (по кнопке клиента) или «auto». */
+  function deliveryMode(header) {
+    return String(header == null ? "" : header).trim().toLowerCase() === "button" ? "button" : "auto";
+  }
+
+  /** Текст ошибки отправки по ответу сервера. Подробности SMTP клиенту не показываем: их сервер и не отдаёт. */
+  function sendErrorText(status, body) {
+    if (status === 429) return "Слишком много попыток. Подождите минуту и нажмите кнопку ещё раз.";
+    var detail = body && typeof body.detail === "string" ? body.detail.trim() : "";
+    if (detail && (status === 409 || status === 410 || status === 502 || status === 503)) return detail;
+    return "Не удалось отправить макет. Попробуйте ещё раз.";
+  }
+
   /** Телефон типографии только в том виде, который принимает сервер; иначе null (в окне покажем без телефона). */
   function safePhone(value) {
     var phone = String(value == null ? "" : value).trim();
@@ -92,6 +111,8 @@
     extractCode: extractCode,
     stripParam: stripParam,
     fromDownload: fromDownload,
+    deliveryMode: deliveryMode,
+    sendErrorText: sendErrorText,
     safePhone: safePhone,
     telHref: telHref,
   };
@@ -189,10 +210,72 @@
     strip.classList.remove("hidden");
   }
 
+  function setSendStatus(text, kind) {
+    var node = document.getElementById("partner-send-status");
+    if (!node) return;
+    node.textContent = text || "";
+    node.className = !text ? "hidden" : kind === "error" ? "amend-error" : "modal-text";   // готовые стили окон
+  }
+
+  /* POST /api/partner/send/{order_id}: resolve при успехе, иначе Error с текстом для клиента */
+  function postSend(orderId) {
+    var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = controller ? setTimeout(function () { controller.abort(); }, SEND_TIMEOUT_MS) : null;
+    return fetch("/api/partner/send/" + encodeURIComponent(orderId), {
+      method: "POST",
+      headers: { Accept: "application/json" },
+      signal: controller ? controller.signal : undefined,
+    }).then(function (resp) {
+      if (timer) clearTimeout(timer);
+      if (resp.ok) return resp.json();
+      // 429 отдаёт nginx (HTML, не JSON): тело не разбирается, текст по статусу
+      return resp.json().then(
+        function (body) { throw new Error(sendErrorText(resp.status, body)); },
+        function () { throw new Error(sendErrorText(resp.status, null)); }
+      );
+    }, function () {
+      if (timer) clearTimeout(timer);
+      throw new Error("Нет связи с сервером. Проверьте интернет и нажмите кнопку ещё раз.");
+    });
+  }
+
+  function sendToPartner(brand, orderId, btn) {
+    btn.disabled = true;   // повторное нажатие во время отправки не нужно: письмо и так одно на версию макета
+    btn.textContent = "Отправляем…";
+    setSendStatus("");
+    postSend(orderId).then(function () {
+      btn.textContent = "Отправлено в «" + brand.name + "» ✓";
+      setSendStatus("Письмо с макетом отправлено.", "ok");
+    }).catch(function (err) {
+      btn.disabled = false;
+      btn.textContent = "Повторить отправку в «" + brand.name + "»";
+      setSendStatus(err && err.message ? err.message : "Не удалось отправить макет. Попробуйте ещё раз.", "error");
+    });
+  }
+
+  /* Кнопка «Отправить в …» в окне после оплаты. orderId пуст: режим «почта автоматом», кнопки нет.
+     Состояние сбрасывается при каждом показе окна: после правки текста макет новый, и его нужно отправить заново. */
+  function renderSendButton(brand, orderId) {
+    var btn = document.getElementById("partner-send");
+    if (!btn) return;
+    btn.onclick = null;
+    setSendStatus("");
+    if (!orderId) {
+      btn.classList.add("hidden");
+      return;
+    }
+    btn.textContent = "Отправить в «" + brand.name + "»";
+    btn.disabled = false;
+    btn.classList.remove("hidden");
+    btn.onclick = function () { sendToPartner(brand, orderId, btn); };
+  }
+
   function renderConfirmNotice(brand) {
     var box = document.getElementById("confirm-partner");
     if (!box || !brand.delivers) return;
-    box.textContent = "Готовый макет будет также отправлен в «" + brand.name + "» для печати. Другие данные мы типографии не передаём.";
+    box.textContent = brand.delivery === "button"
+      ? "Готовый макет можно будет отправить в «" + brand.name + "» для печати кнопкой после оплаты. Другие данные мы типографии не передаём."
+      : "Готовый макет будет также отправлен в «" + brand.name + "» для печати. Другие данные мы типографии не передаём.";
     box.classList.remove("hidden");
   }
 
@@ -206,16 +289,22 @@
     renderConfirmNotice(brand);
 
     // number: «482-915» из ответа скачивания (fromDownload(...).number) или пусто
-    api.decorateSuccess = function (number) {
+    // delivery: заголовок X-Partner-Delivery скачивания: «button» — письмо уйдёт по кнопке клиента, иначе уходит само
+    // orderId: заказ, который отправляет кнопка
+    api.decorateSuccess = function (number, delivery, orderId) {
       var node = document.getElementById("success-text");
       if (!node || !brand.delivers) return;
-      var text = "PDF-файл скачивается. Копия макета отправляется в «" + brand.name + "».";
+      var manual = deliveryMode(delivery) === "button";
+      var text = manual
+        ? "PDF-файл скачивается. Чтобы типография «" + brand.name + "» получила макет, нажмите кнопку ниже."
+        : "PDF-файл скачивается. Копия макета отправляется в «" + brand.name + "».";
       if (NUMBER_RE.test(String(number || ""))) {
         var phone = safePhone(brand.phone);
         text += " Номер заказа: " + number + " (он же в названии файла). ";
         text += phone ? "Назовите его в типографии по телефону " + phone + "." : "Назовите его в типографии.";
       }
       node.textContent = text;
+      renderSendButton(brand, manual ? orderId : null);
     };
   }
 

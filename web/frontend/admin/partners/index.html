@@ -291,6 +291,8 @@
     .pm-field input:focus { border-color: var(--accent2); background: var(--surface); }
     .pm-field input[disabled] { color: var(--ink-3); }
     .pm-field .hint { font-size: 11px; color: var(--ink-3); margin-top: 3px; }
+    .pm-field label.pm-check { display: flex; align-items: center; gap: 8px; margin-bottom: 0; font-size: 14px; color: var(--ink); cursor: pointer; }
+    .pm-field .pm-check input { width: 18px; height: 18px; padding: 0; flex: none; accent-color: var(--accent2); }
     .pm-color { display: flex; gap: 8px; align-items: center; }
     .pm-color input[type="color"] { width: 48px; height: 42px; padding: 2px; flex: none; }
     .pm-msg { font-size: 13px; min-height: 18px; color: var(--accent); overflow-wrap: anywhere; }
@@ -389,6 +391,8 @@
         <div class="pm-field"><label for="pm-reward">Вознаграждение за оплаченный заказ, ₽</label>
           <input id="pm-reward" type="number" inputmode="numeric" min="0" max="1000" step="1" value="100">
           <div class="hint">Меняет только будущие начисления.</div></div>
+        <div class="pm-field"><label class="pm-check" for="pm-auto"><input id="pm-auto" type="checkbox" checked>Отправлять макет на почту автоматически</label>
+          <div class="hint">Включено: письмо уходит само, когда клиент скачал файл. Выключено: на экране после оплаты рядом со скачиванием появляется кнопка «Отправить в …», письмо уходит только по её нажатию.</div></div>
         <div class="pm-msg" id="pm-form-msg" role="alert"></div>
         <button type="submit" class="btn btn--accent" id="pm-save">Сохранить</button>
         <button type="button" class="btn btn--ghost" id="pm-cancel" style="margin-top:0">Отмена</button>
@@ -709,7 +713,7 @@ function renderPartnerList(mailConfigured) {
       `<div class="pm-head"><span class="pm-name">${escapeHtml(p.name)}</span>` +
         `${off ? '<span class="tag-off">заморожен</span>' : ""}<span class="name-sub">${escapeHtml(p.code)}</span></div>` +
       `<div class="pm-meta">${escapeHtml(p.email)}${p.phone ? " · " + escapeHtml(p.phone) : ""} · ${fmt(p.reward_rub)} ₽ за заказ<br>` +
-        `заказов ${fmt(p.orders)}, к выплате ${fmt(p.unpaid_rub)} ₽${fails}</div>` +
+        `письмо: ${p.auto_email ? "автоматом" : "по кнопке клиента"} · заказов ${fmt(p.orders)}, к выплате ${fmt(p.unpaid_rub)} ₽${fails}</div>` +
       `<div class="pm-meta pm-link">${escapeHtml(partnerLink(p.code))}</div>` +
       '<div class="pm-actions">' +
         '<button class="btn btn--ghost" data-act="edit">Изменить</button>' +
@@ -734,6 +738,7 @@ function openForm(partner) {
   $("pm-accent-text").value = partner ? (partner.accent || "") : "";
   if (partner && partner.accent) $("pm-accent-pick").value = partner.accent;
   $("pm-reward").value = partner ? partner.reward_rub : 100;
+  $("pm-auto").checked = partner ? !!partner.auto_email : true;
   $("pm-form-msg").textContent = "";
   $("pm-form").scrollIntoView({ behavior: "smooth", block: "nearest" });
   (partner ? $("pm-name") : $("pm-code")).focus();
@@ -753,6 +758,7 @@ async function saveForm(ev) {
   const fields = {
     name: $("pm-name").value, email: $("pm-email").value, phone: $("pm-phone").value,
     logo_url: $("pm-logo").value, accent: $("pm-accent-text").value, reward_rub: Number(reward),
+    auto_email: $("pm-auto").checked,
   };
   _pmBusy = true; $("pm-save").disabled = true; msg.textContent = "";
   try {
@@ -858,7 +864,9 @@ function renderDeliveries(items, mailConfigured, searched) {
     return;
   }
   $("dl-list").innerHTML = warn + items.map((d) => {
-    const [label, cls] = DL_STATES[d.state] || [d.state, ""];
+    // В режиме «кнопка» письмо ждёт нажатия клиента: «none» там значит «не нажали», а не «не скачивал»
+    const [label, cls] = d.state === "none" && d.auto_email === false
+      ? ["кнопку не нажали", ""] : (DL_STATES[d.state] || [d.state, ""]);
     const when = d.state === "sent" && d.sent_at ? "отправлено " + fmtDateTime(d.sent_at) : "оплачен " + fmtDateTime(d.paid_at);
     const attempts = d.attempts > 1 ? ` · попыток ${fmt(d.attempts)}` : "";
     return `<div class="dl-item" data-order="${escapeHtml(d.order_id)}">` +

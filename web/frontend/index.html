@@ -65,7 +65,7 @@
   <!-- SDK виджета ЮKassa подгружает app.js (loadYooKassaSdk); соединение открываем заранее -->
   <link rel="stylesheet" href="style.css?v=23">
   <!-- Брендирование под типографию-партнёра (?partner=…): блокирующий и маленький, чтобы логотип BannerBot не мигал -->
-  <script src="partner.js?v=3"></script>
+  <script src="partner.js?v=4"></script>
   <style>
     /* ---- Кастомный размер ---- */
     .custom-size-block {
@@ -492,6 +492,9 @@
       <div class="modal-icon modal-icon--ok">✓</div>
       <div class="modal-title">Готово!</div>
       <div class="modal-text" id="success-text">PDF-файл скачивается.<br>Откройте его и передайте в типографию.</div>
+      <!-- Режим партнёра «кнопка»: показывает partner.js (decorateSuccess), письмо уходит по нажатию -->
+      <button class="modal-btn modal-btn--accent hidden" id="partner-send" type="button"></button>
+      <div class="hidden" id="partner-send-status" role="status"></div>
       <button class="modal-btn modal-btn--ghost hidden" id="amend-open">Нашли опечатку? Исправить текст (1 раз бесплатно)</button>
       <button class="modal-btn modal-btn--accent" id="success-close">Создать ещё</button>
     </div>
@@ -636,6 +639,6 @@
 
   <script src="kit.js?v=1"></script>
   <script src="prefill.js?v=1"></script>
-  <script src="app.js?v=28"></script>
+  <script src="app.js?v=29"></script>
 </body>
 </html>

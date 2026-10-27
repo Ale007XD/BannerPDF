@@ -149,9 +149,9 @@ class TestPartnersManagementUi:
 
     def test_form_fields_match_the_editable_api_fields(self):
         from web.api.services.partner_store import EDITABLE_FIELDS
-        for field in ("name", "email", "phone", "logo_url", "accent", "reward_rub"):
+        for field in ("name", "email", "phone", "logo_url", "accent", "reward_rub", "auto_email"):
             assert field in EDITABLE_FIELDS and f"{field}:" in self.script
-        assert set(EDITABLE_FIELDS) == {"name", "email", "phone", "logo_url", "accent", "reward_rub"}
+        assert set(EDITABLE_FIELDS) == {"name", "email", "phone", "logo_url", "accent", "reward_rub", "auto_email"}
 
     def test_code_is_not_editable_for_existing_partner(self):
         assert '$("pm-code").disabled = !!partner;' in self.script

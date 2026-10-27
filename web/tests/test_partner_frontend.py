@@ -89,6 +89,24 @@ class TestPureFunctions:
     def test_from_download_keeps_the_number_but_drops_a_bad_name(self, disposition):
         assert call("fromDownload", "353-095", disposition) == {"number": "353-095", "filename": None}
 
+    @pytest.mark.parametrize("header,expected", [
+        ("button", "button"), (" BUTTON ", "button"), ("auto", "auto"), ("", "auto"), (None, "auto"), ("click", "auto"),
+    ])
+    def test_delivery_mode(self, header, expected):
+        assert call("deliveryMode", header) == expected
+
+    @pytest.mark.parametrize("status,body,expected", [
+        (429, None, "Слишком много попыток. Подождите минуту и нажмите кнопку ещё раз."),
+        (502, {"detail": "Не удалось отправить макет. Попробуйте ещё раз через минуту."},
+         "Не удалось отправить макет. Попробуйте ещё раз через минуту."),
+        (410, {"detail": "Данные заказа удалены по истечении срока хранения"}, "Данные заказа удалены по истечении срока хранения"),
+        (422, {"detail": [{"msg": "x"}]}, "Не удалось отправить макет. Попробуйте ещё раз."),
+        (500, {"detail": "Не удалось сформировать PDF"}, "Не удалось отправить макет. Попробуйте ещё раз."),
+        (404, None, "Не удалось отправить макет. Попробуйте ещё раз."),
+    ])
+    def test_send_error_text(self, status, body, expected):
+        assert call("sendErrorText", status, body) == expected
+
     @pytest.mark.parametrize("value,expected", [
         ("90-20-55", "90-20-55"), (" +7 (843) 290-20-55 ", "+7 (843) 290-20-55"),
         (None, None), ("", None), ("<b>1234</b>", None), ("123", None), ("90-20-55; x", None), ("9" * 40, None),
@@ -155,7 +173,7 @@ class TestSafety:
 class TestWiring:
     def test_partner_js_loaded_blocking_in_head_before_the_page(self):
         head = INDEX[: INDEX.index("</head>")]
-        assert '<script src="partner.js?v=3"></script>' in head  # блокирующий: логотип BannerBot не мигает
+        assert '<script src="partner.js?v=4"></script>' in head  # блокирующий: логотип BannerBot не мигает
         assert "defer" not in re.search(r'<script src="partner\.js[^>]*>', head).group(0)
 
     def test_dom_hooks_exist(self):
@@ -201,7 +219,9 @@ class TestWiring:
         body = body[: body.index("\n}\n")]
         # номер берётся из ответа скачивания, а не считается во фронтенде: один источник правды
         assert 'window.Partner.fromDownload(resp.headers.get("X-Order-Number"), resp.headers.get("Content-Disposition"))' in body
-        assert 'window.Partner.decorateSuccess(partnerFile ? partnerFile.number : "")' in body
+        # способ отправки (автоматом или кнопкой) решает сервер и сообщает заголовком скачивания
+        assert ('window.Partner.decorateSuccess(partnerFile ? partnerFile.number : "", '
+                'resp.headers.get("X-Partner-Delivery"), state.orderId)') in body
         assert body.index("decorateSuccess") < body.index("showModal(el.modalSuccess)")
 
     def test_downloaded_file_gets_the_server_name_only_for_partner_orders(self):
@@ -263,6 +283,62 @@ class TestWiring:
         assert (FRONT / "partners").is_dir()
 
 
+class TestSendButton:
+    """Режим «кнопка»: письмо уходит по нажатию клиента в окне после оплаты."""
+
+    def test_modal_has_a_hidden_button_and_a_status_line(self):
+        modal = INDEX[INDEX.index('id="modal-success"'):]
+        modal = modal[: modal.index("success-close")]
+        assert re.search(r'<button class="modal-btn modal-btn--accent hidden" id="partner-send" type="button">', modal)
+        assert re.search(r'<div class="hidden" id="partner-send-status" role="status">', modal)
+        assert modal.index('id="success-text"') < modal.index('id="partner-send"') < modal.index('id="amend-open"')
+
+    def test_button_posts_to_the_send_endpoint_with_a_timeout(self):
+        body = JS[JS.index("function postSend(orderId)"):]
+        body = body[: body.index("\n  }\n")]
+        assert 'fetch("/api/partner/send/" + encodeURIComponent(orderId)' in body and 'method: "POST"' in body
+        assert "AbortController" in body and "SEND_TIMEOUT_MS" in body
+
+    def test_button_state_is_reset_on_every_show_and_hidden_in_automatic_mode(self):
+        body = JS[JS.index("function renderSendButton(brand, orderId)"):]
+        body = body[: body.index("\n  }\n")]
+        assert "btn.onclick = null;" in body                       # обработчики не копятся между показами окна
+        assert 'if (!orderId) {' in body and 'btn.classList.add("hidden")' in body
+        assert "btn.disabled = false;" in body
+        assert "decorateSuccess" not in body
+
+    def test_decorate_shows_the_button_only_for_the_button_mode(self):
+        start = JS.index("api.decorateSuccess = function (number, delivery, orderId)")
+        src = JS[start: JS.index("};", start)]
+        assert 'deliveryMode(delivery) === "button"' in src
+        assert "renderSendButton(brand, manual ? orderId : null)" in src
+
+    def test_double_press_is_prevented_and_failure_allows_a_retry(self):
+        body = JS[JS.index("function sendToPartner(brand, orderId, btn)"):]
+        body = body[: body.index("\n  }\n")]
+        assert body.index("btn.disabled = true") < body.index("postSend(orderId)")
+        assert "btn.disabled = false" in body and "Повторить отправку" in body
+
+    def test_texts_are_set_through_textcontent_only(self):
+        code = re.sub(r"/\*.*?\*/", "", JS, flags=re.S)
+        for fn in ("function setSendStatus", "function sendToPartner", "function renderSendButton"):
+            body = code[code.index(fn):]
+            body = body[: body.index("\n  }\n")]
+            assert "innerHTML" not in body, fn
+        assert "node.textContent = text || \"\";" in code
+
+    def test_confirm_notice_describes_the_button_mode(self):
+        body = JS[JS.index("function renderConfirmNotice(brand)"):]
+        body = body[: body.index("\n  }\n")]
+        assert 'brand.delivery === "button"' in body and "кнопкой после оплаты" in body
+
+    def test_nginx_limits_the_send_endpoint(self):
+        block = NGINX[NGINX.index("location /api/partner/send/ {"):]
+        block = block[: block.index("\n    }")]
+        assert "limit_req zone=send_limit burst=3 nodelay;" in block and "limit_req_status 429;" in block
+        assert "proxy_pass http://api:8000;" in block
+
+
 class TestPrivacyDisclosure:
     """Типография-партнёр получает текст макета: политика данных и окно «Конфиденциальность» это называют."""
 
@@ -297,7 +373,7 @@ class TestSuccessWordingWithoutPersonalData:
     """Окно после оплаты называет номер заказа и телефон типографии: ничего персонального от клиента не просим."""
 
     def _decorate_src(self) -> str:
-        start = JS.index("api.decorateSuccess = function (number)")
+        start = JS.index("api.decorateSuccess = function (number, delivery, orderId)")
         return JS[start: JS.index("};", start)]
 
     def test_text_is_set_via_textcontent_and_only_when_mail_is_delivered(self):

@@ -4,12 +4,16 @@ partner.py
 Партнёры-типографии: брендированная страница конструктора, вознаграждение, отправка макета.
 
 Публичное:
-  GET  /api/partner/{code}  — название, логотип, цвет и рабочий телефон для брендирования (без почты и ставки)
+  GET  /api/partner/{code}  — название, логотип, цвет, рабочий телефон и способ отправки макета (delivery: auto | button)
+                              для брендирования (без почты и ставки)
+  POST /api/partner/send/{order_id} — кнопка «Отправить в …» в окне после оплаты: письмо с макетом
+                              типографии. Работает, когда у партнёра выключена автоотправка (auto_email = false)
 
 Админка (Bearer ADMIN_TOKEN):
   POST /api/admin/partners                                  — создать партнёра
   GET  /api/admin/partners                                  — список с суммами к выплате
-  PATCH /api/admin/partners/{code}                          — изменить название, почту, логотип, цвет, ставку, телефон
+  PATCH /api/admin/partners/{code}                          — изменить название, почту, логотип, цвет, ставку, телефон,
+                                                              auto_email (true — письмо уходит само, false — по кнопке клиента)
   POST /api/admin/partners/{code}/active                    — заморозить (false) / восстановить (true)
   POST /api/admin/partners/{code}/phone                     — задать / убрать рабочий телефон
   GET  /api/admin/partners/report?month=ГГГГ-ММ             — сводка за месяц
@@ -66,6 +70,60 @@ async def partner_branding(code: str, response: Response):
     return data
 
 
+@router.post("/partner/send/{order_id}")
+async def send_order_to_partner(order_id: str):
+    """
+    Кнопка «Отправить в …» в окне после оплаты: отправляет макет оплаченного партнёрского заказа на почту типографии.
+
+    Идентификатор заказа (UUID4) тот же секрет, что у /order/{id}/amend, отдельной авторизации нет.
+    Режим партнёра (auto_email) не проверяется: если админ переключил его, пока клиент смотрел окно, кнопка всё равно
+    сработает. Повторы безопасны: письмо с этой версией макета уходит один раз (partner_deliveries), повторный
+    запрос отвечает already=true без рендера и без письма. После бесплатной правки текста версия новая,
+    и типография получает «Исправленный макет».
+
+    404 — нет заказа; 409 — не партнёрский, не оплачен или типография отключена; 410 — текст макета стёрт по сроку
+    хранения; 502 — письмо не ушло (повторить можно); 503 — почта на сервере не настроена.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status, partner_code, size_key, config_json FROM web_orders WHERE id = ?",
+            (order_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Заказ не найден")
+    if not row["partner_code"]:
+        raise HTTPException(status_code=409, detail="Заказ не партнёрский")
+    if row["status"] not in partner_store.PAID_STATUSES:
+        raise HTTPException(status_code=409, detail="Заказ не оплачен")
+    partner = partner_store.get_active_partner(row["partner_code"])
+    if partner is None:
+        raise HTTPException(status_code=409, detail="Типография сейчас не принимает макеты")
+    if not row["config_json"]:
+        raise HTTPException(status_code=410, detail="Данные заказа удалены по истечении срока хранения")
+    if not mailer.is_configured():
+        raise HTTPException(status_code=503, detail="Отправка временно недоступна")
+
+    cfg_hash = partner_store.config_hash(row["config_json"])
+    if partner_store.is_delivered(order_id, cfg_hash):
+        return {"order_id": order_id, "sent": True, "already": True}
+
+    try:
+        config = json.loads(row["config_json"])
+        loop = asyncio.get_running_loop()
+        pdf_bytes = await loop.run_in_executor(get_executor(), render_pdf_sync, config)
+    except Exception as e:
+        logger.error("partner/send: ошибка рендеринга PDF для заказа %s: %s", order_id, e)
+        raise HTTPException(status_code=500, detail="Не удалось сформировать PDF") from None
+
+    sent = await partner_delivery.deliver_order_pdf(
+        order_id, partner["code"], row["size_key"], row["config_json"], pdf_bytes,
+    )
+    if not sent and not partner_store.is_delivered(order_id, cfg_hash):
+        # deliver_order_pdf причину пишет в лог и в partner_deliveries.error; клиенту детали SMTP не нужны
+        raise HTTPException(status_code=502, detail="Не удалось отправить макет. Попробуйте ещё раз через минуту.")
+    return {"order_id": order_id, "sent": True, "already": not sent}
+
+
 # ---------------------------------------------------------------------------
 # Админка
 # ---------------------------------------------------------------------------
@@ -77,6 +135,7 @@ class CreatePartnerRequest(BaseModel):
     accent:     Optional[str] = None
     reward_rub: int = partner_store.DEFAULT_REWARD_RUB
     phone:      Optional[str] = None
+    auto_email: bool = True
 
 
 class UpdatePartnerRequest(BaseModel):
@@ -87,6 +146,7 @@ class UpdatePartnerRequest(BaseModel):
     accent:     Optional[str] = None
     reward_rub: Optional[int] = None
     phone:      Optional[str] = None
+    auto_email: Optional[bool] = None
 
 
 class ActiveRequest(BaseModel):
@@ -107,7 +167,7 @@ class PayoutRequest(BaseModel):
 async def admin_create_partner(body: CreatePartnerRequest):
     try:
         partner = partner_store.create_partner(
-            body.code, body.name, body.email, body.logo_url, body.accent, body.reward_rub, body.phone,
+            body.code, body.name, body.email, body.logo_url, body.accent, body.reward_rub, body.phone, body.auto_email,
         )
     except partner_store.PartnerError as e:
         raise _http_error(e) from None
@@ -117,8 +177,8 @@ async def admin_create_partner(body: CreatePartnerRequest):
 @router.patch("/admin/partners/{code}", dependencies=[Depends(require_admin)])
 async def admin_update_partner(code: str, body: UpdatePartnerRequest):
     changes = {f: getattr(body, f) for f in body.model_fields_set}
-    # name, email, reward_rub обязательны: явный null не «убирает» их, а считается ошибкой
-    for field in ("name", "email", "reward_rub"):
+    # name, email, reward_rub, auto_email обязательны: явный null не «убирает» их, а считается ошибкой
+    for field in ("name", "email", "reward_rub", "auto_email"):
         if field in changes and changes[field] is None:
             raise HTTPException(status_code=422, detail=f"Поле {field} нельзя очистить")
     try:

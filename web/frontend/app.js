@@ -1361,7 +1361,10 @@ async function downloadPdf(token) {
     hideModal(el.modalWait);
     rememberPaidOrder();
     el.amendOpen.classList.toggle("hidden", !state.orderId || state.amendUsed);
-    if (window.Partner) window.Partner.decorateSuccess(partnerFile ? partnerFile.number : "");   // «копия ушла в типографию, номер заказа …, телефон …»
+    // «копия ушла в типографию, номер заказа …, телефон …» или, в режиме «кнопка» (X-Partner-Delivery), кнопка «Отправить в …»
+    if (window.Partner) {
+      window.Partner.decorateSuccess(partnerFile ? partnerFile.number : "", resp.headers.get("X-Partner-Delivery"), state.orderId);
+    }
     showModal(el.modalSuccess);
   } catch (e) {
     hideModal(el.modalWait);

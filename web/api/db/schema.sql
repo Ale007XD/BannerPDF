@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS partners (
     accent     TEXT,                        -- #rrggbb основного цвета интерфейса; NULL = цвет сайта
     reward_rub INTEGER NOT NULL DEFAULT 100,-- вознаграждение за оплаченный заказ (не больше суммы заказа)
     active     INTEGER NOT NULL DEFAULT 1,  -- 0 = страница не брендируется, макеты не отправляются
+    auto_email INTEGER NOT NULL DEFAULT 1,  -- 1 = макет уходит на почту сам при скачивании; 0 = только по кнопке «Отправить в …» в окне после оплаты
     created_at TEXT    NOT NULL
 );
 

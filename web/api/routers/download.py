@@ -18,7 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import Response
 
 from ..db import get_db
-from ..services import partner_naming, partner_store
+from ..services import mailer, partner_naming, partner_store
 from ..services.conversions import record_order_event
 from ..services.partner_delivery import deliver_order_pdf
 from ..services.renderer import get_executor, render_pdf_sync
@@ -43,7 +43,9 @@ async def download_pdf(token: str, background: BackgroundTasks):
     5. Партнёрский заказ: в имени файла номер заказа и телефон типографии («Заказ 482-915, скажите его
        в Реклама-Сити по номеру 90-20-55.pdf»), тот же номер в заголовке X-Order-Number для окна после оплаты;
        после ответа клиенту этот же PDF уходит на почту типографии (services/partner_delivery.py;
-       сбой отправки клиента не затрагивает)
+       сбой отправки клиента не затрагивает). Если у партнёра выключена автоотправка (auto_email = 0),
+       письма здесь нет: ответ несёт заголовок X-Partner-Delivery: button, и клиент отправляет макет
+       кнопкой в окне после оплаты (POST /api/partner/send/{order_id})
 
     Если шаг 3 упал — токен остаётся действительным, клиент может повторить.
     """
@@ -109,15 +111,20 @@ async def download_pdf(token: str, background: BackgroundTasks):
     if row["partner_code"]:
         # Отключённому партнёру имя «скажите его в …» не нужно: страница у клиента уже без бренда
         partner = partner_store.get_active_partner(row["partner_code"])
+        manual = partner is not None and not partner["auto_email"]
         if partner is not None:
             headers["Content-Disposition"] = partner_naming.content_disposition(
                 partner_naming.client_filename(partner["name"], partner["phone"], order_id),
                 partner_naming.ascii_fallback(order_id),
             )
             headers["X-Order-Number"] = partner_naming.order_number(order_id)
-        background.add_task(
-            deliver_order_pdf,
-            order_id, row["partner_code"], row["size_key"], row["config_json"], pdf_bytes,
-        )
+            if manual and mailer.is_configured():
+                # Кнопку показываем, только если письмо реально можно отправить
+                headers["X-Partner-Delivery"] = "button"
+        if not manual:
+            background.add_task(
+                deliver_order_pdf,
+                order_id, row["partner_code"], row["size_key"], row["config_json"], pdf_bytes,
+            )
 
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)

@@ -217,7 +217,7 @@ class TestPublicBranding:
         assert resp.status_code == 200
         assert resp.json() == {
             "code": "reklamacity", "name": "Реклама-Сити", "logo_url": "/partners/rc.svg",
-            "accent": "#e31e24", "phone": "90-20-55", "delivers": True,
+            "accent": "#e31e24", "phone": "90-20-55", "delivery": "auto", "delivers": True,
         }
         raw = resp.text
         assert "print@reklamacity.example" not in raw and "reward" not in raw
@@ -833,6 +833,233 @@ class TestResend:
         with patch(SEND, new=AsyncMock()) as send, _render_with("partner", boom):
             resp = await client.post("/api/admin/partners/deliveries/ord-1004/resend", headers=_auth())
         assert resp.status_code == 500 and send.await_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Режим «кнопка» (partners.auto_email = 0): письмо уходит по нажатию клиента
+# ---------------------------------------------------------------------------
+class TestButtonMode:
+
+    async def _download(self, client, order_id: str):
+        token = create_token(order_id)
+        with _render_with("download", _ok_render):
+            return await client.get(f"/api/download/{token}")
+
+    async def _press(self, client, order_id: str, render=_ok_render):
+        with _render_with("partner", render):
+            return await client.post(f"/api/partner/send/{order_id}")
+
+    # ---- настройка
+    def test_default_is_automatic_and_flag_is_stored(self, init_test_db):
+        assert _partner()["auto_email"] == 1
+        assert _partner("manual", auto_email=False)["auto_email"] == 0
+
+    def test_update_switches_the_mode_and_rejects_non_booleans(self, init_test_db):
+        _partner()
+        assert partner_store.update_partner("reklamacity", {"auto_email": False})["auto_email"] == 0
+        assert partner_store.update_partner("reklamacity", {"auto_email": True})["auto_email"] == 1
+        for bad in (0, 1, "yes", None):
+            with pytest.raises(PartnerError):
+                partner_store.update_partner("reklamacity", {"auto_email": bad})
+
+    @pytest.mark.asyncio
+    async def test_admin_api_creates_and_patches_the_flag(self, client, init_test_db):
+        created = await client.post("/api/admin/partners", headers=_auth(), json={
+            "code": "neta", "name": "Нета", "email": "print@neta.example", "auto_email": False})
+        assert created.status_code == 200 and created.json()["auto_email"] == 0
+        patched = await client.patch("/api/admin/partners/neta", headers=_auth(), json={"auto_email": True})
+        assert patched.status_code == 200 and patched.json()["auto_email"] == 1
+        # явный null не «убирает» флажок
+        assert (await client.patch("/api/admin/partners/neta", headers=_auth(), json={"auto_email": None})).status_code == 422
+        listed = (await client.get("/api/admin/partners", headers=_auth())).json()["partners"]
+        assert listed[0]["auto_email"] == 1
+
+    @pytest.mark.asyncio
+    async def test_public_branding_tells_the_page_which_mode_is_on(self, client, init_test_db, mail_env):
+        _partner("neta", auto_email=False)
+        assert (await client.get("/api/partner/neta")).json()["delivery"] == "button"
+        partner_store.update_partner("neta", {"auto_email": True})
+        assert (await client.get("/api/partner/neta")).json()["delivery"] == "auto"
+
+    # ---- скачивание
+    @pytest.mark.asyncio
+    async def test_download_sends_nothing_and_asks_the_page_for_a_button(self, client, init_test_db, mail_env):
+        _partner(auto_email=False)
+        _insert_order(init_test_db, "btn-0001", partner_code="reklamacity")
+        with patch(SEND, new=AsyncMock()) as send:
+            resp = await self._download(client, "btn-0001")
+        assert resp.status_code == 200 and resp.content == PDF_BYTES
+        assert resp.headers["x-partner-delivery"] == "button"
+        assert resp.headers["x-order-number"] == order_number("btn-0001")   # окно по-прежнему называет номер заказа
+        assert send.await_count == 0
+        conn = _db(init_test_db)
+        assert conn.execute("SELECT COUNT(*) FROM partner_deliveries").fetchone()[0] == 0
+        conn.close()
+
+    @pytest.mark.asyncio
+    async def test_automatic_mode_is_unchanged_and_has_no_button_header(self, client, init_test_db, mail_env):
+        _partner()
+        _insert_order(init_test_db, "btn-0002", partner_code="reklamacity")
+        with patch(SEND, new=AsyncMock()) as send:
+            resp = await self._download(client, "btn-0002")
+        assert "x-partner-delivery" not in resp.headers and send.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_button_when_mail_is_not_configured_or_partner_is_frozen(self, client, init_test_db, mail_env, monkeypatch):
+        _partner(auto_email=False)
+        _insert_order(init_test_db, "btn-0003", partner_code="reklamacity")
+        _insert_order(init_test_db, "btn-0004", partner_code="reklamacity")
+        monkeypatch.delenv("SMTP_HOST")
+        assert "x-partner-delivery" not in (await self._download(client, "btn-0003")).headers
+        monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
+        partner_store.set_active("reklamacity", False)
+        assert "x-partner-delivery" not in (await self._download(client, "btn-0004")).headers
+
+    @pytest.mark.asyncio
+    async def test_regular_order_has_no_button_header(self, client, init_test_db, mail_env):
+        _partner(auto_email=False)
+        _insert_order(init_test_db, "btn-0005")
+        assert "x-partner-delivery" not in (await self._download(client, "btn-0005")).headers
+
+    # ---- кнопка
+    @pytest.mark.asyncio
+    async def test_button_sends_the_mail_once_per_version(self, client, init_test_db, mail_env):
+        _partner(auto_email=False)
+        _insert_order(init_test_db, "btn-0010", partner_code="reklamacity")
+        renders = []
+
+        def counting(config):
+            renders.append(1)
+            return PDF_BYTES
+
+        with patch(SEND, new=AsyncMock()) as send:
+            first = await self._press(client, "btn-0010", counting)
+            again = await self._press(client, "btn-0010", counting)
+        assert first.status_code == 200 and first.json() == {"order_id": "btn-0010", "sent": True, "already": False}
+        assert again.status_code == 200 and again.json()["already"] is True
+        assert send.await_count == 1 and len(renders) == 1      # повтор не рендерит и не шлёт
+        msg = send.await_args.args[0]
+        number = order_number("btn-0010")
+        assert msg["To"] == "print@reklamacity.example" and msg["Subject"].startswith("Новый макет")
+        assert _attachment(msg).get_content() == PDF_BYTES and number in msg["Subject"]
+        conn = _db(init_test_db)
+        row = conn.execute("SELECT * FROM partner_deliveries").fetchone()
+        conn.close()
+        assert row["sent_at"] and row["error"] is None
+
+    @pytest.mark.asyncio
+    async def test_button_after_amend_sends_the_revised_version(self, client, init_test_db, mail_env):
+        _partner(auto_email=False)
+        _insert_order(init_test_db, "btn-0011", partner_code="reklamacity")
+        with patch(SEND, new=AsyncMock()) as send:
+            await self._press(client, "btn-0011")
+            fixed = {**VALID_CONFIG, "text_lines": [{"text": "Исправленный текст", "scale": 1.0}]}
+            conn = _db(init_test_db)
+            conn.execute("UPDATE web_orders SET config_json = ? WHERE id = ?",
+                         (json.dumps(fixed, ensure_ascii=False), "btn-0011"))
+            conn.commit()
+            conn.close()
+            resp = await self._press(client, "btn-0011")
+        assert resp.json()["already"] is False and send.await_count == 2
+        assert send.await_args.args[0]["Subject"].startswith("Исправленный макет")
+
+    @pytest.mark.asyncio
+    async def test_first_version_never_sent_then_amend_goes_as_new_layout(self, client, init_test_db, mail_env):
+        # клиент не нажал кнопку, поправил текст и нажал её: типографии это первое письмо, а не «исправленное»
+        _partner(auto_email=False)
+        _insert_order(init_test_db, "btn-0012", partner_code="reklamacity")
+        fixed = {**VALID_CONFIG, "text_lines": [{"text": "Другой текст", "scale": 1.0}]}
+        conn = _db(init_test_db)
+        conn.execute("UPDATE web_orders SET config_json = ? WHERE id = ?",
+                     (json.dumps(fixed, ensure_ascii=False), "btn-0012"))
+        conn.commit()
+        conn.close()
+        with patch(SEND, new=AsyncMock()) as send:
+            await self._press(client, "btn-0012")
+        assert send.await_args.args[0]["Subject"].startswith("Новый макет")
+
+    @pytest.mark.asyncio
+    async def test_button_works_even_if_the_admin_switched_to_automatic_meanwhile(self, client, init_test_db, mail_env):
+        _partner(auto_email=False)
+        _insert_order(init_test_db, "btn-0013", partner_code="reklamacity")
+        partner_store.update_partner("reklamacity", {"auto_email": True})
+        with patch(SEND, new=AsyncMock()) as send:
+            resp = await self._press(client, "btn-0013")
+        assert resp.status_code == 200 and send.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_smtp_failure_is_502_and_the_retry_goes_through(self, client, init_test_db, mail_env):
+        _partner(auto_email=False)
+        _insert_order(init_test_db, "btn-0014", partner_code="reklamacity")
+        with patch(SEND, new=AsyncMock(side_effect=[mailer.MailError("OSError: refused"), None])) as send:
+            first = await self._press(client, "btn-0014")
+            second = await self._press(client, "btn-0014")
+        assert first.status_code == 502 and "refused" not in first.text      # детали SMTP клиенту не уходят
+        assert second.status_code == 200 and second.json()["already"] is False
+        assert send.await_count == 2
+        conn = _db(init_test_db)
+        row = conn.execute("SELECT * FROM partner_deliveries").fetchone()
+        conn.close()
+        assert row["sent_at"] and row["attempts"] == 2
+
+    @pytest.mark.asyncio
+    async def test_render_failure_is_500_and_leaves_no_claim(self, client, init_test_db, mail_env):
+        _partner(auto_email=False)
+        _insert_order(init_test_db, "btn-0015", partner_code="reklamacity")
+
+        def boom(config):
+            raise RuntimeError("gs died")
+
+        with patch(SEND, new=AsyncMock()) as send:
+            resp = await self._press(client, "btn-0015", boom)
+        assert resp.status_code == 500 and send.await_count == 0
+        conn = _db(init_test_db)
+        assert conn.execute("SELECT COUNT(*) FROM partner_deliveries").fetchone()[0] == 0
+        conn.close()
+
+    @pytest.mark.asyncio
+    async def test_guards(self, client, init_test_db, mail_env, monkeypatch):
+        _partner(auto_email=False)
+        _insert_order(init_test_db, "plain")
+        _insert_order(init_test_db, "unpaid", partner_code="reklamacity", status="pending")
+        _insert_order(init_test_db, "frozen", partner_code="reklamacity")
+        _insert_order(init_test_db, "erased", partner_code="reklamacity")
+        conn = _db(init_test_db)
+        conn.execute("UPDATE web_orders SET config_json = '' WHERE id = 'erased'")
+        conn.commit()
+        conn.close()
+        with patch(SEND, new=AsyncMock()) as send:
+            assert (await self._press(client, "nope")).status_code == 404
+            assert (await self._press(client, "plain")).status_code == 409
+            assert (await self._press(client, "unpaid")).status_code == 409
+            assert (await self._press(client, "erased")).status_code == 410
+            partner_store.set_active("reklamacity", False)
+            assert (await self._press(client, "frozen")).status_code == 409
+            partner_store.set_active("reklamacity", True)
+            monkeypatch.delenv("SMTP_HOST")
+            assert (await self._press(client, "frozen")).status_code == 503
+        assert send.await_count == 0
+
+    # ---- админка видит состояние
+    @pytest.mark.asyncio
+    async def test_deliveries_list_marks_unpressed_orders_of_button_partners(self, client, init_test_db, mail_env):
+        _partner(auto_email=False)
+        _insert_order(init_test_db, "btn-0020", partner_code="reklamacity")
+        _insert_order(init_test_db, "btn-0021", partner_code="reklamacity")
+        with patch(SEND, new=AsyncMock()):
+            await self._press(client, "btn-0021")
+        items = {d["order_id"]: d for d in (await client.get("/api/admin/partners/deliveries", headers=_auth())).json()["deliveries"]}
+        assert items["btn-0020"]["state"] == "none" and items["btn-0020"]["auto_email"] is False
+        assert items["btn-0021"]["state"] == "sent"
+
+    @pytest.mark.asyncio
+    async def test_admin_resend_still_delivers_an_unpressed_order(self, client, init_test_db, mail_env):
+        # клиент закрыл окно, не нажав кнопку: админ отправляет макет сам из списка писем
+        _partner(auto_email=False)
+        _insert_order(init_test_db, "btn-0022", partner_code="reklamacity")
+        with patch(SEND, new=AsyncMock()) as send, _render_with("partner", _ok_render):
+            resp = await client.post("/api/admin/partners/deliveries/btn-0022/resend", headers=_auth())
+        assert resp.status_code == 200 and send.await_count == 1
 
 
 # ---------------------------------------------------------------------------

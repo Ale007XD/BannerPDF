@@ -164,7 +164,7 @@ class TestNginx:
         # объявленная, но не применённая зона ничего не ограничивает (так было с preview/order/download)
         conf = (WEB / "nginx" / "nginx.conf").read_text(encoding="utf-8")
         declared = re.findall(r"limit_req_zone [^;]*zone=(\w+):", conf)
-        assert sorted(declared) == ["beat_limit", "download_limit", "order_limit", "preview_limit", "promo_limit"]
+        assert sorted(declared) == ["beat_limit", "download_limit", "order_limit", "preview_limit", "promo_limit", "send_limit"]
         for zone in declared:
             assert len(re.findall(rf"limit_req zone={zone}\b", NGINX)) == 1, zone
 
@@ -677,7 +677,7 @@ class TestPaymentPathLatency:
 
     def test_loader_style_exists_and_assets_bumped(self):
         assert ".pay-loading" in CSS
-        assert "app.js?v=28" in INDEX
+        assert "app.js?v=29" in INDEX
 
 
 class TestPromoCheckWiring:

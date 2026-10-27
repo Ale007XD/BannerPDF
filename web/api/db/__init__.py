@@ -60,6 +60,7 @@ _COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("web_orders", "discount_rub", "INTEGER"),
     ("web_orders", "partner_code", "TEXT"),
     ("partners", "phone", "TEXT"),
+    ("partners", "auto_email", "INTEGER NOT NULL DEFAULT 1"),
     ("promo_codes", "uses_total", "INTEGER"),
     ("promo_codes", "created_at", "TEXT"),
     ("promo_codes", "note", "TEXT"),

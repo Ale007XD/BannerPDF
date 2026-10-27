@@ -125,6 +125,13 @@ def _clean_reward(reward_rub: int) -> int:
     return reward_rub
 
 
+def _clean_flag(value) -> int:
+    """Флажок партнёра (true/false) в 1/0 для SQLite. Число или строка вместо bool считается ошибкой."""
+    if not isinstance(value, bool):
+        raise PartnerError("auto_email: true или false")
+    return 1 if value else 0
+
+
 def create_partner(
     code: str,
     name: str,
@@ -133,6 +140,7 @@ def create_partner(
     accent: str | None = None,
     reward_rub: int = DEFAULT_REWARD_RUB,
     phone: str | None = None,
+    auto_email: bool = True,
 ) -> dict:
     """Создаёт партнёра. PartnerError — неверные данные или код уже занят."""
     norm = normalize_code(code)
@@ -145,15 +153,16 @@ def create_partner(
     clean_accent = _clean_accent(accent)
     reward_rub = _clean_reward(reward_rub)
     clean_phone = normalize_phone(phone)
+    clean_auto = _clean_flag(auto_email)
 
     try:
         with get_db() as conn:
             conn.execute(
                 """
-                INSERT INTO partners (code, name, email, logo_url, accent, reward_rub, phone, active, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+                INSERT INTO partners (code, name, email, logo_url, accent, reward_rub, phone, auto_email, active, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                 """,
-                (norm, clean_name, clean_email, logo, clean_accent, reward_rub, clean_phone, _now()),
+                (norm, clean_name, clean_email, logo, clean_accent, reward_rub, clean_phone, clean_auto, _now()),
             )
     except sqlite3.IntegrityError:
         raise PartnerExists("Партнёр с таким кодом уже существует") from None
@@ -163,13 +172,14 @@ def create_partner(
 
 
 # Поля, которые можно менять после создания (код не меняется: он в ссылках типографии и в заказах)
-EDITABLE_FIELDS = ("name", "email", "logo_url", "accent", "reward_rub", "phone")
+EDITABLE_FIELDS = ("name", "email", "logo_url", "accent", "reward_rub", "phone", "auto_email")
 
 
 def update_partner(code: str, changes: dict) -> dict:
     """
     Меняет только переданные поля (EDITABLE_FIELDS) с теми же проверками, что при создании.
-    None или пустая строка у logo_url, accent, phone убирают значение; name, email и reward_rub обязательны.
+    None или пустая строка у logo_url, accent, phone убирают значение; name, email, reward_rub и auto_email обязательны.
+    auto_email: True — макет уходит на почту сам при скачивании, False — только по кнопке клиента.
     Ставка влияет только на будущие начисления: уже начисленное хранит свою сумму.
     PartnerNotFound — нет такого партнёра; PartnerError — неверные данные (ничего не записывается).
     """
@@ -183,6 +193,7 @@ def update_partner(code: str, changes: dict) -> dict:
     cleaners = {
         "name": _clean_name, "email": _clean_email, "logo_url": _clean_logo,
         "accent": _clean_accent, "reward_rub": _clean_reward, "phone": normalize_phone,
+        "auto_email": _clean_flag,
     }
     clean = {field: cleaners[field](value) for field, value in changes.items()}
     if clean:
@@ -220,6 +231,8 @@ def public_branding(code: str) -> dict | None:
         "logo_url": partner["logo_url"],
         "accent":   partner["accent"],
         "phone":    partner["phone"],
+        # как макет попадёт к типографии: сам («auto») или по кнопке клиента («button»)
+        "delivery": "auto" if partner["auto_email"] else "button",
     }
 
 
@@ -290,7 +303,7 @@ def list_partners() -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(
             """
-            SELECT p.code, p.name, p.email, p.phone, p.logo_url, p.accent, p.reward_rub, p.active, p.created_at,
+            SELECT p.code, p.name, p.email, p.phone, p.logo_url, p.accent, p.reward_rub, p.active, p.auto_email, p.created_at,
                    COUNT(a.id)                                                       AS orders,
                    COALESCE(SUM(a.reward_rub), 0)                                    AS earned_rub,
                    COALESCE(SUM(CASE WHEN a.paid_out_at IS NULL THEN a.reward_rub END), 0) AS unpaid_rub,
@@ -406,6 +419,16 @@ def has_other_version(order_id: str, cfg_hash: str) -> bool:
     return row is not None
 
 
+def is_delivered(order_id: str, cfg_hash: str) -> bool:
+    """Ушло ли письмо с этой версией макета (sent_at задан)."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM partner_deliveries WHERE order_id = ? AND config_hash = ? AND sent_at IS NOT NULL",
+            (order_id, cfg_hash),
+        ).fetchone()
+    return row is not None
+
+
 def claim_delivery(order_id: str, cfg_hash: str, partner_code: str, force: bool = False) -> bool:
     """
     Занимает право отправить эту версию макета. True — отправляем мы; False — уже отправлено
@@ -460,7 +483,8 @@ def list_deliveries(partner: str | None = None, query: str | None = None,
     """
     Оплаченные партнёрские заказы с состоянием письма типографии (для админки), свежие сверху.
 
-    state: sent (ушло), failed (сбой, error задан), sending (идёт или зависло), none (клиент ещё не скачивал),
+    state: sent (ушло), failed (сбой, error задан), sending (идёт или зависло), none (клиент ещё не скачивал
+    или, в режиме «кнопка» (auto_email = false), не нажал «Отправить»),
     erased (текст макета стёрт по сроку хранения: повтор невозможен).
     query — номер заказа, который назвал клиент (482-915, 482915, регистр и разделители не важны).
     PartnerError — неверные параметры.
@@ -480,7 +504,7 @@ def list_deliveries(partner: str | None = None, query: str | None = None,
         raise PartnerError("Номер заказа: 6 цифр, например 482-915")
 
     sql = (
-        "SELECT o.id, o.partner_code, o.size_key, o.paid_at, o.config_json, p.name AS partner_name "
+        "SELECT o.id, o.partner_code, o.size_key, o.paid_at, o.config_json, p.name AS partner_name, p.auto_email "
         "FROM web_orders o JOIN partners p ON p.code = o.partner_code "
         "WHERE o.status IN (?, ?)"
     )
@@ -526,6 +550,8 @@ def list_deliveries(partner: str | None = None, query: str | None = None,
             "state": state, "error": d["error"] if d and state == "failed" else None,
             "attempts": d["attempts"] if d else 0, "sent_at": d["sent_at"] if d else None,
             "can_resend": state != "erased",
+            # False: типография получает макет по кнопке клиента, и state «none» значит «кнопку не нажали»
+            "auto_email": bool(o["auto_email"]),
         })
         if len(result) >= limit:
             break
