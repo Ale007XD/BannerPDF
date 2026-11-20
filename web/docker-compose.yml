@@ -15,7 +15,7 @@ services:
       - bannerprint_net
 
   nginx_web:
-    image: nginx:1.25-alpine
+    image: nginx:1.30.7-alpine
     container_name: bannerprint_nginx
     restart: unless-stopped
     ports:
